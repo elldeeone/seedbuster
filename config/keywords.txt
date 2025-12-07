@@ -1,0 +1,14 @@
+# Keywords to detect in page content (one per line)
+# Case-insensitive matching
+recovery phrase
+seed phrase
+mnemonic phrase
+secret phrase
+backup phrase
+12 words
+24 words
+enter your seed
+restore wallet
+import wallet
+recover wallet
+enter mnemonic

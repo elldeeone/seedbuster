@@ -1,0 +1,44 @@
+[project]
+name = "seedbuster"
+version = "0.1.0"
+description = "Kaspa wallet phishing detection pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "certstream>=1.12.0",
+    "playwright>=1.40.0",
+    "aiosqlite>=0.19.0",
+    "python-telegram-bot>=20.7",
+    "rapidfuzz>=3.5.0",
+    "imagehash>=4.3.1",
+    "Pillow>=10.1.0",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "idna>=3.6",
+    "tldextract>=5.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+seedbuster = "src.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  seedbuster:
+    build: .
+    container_name: seedbuster
+    restart: unless-stopped
+
+    # Environment from .env file
+    env_file:
+      - .env
+
+    # Mount persistent data
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import src; print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

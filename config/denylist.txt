@@ -1,0 +1,3 @@
+# Force-blocked domains (one per line)
+# These will always trigger HIGH alerts
+# Add confirmed phishing domains here
