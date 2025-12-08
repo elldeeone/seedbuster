@@ -1,0 +1,96 @@
+# SeedBuster Threat Intelligence Database
+# This file can be updated without code changes
+# Format: YAML for human readability
+
+version: "1.0"
+last_updated: "2025-12-08"
+
+# Known malicious domains (exfiltration backends, C2, etc.)
+malicious_domains:
+  - domain: "walrus-app-o5hvw.ondigitalocean.app"
+    type: "exfiltration"
+    confidence: "high"
+    first_seen: "2025-12-08"
+    source: "manual_analysis"
+    notes: "IP logging backend for kaspa-wallet.co"
+
+  - domain: "whale-app-poxe2.ondigitalocean.app"
+    type: "exfiltration"
+    confidence: "high"
+    first_seen: "2025-12-08"
+    source: "manual_analysis"
+    notes: "Seed phrase exfiltration backend"
+
+# Known malicious URL patterns (regex supported)
+malicious_patterns:
+  - pattern: "/log-ip"
+    type: "ip_logging"
+    confidence: "medium"
+    notes: "Common IP logging endpoint"
+
+  - pattern: "/api/form/submit"
+    type: "exfiltration"
+    confidence: "high"
+    notes: "Form data exfiltration"
+
+  - pattern: "/api/form/text"
+    type: "exfiltration"
+    confidence: "high"
+    notes: "Text data exfiltration"
+
+# Exposed API keys (found in malicious sites)
+api_keys:
+  - key: "520a83d66268292f5b97ca64c496ef3b9cfb1bb1f85f2615b103f66f"
+    service: "ipdata.co"
+    first_seen: "2025-12-08"
+    associated_domain: "kaspa-wallet.co"
+
+  - key: "e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b"
+    service: "whale_backend"
+    first_seen: "2025-12-08"
+    associated_domain: "kaspa-wallet.co"
+
+# Cloud hosting patterns commonly abused
+suspicious_hosting:
+  - pattern: "ondigitalocean.app"
+    score_modifier: 15
+    notes: "DigitalOcean App Platform - commonly abused for exfiltration"
+
+  - pattern: "vercel.app"
+    score_modifier: 10
+    notes: "Vercel - sometimes abused"
+
+  - pattern: "netlify.app"
+    score_modifier: 10
+    notes: "Netlify - sometimes abused"
+
+  - pattern: "herokuapp.com"
+    score_modifier: 10
+    notes: "Heroku - commonly abused"
+
+  - pattern: "workers.dev"
+    score_modifier: 10
+    notes: "Cloudflare Workers - sometimes abused"
+
+# Anti-bot services (presence indicates hiding something)
+antibot_services:
+  - domain: "ipdata.co"
+    score_modifier: 15
+
+  - domain: "ipinfo.io"
+    score_modifier: 15
+
+  - domain: "ipapi.co"
+    score_modifier: 15
+
+  - domain: "ip-api.com"
+    score_modifier: 15
+
+# Scammer infrastructure signatures
+scammer_signatures:
+  - name: "whale_walrus_gang"
+    indicators:
+      - "whale-app"
+      - "walrus-app"
+    confidence: "high"
+    notes: "Animal-themed DO apps, Express.js backends"

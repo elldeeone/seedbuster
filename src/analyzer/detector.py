@@ -12,6 +12,7 @@ from PIL import Image
 import imagehash
 
 from .browser import BrowserResult
+from .threat_intel import ThreatIntelLoader, ThreatIntel
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class PhishingDetector:
     def __init__(
         self,
         fingerprints_dir: Path,
+        config_dir: Optional[Path] = None,
         keywords: list[str] = None,
         analysis_threshold: int = 70,
     ):
@@ -71,6 +73,16 @@ class PhishingDetector:
         self.analysis_threshold = analysis_threshold
         self._fingerprints: dict[str, imagehash.ImageHash] = {}
         self._load_fingerprints()
+
+        # Load threat intelligence
+        self.config_dir = config_dir or Path("config")
+        self._threat_intel_loader = ThreatIntelLoader(self.config_dir)
+        self._threat_intel = self._threat_intel_loader.load()
+
+    def reload_threat_intel(self):
+        """Reload threat intelligence from file (hot reload)."""
+        self._threat_intel = self._threat_intel_loader.reload()
+        logger.info("Threat intel reloaded")
 
     def _load_fingerprints(self):
         """Load stored fingerprints of legitimate sites."""
@@ -275,43 +287,106 @@ class PhishingDetector:
         return score, reasons
 
     def _detect_exfiltration(self, result: BrowserResult) -> tuple[int, list[str], list[str]]:
-        """Detect data exfiltration patterns."""
+        """Detect data exfiltration patterns using threat intel."""
         score = 0
         reasons = []
         suspicious = []
+        intel = self._threat_intel
 
         # Check form submissions to external domains
         for submission in result.form_submissions:
             url = submission.get("url", "")
             if result.domain not in url:
-                score += 30
+                # Check against threat intel for known malicious
+                is_known, indicator = intel.is_known_malicious(url)
+                if is_known:
+                    score += 50  # Higher score for known bad actors
+                    reasons.append(f"KNOWN MALICIOUS: {indicator.value[:50]} ({indicator.confidence})")
+                else:
+                    score += 30
+                    reasons.append(f"Form submits to external: {url[:50]}")
                 suspicious.append(url)
-                reasons.append(f"Form submits to external: {url[:50]}")
 
-        # Check for suspicious external requests
+                # Check for malicious URL patterns
+                pattern_matches = intel.check_malicious_patterns(url)
+                for match in pattern_matches:
+                    score += 15
+                    reasons.append(f"Malicious URL pattern: {match.value}")
+
+        # Check external requests against threat intel
+        antibot_matches = intel.check_antibot_services(result.external_requests)
+        if antibot_matches:
+            total_modifier = sum(m.score_modifier for m in antibot_matches)
+            score += total_modifier
+            services = [m.value for m in antibot_matches[:2]]
+            reasons.append(f"Anti-bot detection active: {', '.join(services)}")
+
+        # Check for suspicious hosting
         for ext in result.external_requests:
-            # Skip common CDNs and analytics
-            if any(
-                safe in ext
-                for safe in [
-                    "google",
-                    "cloudflare",
-                    "jsdelivr",
-                    "unpkg",
-                    "cdnjs",
-                    "googleapis",
-                ]
-            ):
+            ext_lower = ext.lower()
+
+            # Skip common safe CDNs
+            if any(safe in ext_lower for safe in [
+                "google", "cloudflare", "jsdelivr", "unpkg",
+                "cdnjs", "googleapis", "gstatic", "fontawesome"
+            ]):
                 continue
 
-            # Flag unknown data collectors
-            if any(
-                sus in ext.lower()
-                for sus in ["collect", "track", "log", "api", "webhook", "telegram"]
-            ):
-                score += 10
+            # Check against threat intel for known malicious
+            is_known, indicator = intel.is_known_malicious(ext)
+            if is_known:
+                score += 40
                 suspicious.append(ext)
-                reasons.append(f"Suspicious endpoint: {ext[:50]}")
+                reasons.append(f"KNOWN MALICIOUS domain: {indicator.value[:50]}")
+                continue
+
+            # Check suspicious hosting patterns from threat intel
+            hosting_matches = intel.check_suspicious_hosting(ext)
+            for match in hosting_matches:
+                score += match.score_modifier
+                suspicious.append(ext)
+                reasons.append(f"Suspicious hosting: {ext[:50]}")
+                break  # Only count once per domain
+
+        # Check HTML content against threat intel
+        if result.html:
+            # Check for known malicious API keys in code
+            api_key_matches = intel.check_api_keys(result.html)
+            for match in api_key_matches:
+                score += 50
+                reasons.append(f"KNOWN MALICIOUS API key ({match.type}): {match.value[:20]}...")
+
+            # Check for scammer signatures
+            sig_matches = intel.check_scammer_signatures(result.html)
+            for sig in sig_matches:
+                score += 30
+                reasons.append(f"Scammer signature: {sig.get('name', 'unknown')}")
+
+            # Check for known malicious domains in code
+            for indicator in intel.malicious_domains:
+                if indicator.value in result.html:
+                    score += 40
+                    suspicious.append(indicator.value)
+                    reasons.append(f"Malicious endpoint in code: {indicator.value[:50]}")
+
+            # Check for malicious URL patterns in code
+            for indicator in intel.malicious_patterns:
+                if re.search(indicator.value, result.html, re.I):
+                    score += 10
+                    reasons.append(f"Exfiltration pattern: {indicator.value}")
+
+            # Fingerprinting detection (static checks)
+            fingerprint_indicators = []
+            if "toDataURL" in result.html or "getImageData" in result.html:
+                fingerprint_indicators.append("canvas")
+            if "WEBGL_debug_renderer_info" in result.html or "getParameter(37" in result.html:
+                fingerprint_indicators.append("webgl")
+            if "AudioContext" in result.html and "createOscillator" in result.html:
+                fingerprint_indicators.append("audio")
+
+            if len(fingerprint_indicators) >= 2:
+                score += 10
+                reasons.append(f"Device fingerprinting: {', '.join(fingerprint_indicators)}")
 
         return score, reasons, suspicious
 

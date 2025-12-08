@@ -22,6 +22,11 @@ data/evidence/*
 data/fingerprints/*
 !data/fingerprints/.gitkeep
 
+# Test artifacts
+data/test_*.png
+data/test_*.html
+data/intel_report.json
+
 # IDE
 .idea/
 .vscode/

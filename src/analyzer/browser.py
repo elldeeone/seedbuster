@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,56 @@ from typing import Optional
 from playwright.async_api import async_playwright, Browser, Page, Error as PlaywrightError
 
 logger = logging.getLogger(__name__)
+
+# Realistic user agents for stealth mode
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+]
+
+# Stealth JavaScript to inject - hides headless browser signatures
+STEALTH_SCRIPT = """
+// Override navigator.webdriver
+Object.defineProperty(navigator, 'webdriver', {
+    get: () => undefined
+});
+
+// Override plugins to look like a real browser
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+    ]
+});
+
+// Override languages
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en']
+});
+
+// Fix permissions API
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' ?
+        Promise.resolve({ state: Notification.permission }) :
+        originalQuery(parameters)
+);
+
+// Fix chrome object
+window.chrome = {
+    runtime: {},
+    loadTimes: function() {},
+    csi: function() {},
+    app: {}
+};
+
+// Ensure consistent screen dimensions
+Object.defineProperty(screen, 'availWidth', { get: () => window.innerWidth });
+Object.defineProperty(screen, 'availHeight', { get: () => window.innerHeight });
+"""
 
 
 @dataclass
@@ -84,17 +135,26 @@ class BrowserAnalyzer:
         page = None
 
         try:
-            # Create isolated browser context
+            # Create isolated browser context with stealth settings
+            user_agent = random.choice(USER_AGENTS)
             context = await self._browser.new_context(
-                viewport={"width": 1280, "height": 720},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                viewport={"width": 1920, "height": 1080},
+                user_agent=user_agent,
                 ignore_https_errors=True,  # Many phishing sites have bad certs
+                locale="en-US",
+                timezone_id="America/New_York",
+                geolocation={"latitude": 40.7128, "longitude": -74.0060},  # NYC
+                permissions=["geolocation"],
+                color_scheme="light",
+                device_scale_factor=1,
+                is_mobile=False,
+                has_touch=False,
             )
 
-            # Set up HAR recording
-            har_path = Path(f"/tmp/har_{domain.replace('.', '_')}.har")
-
             page = await context.new_page()
+
+            # Inject stealth script before any page loads
+            await page.add_init_script(STEALTH_SCRIPT)
 
             # Collect console logs
             page.on("console", lambda msg: result.console_logs.append(f"[{msg.type}] {msg.text}"))
@@ -148,8 +208,8 @@ class BrowserAnalyzer:
                     result.error = f"Failed to load: {str(e)[:200]}"
                     return result
 
-            # Wait a bit for any dynamic content
-            await asyncio.sleep(2)
+            # Simulate human-like behavior to evade bot detection
+            await self._simulate_human_behavior(page)
 
             # Collect evidence
             result.final_url = page.url
@@ -224,6 +284,37 @@ class BrowserAnalyzer:
         except Exception as e:
             logger.error(f"Error extracting inputs: {e}")
             return []
+
+    async def _simulate_human_behavior(self, page: Page):
+        """Simulate human-like behavior to evade bot detection."""
+        try:
+            # Wait for dynamic content with random delay
+            await asyncio.sleep(random.uniform(1.5, 3.0))
+
+            # Get viewport dimensions
+            viewport = page.viewport_size
+            if not viewport:
+                viewport = {"width": 1920, "height": 1080}
+
+            # Simulate random mouse movements
+            for _ in range(random.randint(2, 4)):
+                x = random.randint(100, viewport["width"] - 100)
+                y = random.randint(100, viewport["height"] - 100)
+                await page.mouse.move(x, y)
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+
+            # Simulate a small scroll
+            scroll_amount = random.randint(100, 300)
+            await page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+            await asyncio.sleep(random.uniform(0.3, 0.6))
+
+            # Scroll back up to capture full page
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(random.uniform(0.3, 0.5))
+
+        except Exception as e:
+            # Don't fail analysis if simulation fails
+            logger.debug(f"Human simulation error (non-fatal): {e}")
 
     async def capture_fingerprint(self, domain: str) -> Optional[bytes]:
         """Capture just a screenshot for fingerprinting."""
