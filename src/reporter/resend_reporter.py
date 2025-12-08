@@ -11,23 +11,28 @@ from .templates import ReportTemplates
 logger = logging.getLogger(__name__)
 
 # Abuse contacts by hosting provider
+# Note: Many providers use web forms instead of email now
+# These are the ones that still accept email reports
 ABUSE_CONTACTS = {
-    "digitalocean": "abuse@digitalocean.com",
-    "cloudflare": "abuse@cloudflare.com",
     "namecheap": "abuse@namecheap.com",
     "godaddy": "abuse@godaddy.com",
     "hostinger": "abuse@hostinger.com",
-    "bluehost": "abuse@bluehost.com",
-    "aws": "abuse@amazonaws.com",
-    "azure": "abuse@microsoft.com",
-    "google": "abuse@google.com",
     "ovh": "abuse@ovh.net",
     "hetzner": "abuse@hetzner.com",
-    "vultr": "abuse@vultr.com",
-    "linode": "abuse@linode.com",
-    "vercel": "abuse@vercel.com",
-    "netlify": "abuse@netlify.com",
-    "heroku": "abuse@heroku.com",
+}
+
+# Providers that require web form submission
+ABUSE_FORMS = {
+    "digitalocean": "https://www.digitalocean.com/company/contact/abuse",
+    "cloudflare": "https://abuse.cloudflare.com/",
+    "aws": "https://support.aws.amazon.com/#/contacts/report-abuse",
+    "azure": "https://msrc.microsoft.com/report/abuse",
+    "google": "https://support.google.com/code/contact/cloud_platform_report",
+    "vultr": "https://www.vultr.com/company/abuse/",
+    "linode": "https://www.linode.com/legal-abuse/",
+    "vercel": "https://vercel.com/abuse",
+    "netlify": "https://www.netlify.com/abuse/",
+    "heroku": "https://www.heroku.com/policy/aup-reporting",
 }
 
 
@@ -57,36 +62,44 @@ class ResendReporter(BaseReporter):
         self.from_email = from_email
         self._configured = bool(api_key)
 
-    def get_abuse_contact(self, evidence: ReportEvidence) -> Optional[str]:
-        """Determine the appropriate abuse contact based on evidence."""
+    def get_abuse_contact(self, evidence: ReportEvidence) -> tuple[Optional[str], Optional[str]]:
+        """
+        Determine the appropriate abuse contact based on evidence.
+
+        Returns:
+            (email, form_url) - email if available, form_url if manual submission needed
+        """
         # Check backend domains for hosting provider indicators
         for domain in evidence.backend_domains or []:
             domain_lower = domain.lower()
 
             if "ondigitalocean.app" in domain_lower or "digitalocean" in domain_lower:
-                return ABUSE_CONTACTS["digitalocean"]
+                return (None, ABUSE_FORMS["digitalocean"])
             elif "cloudflare" in domain_lower or "workers.dev" in domain_lower:
-                return ABUSE_CONTACTS["cloudflare"]
+                return (None, ABUSE_FORMS["cloudflare"])
             elif "vercel" in domain_lower:
-                return ABUSE_CONTACTS["vercel"]
+                return (None, ABUSE_FORMS["vercel"])
             elif "netlify" in domain_lower:
-                return ABUSE_CONTACTS["netlify"]
+                return (None, ABUSE_FORMS["netlify"])
             elif "herokuapp" in domain_lower:
-                return ABUSE_CONTACTS["heroku"]
+                return (None, ABUSE_FORMS["heroku"])
             elif "amazonaws" in domain_lower or "aws" in domain_lower:
-                return ABUSE_CONTACTS["aws"]
+                return (None, ABUSE_FORMS["aws"])
             elif "azure" in domain_lower:
-                return ABUSE_CONTACTS["azure"]
+                return (None, ABUSE_FORMS["azure"])
 
-        # Check hosting provider field
+        # Check hosting provider field for email contacts
         if evidence.hosting_provider:
             provider_lower = evidence.hosting_provider.lower()
             for key, email in ABUSE_CONTACTS.items():
                 if key in provider_lower:
-                    return email
+                    return (email, None)
+            # Check for form-based providers
+            for key, form_url in ABUSE_FORMS.items():
+                if key in provider_lower:
+                    return (None, form_url)
 
-        # Default to DigitalOcean if we found DO app platform URLs
-        return None
+        return (None, None)
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """Send abuse report via Resend."""
@@ -107,7 +120,16 @@ class ResendReporter(BaseReporter):
             )
 
         # Determine recipient
-        to_email = self.get_abuse_contact(evidence)
+        to_email, form_url = self.get_abuse_contact(evidence)
+
+        # If provider requires web form, return the URL for manual submission
+        if form_url and not to_email:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.PENDING,
+                message=f"Manual submission required: {form_url}",
+            )
+
         if not to_email:
             return ReportResult(
                 platform=self.platform_name,
