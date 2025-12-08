@@ -37,6 +37,7 @@ class ReportManager:
         smtp_config: Optional[dict] = None,
         phishtank_api_key: Optional[str] = None,
         resend_api_key: Optional[str] = None,
+        resend_from_email: Optional[str] = None,
         reporter_email: str = "",
     ):
         self.database = database
@@ -44,6 +45,7 @@ class ReportManager:
         self.smtp_config = smtp_config or {}
         self.phishtank_api_key = phishtank_api_key
         self.resend_api_key = resend_api_key
+        self.resend_from_email = resend_from_email
         self.reporter_email = reporter_email
 
         self.reporters: dict[str, BaseReporter] = {}
@@ -81,9 +83,9 @@ class ReportManager:
             from .resend_reporter import ResendReporter
             self.reporters["resend"] = ResendReporter(
                 api_key=self.resend_api_key,
-                from_email=self.reporter_email or "SeedBuster <onboarding@resend.dev>",
+                from_email=self.resend_from_email or self.reporter_email or "SeedBuster <onboarding@resend.dev>",
             )
-            logger.info("Initialized Resend email reporter")
+            logger.info(f"Initialized Resend email reporter (from: {self.resend_from_email or self.reporter_email})")
 
         # SMTP reporter (if configured)
         if self.smtp_config.get("host"):

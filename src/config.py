@@ -23,6 +23,7 @@ class Config:
     # Reporting API keys
     phishtank_api_key: str = ""
     resend_api_key: str = ""
+    resend_from_email: str = "SeedBuster <onboarding@resend.dev>"
 
     # SMTP configuration for email reports (alternative to Resend)
     smtp_host: str = ""
@@ -134,6 +135,7 @@ def load_config() -> Config:
         analysis_score_threshold=int(os.getenv("ANALYSIS_SCORE_THRESHOLD", "70")),
         phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
         resend_api_key=os.getenv("RESEND_API_KEY", ""),
+        resend_from_email=os.getenv("RESEND_FROM_EMAIL", "SeedBuster <onboarding@resend.dev>"),
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),
