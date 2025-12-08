@@ -404,12 +404,31 @@ class SeedBusterBot:
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
 
-    async def _find_domain_by_short_id(self, short_id: str) -> Optional[dict]:
-        """Find a domain by its short ID prefix."""
+    async def _find_domain_by_short_id(self, identifier: str) -> Optional[dict]:
+        """Find a domain by ID, domain name, or short hash prefix."""
         domains = await self.database.get_recent_domains(limit=100)
+
+        # Try exact domain match first
         for d in domains:
-            if self.evidence_store.get_domain_id(d["domain"]).startswith(short_id):
+            if d["domain"].lower() == identifier.lower():
                 return d
+
+        # Try database ID match
+        if identifier.isdigit():
+            for d in domains:
+                if str(d["id"]) == identifier:
+                    return d
+
+        # Try short hash prefix match
+        for d in domains:
+            if self.evidence_store.get_domain_id(d["domain"]).startswith(identifier):
+                return d
+
+        # Try partial domain match
+        for d in domains:
+            if identifier.lower() in d["domain"].lower():
+                return d
+
         return None
 
     # Callback handlers for inline buttons

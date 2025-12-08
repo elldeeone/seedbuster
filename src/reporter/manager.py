@@ -75,7 +75,9 @@ class ReportManager:
         logger.info("Initialized Cloudflare reporter")
 
         # Netcraft (always available, no account needed)
-        self.reporters["netcraft"] = NetcraftReporter()
+        self.reporters["netcraft"] = NetcraftReporter(
+            reporter_email=self.resend_from_email or self.reporter_email or ""
+        )
         logger.info("Initialized Netcraft reporter")
 
         # Resend email reporter (if API key configured)
@@ -86,6 +88,16 @@ class ReportManager:
                 from_email=self.resend_from_email or self.reporter_email or "SeedBuster <onboarding@resend.dev>",
             )
             logger.info(f"Initialized Resend email reporter (from: {self.resend_from_email or self.reporter_email})")
+
+        # DigitalOcean form reporter (if we have reporter email for form submission)
+        reporter_email = self.resend_from_email or self.reporter_email
+        if reporter_email:
+            from .digitalocean import DigitalOceanReporter
+            self.reporters["digitalocean"] = DigitalOceanReporter(
+                reporter_email=reporter_email.split("<")[-1].rstrip(">") if "<" in reporter_email else reporter_email,
+                reporter_name="Kaspa Security",
+            )
+            logger.info("Initialized DigitalOcean form reporter (Playwright)")
 
         # SMTP reporter (if configured)
         if self.smtp_config.get("host"):

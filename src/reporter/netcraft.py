@@ -12,12 +12,10 @@ logger = logging.getLogger(__name__)
 
 class NetcraftReporter(BaseReporter):
     """
-    Netcraft phishing site reporter.
+    Netcraft phishing site reporter via API.
 
     Netcraft is a well-established anti-phishing service used by
     many browsers and security tools. No account required.
-
-    Submission is via their web form API.
     """
 
     platform_name = "netcraft"
@@ -26,15 +24,19 @@ class NetcraftReporter(BaseReporter):
     requires_api_key = False
     rate_limit_per_minute = 10
 
-    # Netcraft submission endpoint
-    SUBMIT_URL = "https://report.netcraft.com/api/v3/report/urls"
+    API_URL = "https://report.netcraft.com/api/v3/report/urls"
 
-    def __init__(self):
+    def __init__(self, reporter_email: str = ""):
         super().__init__()
+        # Extract just the email address if in "Name <email>" format
+        if "<" in reporter_email and ">" in reporter_email:
+            self.reporter_email = reporter_email.split("<")[-1].rstrip(">")
+        else:
+            self.reporter_email = reporter_email
         self._configured = True  # Always available
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        """Submit URL to Netcraft."""
+        """Submit URL to Netcraft via API."""
         # Validate evidence
         is_valid, error = self.validate_evidence(evidence)
         if not is_valid:
@@ -45,41 +47,50 @@ class NetcraftReporter(BaseReporter):
             )
 
         # Build reason string
-        reasons = "\n".join(f"- {r}" for r in evidence.detection_reasons)
-        comment = (
-            f"Cryptocurrency seed phrase phishing site.\n"
-            f"Confidence: {evidence.confidence_score}%\n\n"
-            f"Detection reasons:\n{reasons}\n\n"
-            f"Detected by SeedBuster anti-phishing tool."
-        )
+        reason_parts = [
+            f"Cryptocurrency seed phrase phishing site.",
+            f"Confidence: {evidence.confidence_score}%",
+        ]
+        for r in evidence.detection_reasons[:3]:
+            reason_parts.append(f"- {r}")
+        reason_parts.append("Detected by SeedBuster.")
+        reason = " ".join(reason_parts)
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            try:
-                # Netcraft's API accepts JSON
-                payload = {
-                    "urls": [evidence.url],
-                    "reason": comment,
+        # Build payload
+        payload = {
+            "urls": [
+                {
+                    "url": evidence.url,
+                    "reason": reason,
                 }
+            ]
+        }
 
+        # Add email if configured
+        if self.reporter_email:
+            payload["email"] = self.reporter_email
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
                 resp = await client.post(
-                    self.SUBMIT_URL,
+                    self.API_URL,
                     json=payload,
                     headers={
-                        "User-Agent": "SeedBuster/1.0 (anti-phishing tool)",
                         "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "User-Agent": "SeedBuster/1.0 (anti-phishing tool)",
                     },
                 )
 
                 if resp.status_code in (200, 201, 202):
-                    # Success
                     try:
                         result = resp.json()
-                        report_uuid = result.get("uuid", "")
+                        uuid = result.get("uuid", "")
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.SUBMITTED,
-                            report_id=report_uuid,
-                            message=f"Submitted to Netcraft (UUID: {report_uuid})" if report_uuid else "Submitted to Netcraft",
+                            report_id=uuid,
+                            message=f"Submitted to Netcraft" + (f" (UUID: {uuid})" if uuid else ""),
                         )
                     except Exception:
                         return ReportResult(
@@ -88,16 +99,26 @@ class NetcraftReporter(BaseReporter):
                             message="Submitted to Netcraft",
                         )
 
-                elif resp.status_code == 409:
-                    # Already reported
+                elif resp.status_code == 400:
+                    # Check for duplicate
+                    try:
+                        result = resp.json()
+                        details = result.get("details", [])
+                        if any("duplicate" in str(d).lower() for d in details):
+                            return ReportResult(
+                                platform=self.platform_name,
+                                status=ReportStatus.DUPLICATE,
+                                message="URL already reported to Netcraft",
+                            )
+                    except Exception:
+                        pass
                     return ReportResult(
                         platform=self.platform_name,
-                        status=ReportStatus.DUPLICATE,
-                        message="URL already reported to Netcraft",
+                        status=ReportStatus.FAILED,
+                        message=f"Bad request: {resp.text[:100]}",
                     )
 
                 elif resp.status_code == 429:
-                    # Rate limited
                     retry_after = int(resp.headers.get("Retry-After", 60))
                     return ReportResult(
                         platform=self.platform_name,
@@ -110,7 +131,7 @@ class NetcraftReporter(BaseReporter):
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.FAILED,
-                        message=f"Netcraft returned {resp.status_code}: {resp.text[:200]}",
+                        message=f"Netcraft returned {resp.status_code}",
                     )
 
             except httpx.TimeoutException:

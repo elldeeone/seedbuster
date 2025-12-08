@@ -21,6 +21,8 @@ from .google_form import GoogleFormReporter
 from .smtp_reporter import SMTPReporter
 from .netcraft import NetcraftReporter
 from .resend_reporter import ResendReporter
+from .digitalocean import DigitalOceanReporter
+from .google_safebrowsing import GoogleSafeBrowsingReporter
 
 __all__ = [
     # Base classes
@@ -45,4 +47,6 @@ __all__ = [
     "SMTPReporter",
     "NetcraftReporter",
     "ResendReporter",
+    "DigitalOceanReporter",
+    "GoogleSafeBrowsingReporter",
 ]

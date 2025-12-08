@@ -13,6 +13,7 @@ from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
 from .bot.formatters import AlertData
+from .reporter import ReportManager
 
 # Configure logging
 logging.basicConfig(
@@ -51,12 +52,23 @@ class SeedBusterPipeline:
             keywords=config.keywords,
             analysis_threshold=config.analysis_score_threshold,
         )
+
+        # Initialize report manager
+        self.report_manager = ReportManager(
+            database=self.database,
+            evidence_store=self.evidence_store,
+            resend_api_key=config.resend_api_key,
+            resend_from_email=config.resend_from_email,
+            reporter_email=config.resend_from_email,
+        )
+
         self.bot = SeedBusterBot(
             token=config.telegram_bot_token,
             chat_id=config.telegram_chat_id,
             database=self.database,
             evidence_store=self.evidence_store,
             submit_callback=self._manual_submit,
+            report_manager=self.report_manager,
         )
         self.ct_listener: AsyncCertstreamListener = None
 
