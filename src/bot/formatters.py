@@ -1,7 +1,17 @@
 """Message formatters for Telegram alerts."""
 
+import re
 from dataclasses import dataclass
 from typing import Optional
+
+
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Telegram Markdown."""
+    # Characters that need escaping in Telegram Markdown
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 
 @dataclass
@@ -41,24 +51,26 @@ class AlertFormatter:
         label = cls.VERDICT_LABEL.get(data.verdict, "UNKNOWN")
 
         lines = [
-            f"{emoji} *SUSPICIOUS DOMAIN DETECTED*",
+            f"{emoji} SUSPICIOUS DOMAIN DETECTED",
             "",
-            f"*Domain:* `{data.domain}`",
-            f"*Confidence:* {label} ({data.score}/100)",
+            f"Domain: {data.domain}",
+            f"Confidence: {label} ({data.score}/100)",
             "",
-            "*Detection signals:*",
+            "Detection signals:",
         ]
 
         for reason in data.reasons[:8]:  # Limit reasons shown
-            lines.append(f"  - {reason}")
+            # Escape any special characters in reasons
+            safe_reason = reason.replace('_', ' ').replace('*', '')
+            lines.append(f"  - {safe_reason}")
 
         lines.extend([
             "",
-            "*Actions:*",
-            f"`/ack {data.domain_id}` - Mark reviewed",
-            f"`/fp {data.domain_id}` - False positive",
-            f"`/report {data.domain_id}` - Submit to blocklists",
-            f"`/evidence {data.domain_id}` - Get evidence files",
+            "Actions:",
+            f"/ack {data.domain_id} - Mark reviewed",
+            f"/fp {data.domain_id} - False positive",
+            f"/report {data.domain_id} - Submit to blocklists",
+            f"/evidence {data.domain_id} - Get evidence files",
         ])
 
         return "\n".join(lines)

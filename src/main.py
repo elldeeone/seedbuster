@@ -209,9 +209,12 @@ class SeedBusterPipeline:
 
     async def _analyze_domain(self, task: dict):
         """Analyze a single domain."""
+        import socket
+
         domain_id = task["id"]
         domain = task["domain"]
         domain_score = task["domain_score"]
+        domain_reasons = task.get("reasons", [])
 
         logger.info(f"Analyzing: {domain}")
 
@@ -219,40 +222,62 @@ class SeedBusterPipeline:
             # Update status
             await self.database.update_domain_status(domain_id, DomainStatus.ANALYZING)
 
-            # Browse the site
-            browser_result = await self.browser.analyze(domain)
+            # Quick DNS check first
+            dns_resolves = True
+            try:
+                socket.gethostbyname(domain)
+            except socket.gaierror:
+                dns_resolves = False
+                logger.info(f"Domain does not resolve: {domain}")
 
-            if not browser_result.success:
-                logger.warning(f"Failed to analyze {domain}: {browser_result.error}")
-                # Still save what we have
-                verdict = Verdict.LOW
+            if not dns_resolves:
+                # Domain doesn't exist - report based on domain score alone
+                verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
                 analysis_score = domain_score
-                reasons = [browser_result.error or "Analysis failed"]
-            else:
-                # Save evidence
-                if browser_result.screenshot:
-                    await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
-                if browser_result.html:
-                    await self.evidence_store.save_html(domain, browser_result.html)
+                reasons = domain_reasons + ["Domain does not resolve (not registered or offline)"]
 
-                # Detect phishing signals
-                detection = self.detector.detect(browser_result, domain_score)
-                analysis_score = detection.score
-                reasons = detection.reasons
-
-                # Convert verdict string to enum
-                verdict = Verdict(detection.verdict)
-
-                # Save analysis results
+                # Save analysis
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
                     "score": analysis_score,
                     "verdict": verdict.value,
                     "reasons": reasons,
-                    "visual_match": detection.visual_match_score,
-                    "seed_form": detection.seed_form_detected,
-                    "suspicious_endpoints": detection.suspicious_endpoints,
+                    "dns_resolves": False,
                 })
+            else:
+                # Browse the site (DNS resolved)
+                browser_result = await self.browser.analyze(domain)
+
+                if not browser_result.success:
+                    logger.warning(f"Failed to analyze {domain}: {browser_result.error}")
+                    verdict = Verdict.LOW
+                    analysis_score = domain_score
+                    reasons = domain_reasons + [browser_result.error or "Analysis failed"]
+                else:
+                    # Save evidence
+                    if browser_result.screenshot:
+                        await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
+                    if browser_result.html:
+                        await self.evidence_store.save_html(domain, browser_result.html)
+
+                    # Detect phishing signals
+                    detection = self.detector.detect(browser_result, domain_score)
+                    analysis_score = detection.score
+                    reasons = detection.reasons
+
+                    # Convert verdict string to enum
+                    verdict = Verdict(detection.verdict)
+
+                    # Save analysis results
+                    await self.evidence_store.save_analysis(domain, {
+                        "domain": domain,
+                        "score": analysis_score,
+                        "verdict": verdict.value,
+                        "reasons": reasons,
+                        "visual_match": detection.visual_match_score,
+                        "seed_form": detection.seed_form_detected,
+                        "suspicious_endpoints": detection.suspicious_endpoints,
+                    })
 
             # Update database
             evidence_path = str(self.evidence_store.get_evidence_path(domain))

@@ -88,7 +88,7 @@ class SeedBusterBot:
             return
 
         try:
-            # Format message
+            # Format message (plain text to avoid markdown parsing issues)
             message = AlertFormatter.format_alert(data)
 
             # Send screenshot if available
@@ -98,13 +98,11 @@ class SeedBusterBot:
                         chat_id=self.chat_id,
                         photo=InputFile(f),
                         caption=message,
-                        parse_mode=ParseMode.MARKDOWN,
                     )
             else:
                 await self._app.bot.send_message(
                     chat_id=self.chat_id,
                     text=message,
-                    parse_mode=ParseMode.MARKDOWN,
                 )
 
             logger.info(f"Sent alert for {data.domain}")
