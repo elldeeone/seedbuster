@@ -5,12 +5,13 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
 )
 from telegram.constants import ParseMode
@@ -32,12 +33,14 @@ class SeedBusterBot:
         database: Database,
         evidence_store: EvidenceStore,
         submit_callback: Optional[Callable[[str], None]] = None,
+        report_manager: Optional["ReportManager"] = None,
     ):
         self.token = token
         self.chat_id = chat_id
         self.database = database
         self.evidence_store = evidence_store
         self.submit_callback = submit_callback
+        self.report_manager = report_manager
 
         self._app: Optional[Application] = None
         self._queue_size_callback: Optional[Callable[[], int]] = None
@@ -65,6 +68,11 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("threshold", self._cmd_threshold))
         self._app.add_handler(CommandHandler("allowlist", self._cmd_allowlist))
 
+        # Callback handlers for inline buttons
+        self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_reject, pattern="^reject_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_report_status, pattern="^status_"))
+
         # Start polling in background
         await self._app.initialize()
         await self._app.start()
@@ -81,8 +89,8 @@ class SeedBusterBot:
             await self._app.shutdown()
         logger.info("Telegram bot stopped")
 
-    async def send_alert(self, data: AlertData):
-        """Send a phishing detection alert."""
+    async def send_alert(self, data: AlertData, include_report_buttons: bool = True):
+        """Send a phishing detection alert with optional report approval buttons."""
         if not self._app:
             logger.error("Bot not started, cannot send alert")
             return
@@ -91,6 +99,28 @@ class SeedBusterBot:
             # Format message (plain text to avoid markdown parsing issues)
             message = AlertFormatter.format_alert(data)
 
+            # Create inline keyboard for report actions (if high confidence)
+            keyboard = None
+            if include_report_buttons and self.report_manager and data.score >= 70:
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "✅ Approve & Report",
+                            callback_data=f"approve_{data.domain_id}"
+                        ),
+                        InlineKeyboardButton(
+                            "❌ False Positive",
+                            callback_data=f"reject_{data.domain_id}"
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "📊 Report Status",
+                            callback_data=f"status_{data.domain_id}"
+                        ),
+                    ],
+                ])
+
             # Send screenshot if available
             if data.screenshot_path and Path(data.screenshot_path).exists():
                 with open(data.screenshot_path, "rb") as f:
@@ -98,11 +128,13 @@ class SeedBusterBot:
                         chat_id=self.chat_id,
                         photo=InputFile(f),
                         caption=message,
+                        reply_markup=keyboard,
                     )
             else:
                 await self._app.bot.send_message(
                     chat_id=self.chat_id,
                     text=message,
+                    reply_markup=keyboard,
                 )
 
             logger.info(f"Sent alert for {data.domain}")
@@ -302,19 +334,203 @@ class SeedBusterBot:
         """Handle /report command."""
         if not context.args:
             await update.message.reply_text(
-                "Usage: `/report <domain_id>`",
+                "Usage:\n"
+                "`/report <domain_id>` - Report to all platforms\n"
+                "`/report <domain_id> status` - Check report status\n"
+                "`/report <domain_id> <platform>` - Report to specific platform",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
-        domain_id = context.args[0]
-        # TODO: Implement reporting in Phase 3
-        await update.message.reply_text(
-            f"Reporting functionality coming in Phase 3.\n"
-            f"For now, manually report to:\n"
-            f"- Google Safe Browsing: https://safebrowsing.google.com/safebrowsing/report_phish/\n"
-            f"- PhishTank: https://phishtank.org/\n"
+        if not self.report_manager:
+            await update.message.reply_text(
+                "Reporting not configured. Please set up SMTP or API keys."
+            )
+            return
+
+        domain_short_id = context.args[0]
+        action = context.args[1] if len(context.args) > 1 else "all"
+
+        # Find domain by short ID
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await update.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        domain_id = target["id"]
+        domain = target["domain"]
+
+        if action == "status":
+            # Show report status
+            reports = await self.report_manager.get_report_status(domain_id)
+            if not reports:
+                await update.message.reply_text(
+                    f"No reports submitted yet for `{domain}`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            else:
+                status_lines = [f"*Report Status for* `{domain}`:\n"]
+                for r in reports:
+                    status_emoji = {
+                        "submitted": "✅",
+                        "confirmed": "✅",
+                        "pending": "⏳",
+                        "failed": "❌",
+                        "rate_limited": "⏱️",
+                        "duplicate": "🔄",
+                        "rejected": "🚫",
+                    }.get(r.get("status", ""), "❓")
+                    status_lines.append(
+                        f"{status_emoji} {r.get('platform', 'unknown')}: {r.get('status', 'unknown')}"
+                    )
+                await update.message.reply_text(
+                    "\n".join(status_lines),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+        else:
+            # Submit reports
+            platforms = None if action == "all" else [action]
+            await update.message.reply_text(
+                f"Submitting reports for `{domain}`...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            results = await self.report_manager.report_domain(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms,
+            )
+
+            summary = self.report_manager.format_results_summary(results)
+            await update.message.reply_text(summary)
+
+    async def _find_domain_by_short_id(self, short_id: str) -> Optional[dict]:
+        """Find a domain by its short ID prefix."""
+        domains = await self.database.get_recent_domains(limit=100)
+        for d in domains:
+            if self.evidence_store.get_domain_id(d["domain"]).startswith(short_id):
+                return d
+        return None
+
+    # Callback handlers for inline buttons
+
+    async def _callback_approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle approve button callback."""
+        query = update.callback_query
+        await query.answer()
+
+        if not self.report_manager:
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text("Reporting not configured.")
+            return
+
+        # Extract domain ID from callback data
+        domain_short_id = query.data.replace("approve_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        # Update button to show processing
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ Submitting reports...", callback_data="noop")]
+            ])
         )
+
+        # Submit reports
+        results = await self.report_manager.report_domain(
+            domain_id=target["id"],
+            domain=target["domain"],
+        )
+
+        # Format and send results
+        summary = self.report_manager.format_results_summary(results)
+
+        # Update the message with final status
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Reports Submitted", callback_data="noop")]
+            ])
+        )
+        await query.message.reply_text(summary)
+
+    async def _callback_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle reject (false positive) button callback."""
+        query = update.callback_query
+        await query.answer()
+
+        domain_short_id = query.data.replace("reject_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        # Mark as false positive
+        if self.report_manager:
+            await self.report_manager.reject_report(target["id"], "false_positive")
+        else:
+            await self.database.mark_false_positive(target["id"])
+
+        # Update button
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚫 Marked as False Positive", callback_data="noop")]
+            ])
+        )
+        await query.message.reply_text(
+            f"Marked `{target['domain']}` as false positive. No reports sent.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    async def _callback_report_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle report status button callback."""
+        query = update.callback_query
+        await query.answer()
+
+        if not self.report_manager:
+            await query.message.reply_text("Reporting not configured.")
+            return
+
+        domain_short_id = query.data.replace("status_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        # Get report status
+        reports = await self.report_manager.get_report_status(target["id"])
+
+        if not reports:
+            await query.message.reply_text(
+                f"No reports submitted yet for `{target['domain']}`\n"
+                "Click 'Approve & Report' to submit.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            status_lines = [f"*Report Status:*\n"]
+            for r in reports:
+                status_emoji = {
+                    "submitted": "✅",
+                    "confirmed": "✅",
+                    "pending": "⏳",
+                    "failed": "❌",
+                    "rate_limited": "⏱️",
+                    "duplicate": "🔄",
+                }.get(r.get("status", ""), "❓")
+                status_lines.append(
+                    f"{status_emoji} {r.get('platform', 'unknown')}: {r.get('status', 'unknown')}"
+                )
+            await query.message.reply_text(
+                "\n".join(status_lines),
+                parse_mode=ParseMode.MARKDOWN,
+            )
 
     async def _cmd_threshold(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /threshold command."""

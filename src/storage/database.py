@@ -347,3 +347,64 @@ class Database:
                 (status, response, report_id),
             )
             await self._connection.commit()
+
+    async def get_reports_for_domain(self, domain_id: int) -> list[dict]:
+        """Get all reports for a domain."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT * FROM reports
+                WHERE domain_id = ?
+                ORDER BY submitted_at DESC
+                """,
+                (domain_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_pending_reports(self) -> list[dict]:
+        """Get all domains with pending report status."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT r.*, d.domain
+                FROM reports r
+                JOIN domains d ON r.domain_id = d.id
+                WHERE r.status IN ('pending', 'rate_limited')
+                ORDER BY r.id ASC
+                """
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_domain_status(
+        self,
+        domain_id: int,
+        status: str = None,
+        verdict: str = None,
+    ):
+        """Update domain status and/or verdict."""
+        async with self._lock:
+            updates = []
+            params = []
+
+            if status is not None:
+                updates.append("status = ?")
+                params.append(status)
+            if verdict is not None:
+                updates.append("verdict = ?")
+                params.append(verdict)
+
+            if not updates:
+                return
+
+            params.append(domain_id)
+            await self._connection.execute(
+                f"""
+                UPDATE domains
+                SET {', '.join(updates)}
+                WHERE id = ?
+                """,
+                params,
+            )
+            await self._connection.commit()

@@ -24,13 +24,43 @@
 
 ### Backend 2: Whale (Form Exfiltration)
 - **URL:** `https://whale-app-poxe2.ondigitalocean.app`
-- **Endpoints:**
-  - `/api/form/` - Main form submission
-  - `/api/form/text` - Text data
 - **DO App ID:** `96092792-7c82-4298-b718-cadf3b84ad46`
 - **Auth:** Requires `x-api-key` header
 - **API Key:** `e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b`
+- **Stack:** Express.js (disclosed via `X-Powered-By` header)
+- **Source path:** `/app/index.js` (leaked in error messages)
 - **Purpose:** **SEED PHRASE EXFILTRATION**
+
+#### API Schema (discovered via probing):
+
+**Endpoint 1: `/api/form/text`** (simple theft)
+```json
+{
+  "appName": "string (required)",
+  "seedPhrase": "string (required)"
+}
+```
+
+**Endpoint 2: `/api/form/submit`** (full data collection)
+```json
+{
+  "Info": "string (required) - the seed phrase",
+  "App Name": "string (required)",
+  "Valid URL": "string (required)",
+  "Referer": "string (required)",
+  "Country": "string (required)",
+  "Country emoji": "string (required)",
+  "City": "string (required)",
+  "Valid IP address": "string (required)",
+  "User agent": "string (required)"
+}
+```
+
+**Data collected per victim:**
+- Seed phrase / recovery words
+- IP address + geolocation (country, city)
+- Browser fingerprint (user agent)
+- Source tracking (referer URL)
 
 ## Exposed API Keys
 
@@ -81,6 +111,7 @@ e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b (whale backend)
 /log-ip
 /api/form/
 /api/form/text
+/api/form/submit
 ```
 
 ## Recommendations

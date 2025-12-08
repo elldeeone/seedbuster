@@ -16,6 +16,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "idna>=3.6",
     "tldextract>=5.1.0",
+    "pyyaml>=6.0.0",
+    "aiosmtplib>=3.0.0",
 ]
 
 [project.optional-dependencies]

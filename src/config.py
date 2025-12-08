@@ -20,10 +20,22 @@ class Config:
     domain_score_threshold: int = 30
     analysis_score_threshold: int = 70
 
-    # Reporting API keys (Phase 3)
-    google_safebrowsing_api_key: str = ""
+    # Reporting API keys
     phishtank_api_key: str = ""
-    netcraft_api_key: str = ""
+
+    # SMTP configuration for email reports
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+
+    # Reporting options
+    report_require_approval: bool = True
+    report_min_score: int = 80
+    report_platforms: list[str] = field(
+        default_factory=lambda: ["phishtank", "google", "cloudflare"]
+    )
 
     # Operational limits
     analysis_timeout: int = 30
@@ -110,14 +122,24 @@ def load_config() -> Config:
     """Load configuration from environment variables."""
     load_dotenv()
 
+    # Parse report platforms from comma-separated string
+    report_platforms_str = os.getenv("REPORT_PLATFORMS", "phishtank,google,cloudflare")
+    report_platforms = [p.strip() for p in report_platforms_str.split(",") if p.strip()]
+
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
         domain_score_threshold=int(os.getenv("DOMAIN_SCORE_THRESHOLD", "30")),
         analysis_score_threshold=int(os.getenv("ANALYSIS_SCORE_THRESHOLD", "70")),
-        google_safebrowsing_api_key=os.getenv("GOOGLE_SAFEBROWSING_API_KEY", ""),
         phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
-        netcraft_api_key=os.getenv("NETCRAFT_API_KEY", ""),
+        smtp_host=os.getenv("SMTP_HOST", ""),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_username=os.getenv("SMTP_USERNAME", ""),
+        smtp_password=os.getenv("SMTP_PASSWORD", ""),
+        smtp_from_email=os.getenv("SMTP_FROM_EMAIL", ""),
+        report_require_approval=os.getenv("REPORT_REQUIRE_APPROVAL", "true").lower() == "true",
+        report_min_score=int(os.getenv("REPORT_MIN_SCORE", "80")),
+        report_platforms=report_platforms,
         analysis_timeout=int(os.getenv("ANALYSIS_TIMEOUT", "30")),
         max_concurrent_analyses=int(os.getenv("MAX_CONCURRENT_ANALYSES", "3")),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),

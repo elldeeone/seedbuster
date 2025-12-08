@@ -1,0 +1,86 @@
+ABUSE REPORT: Cryptocurrency Seed Phrase Phishing Infrastructure
+================================================================
+
+Date: 2025-12-08
+Reporter: [YOUR NAME/ORGANIZATION]
+Type: Phishing / Cryptocurrency Theft
+
+SUMMARY
+-------
+Two DigitalOcean App Platform applications are being used as backend
+infrastructure for a cryptocurrency seed phrase phishing operation
+targeting Kaspa wallet users at kaspa-wallet.co.
+
+MALICIOUS APPLICATIONS
+----------------------
+
+Application 1: Whale (Seed Phrase Exfiltration)
+- URL: https://whale-app-poxe2.ondigitalocean.app
+- App ID: 96092792-7c82-4298-b718-cadf3b84ad46
+- Purpose: Receives and stores stolen cryptocurrency wallet seed phrases
+- Endpoints:
+  - POST /api/form/text (requires: appName, seedPhrase)
+  - POST /api/form/submit (full victim data collection)
+- API Key found in phishing site: e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b
+
+Application 2: Walrus (IP Logging/Fingerprinting)
+- URL: https://walrus-app-o5hvw.ondigitalocean.app
+- App ID: b0c0ead8-1bbd-460c-b129-4ff9d4e4e1a8
+- Purpose: Logs visitor IPs and performs device fingerprinting
+- Endpoint: POST /log-ip
+
+EVIDENCE
+--------
+
+1. The phishing domain kaspa-wallet.co contains JavaScript that:
+   - Sends victim seed phrases to whale-app-poxe2.ondigitalocean.app
+   - Logs visitor IPs to walrus-app-o5hvw.ondigitalocean.app
+   - Uses ipdata.co API for geolocation (key: 520a83d66268292f5b97ca64c496ef3b9cfb1bb1f85f2615b103f66f)
+
+2. API probing confirmed the backend accepts seed phrase submissions:
+   Response from /api/form/text:
+   {"status":false,"message":"appName and seedPhrase are required"}
+
+   Response from /api/form/submit:
+   {"status":false,"message":"Validation error","details":["Info is required",
+   "App Name is required","Valid URL is required","Referer is required",
+   "Country is required","Country emoji is required","City is required",
+   "Valid IP address is required","User agent is required"]}
+
+3. Stack disclosure confirms Express.js backend:
+   - X-Powered-By: Express
+   - Error messages leak source path: /app/index.js:341:18
+
+DATA COLLECTED BY SCAMMER
+-------------------------
+Per the API schema, the scammer collects:
+- Cryptocurrency seed phrases (12/24 word recovery phrases)
+- Victim IP addresses
+- Geolocation (country, city)
+- Browser user agent
+- Referrer URL
+- Target wallet app name
+
+IMPACT
+------
+Cryptocurrency seed phrases provide complete control over victims' wallets.
+This infrastructure enables theft of cryptocurrency funds with no recourse
+for victims once phrases are compromised.
+
+REQUESTED ACTION
+----------------
+Please immediately suspend/terminate both App Platform applications:
+- whale-app-poxe2
+- walrus-app-o5hvw
+
+And preserve any logs that may help identify the account holder for
+potential law enforcement referral.
+
+ADDITIONAL IOCS
+---------------
+Phishing domain: kaspa-wallet.co
+Cloudflare IP: 172.66.0.96 (proxied, not origin)
+SSL Issuer: Google Trust Services
+SSL Valid From: Oct 15, 2025
+
+Thank you for your prompt attention to this matter.
