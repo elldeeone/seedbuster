@@ -34,7 +34,7 @@ class Config:
     report_require_approval: bool = True
     report_min_score: int = 80
     report_platforms: list[str] = field(
-        default_factory=lambda: ["phishtank", "google", "cloudflare"]
+        default_factory=lambda: ["google", "cloudflare", "netcraft", "smtp"]
     )
 
     # Operational limits

@@ -19,6 +19,7 @@ from .phishtank import PhishTankReporter
 from .cloudflare import CloudflareReporter
 from .google_form import GoogleFormReporter
 from .smtp_reporter import SMTPReporter
+from .netcraft import NetcraftReporter
 
 __all__ = [
     # Base classes
@@ -41,4 +42,5 @@ __all__ = [
     "CloudflareReporter",
     "GoogleFormReporter",
     "SMTPReporter",
+    "NetcraftReporter",
 ]

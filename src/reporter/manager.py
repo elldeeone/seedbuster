@@ -54,12 +54,13 @@ class ReportManager:
         from .smtp_reporter import SMTPReporter
         from .cloudflare import CloudflareReporter
         from .google_form import GoogleFormReporter
+        from .netcraft import NetcraftReporter
 
-        # PhishTank (always available, API key optional)
+        # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
             api_key=self.phishtank_api_key
         )
-        logger.info("Initialized PhishTank reporter")
+        logger.info("Initialized PhishTank reporter (note: requires login)")
 
         # Google Safe Browsing form (always available, free)
         self.reporters["google"] = GoogleFormReporter()
@@ -68,6 +69,10 @@ class ReportManager:
         # Cloudflare abuse form (always available)
         self.reporters["cloudflare"] = CloudflareReporter()
         logger.info("Initialized Cloudflare reporter")
+
+        # Netcraft (always available, no account needed)
+        self.reporters["netcraft"] = NetcraftReporter()
+        logger.info("Initialized Netcraft reporter")
 
         # SMTP reporter (if configured)
         if self.smtp_config.get("host"):
