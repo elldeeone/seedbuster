@@ -17,6 +17,7 @@ from src.reporter import (
     GoogleFormReporter,
     SMTPReporter,
     NetcraftReporter,
+    ResendReporter,
     ReportTemplates,
 )
 
@@ -94,6 +95,13 @@ async def test_reporters_init():
     # Netcraft (always available, no account needed)
     nc = NetcraftReporter()
     print(f"Netcraft: configured={nc.is_configured()}")
+
+    # Resend (needs API key)
+    resend_unconfigured = ResendReporter(api_key="")
+    print(f"Resend (unconfigured): configured={resend_unconfigured.is_configured()}")
+
+    resend_configured = ResendReporter(api_key="re_test_key")
+    print(f"Resend (configured): configured={resend_configured.is_configured()}")
 
     # SMTP (needs config)
     smtp = SMTPReporter(host="", port=587, from_email="")

@@ -36,12 +36,14 @@ class ReportManager:
         evidence_store: "EvidenceStore",
         smtp_config: Optional[dict] = None,
         phishtank_api_key: Optional[str] = None,
+        resend_api_key: Optional[str] = None,
         reporter_email: str = "",
     ):
         self.database = database
         self.evidence_store = evidence_store
         self.smtp_config = smtp_config or {}
         self.phishtank_api_key = phishtank_api_key
+        self.resend_api_key = resend_api_key
         self.reporter_email = reporter_email
 
         self.reporters: dict[str, BaseReporter] = {}
@@ -73,6 +75,15 @@ class ReportManager:
         # Netcraft (always available, no account needed)
         self.reporters["netcraft"] = NetcraftReporter()
         logger.info("Initialized Netcraft reporter")
+
+        # Resend email reporter (if API key configured)
+        if self.resend_api_key:
+            from .resend_reporter import ResendReporter
+            self.reporters["resend"] = ResendReporter(
+                api_key=self.resend_api_key,
+                from_email=self.reporter_email or "SeedBuster <onboarding@resend.dev>",
+            )
+            logger.info("Initialized Resend email reporter")
 
         # SMTP reporter (if configured)
         if self.smtp_config.get("host"):

@@ -22,8 +22,9 @@ class Config:
 
     # Reporting API keys
     phishtank_api_key: str = ""
+    resend_api_key: str = ""
 
-    # SMTP configuration for email reports
+    # SMTP configuration for email reports (alternative to Resend)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -34,7 +35,7 @@ class Config:
     report_require_approval: bool = True
     report_min_score: int = 80
     report_platforms: list[str] = field(
-        default_factory=lambda: ["google", "cloudflare", "netcraft", "smtp"]
+        default_factory=lambda: ["google", "cloudflare", "netcraft", "resend"]
     )
 
     # Operational limits
@@ -123,7 +124,7 @@ def load_config() -> Config:
     load_dotenv()
 
     # Parse report platforms from comma-separated string
-    report_platforms_str = os.getenv("REPORT_PLATFORMS", "phishtank,google,cloudflare")
+    report_platforms_str = os.getenv("REPORT_PLATFORMS", "google,cloudflare,netcraft,resend")
     report_platforms = [p.strip() for p in report_platforms_str.split(",") if p.strip()]
 
     return Config(
@@ -132,6 +133,7 @@ def load_config() -> Config:
         domain_score_threshold=int(os.getenv("DOMAIN_SCORE_THRESHOLD", "30")),
         analysis_score_threshold=int(os.getenv("ANALYSIS_SCORE_THRESHOLD", "70")),
         phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
+        resend_api_key=os.getenv("RESEND_API_KEY", ""),
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),

@@ -20,6 +20,7 @@ from .cloudflare import CloudflareReporter
 from .google_form import GoogleFormReporter
 from .smtp_reporter import SMTPReporter
 from .netcraft import NetcraftReporter
+from .resend_reporter import ResendReporter
 
 __all__ = [
     # Base classes
@@ -43,4 +44,5 @@ __all__ = [
     "GoogleFormReporter",
     "SMTPReporter",
     "NetcraftReporter",
+    "ResendReporter",
 ]
