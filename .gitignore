@@ -46,3 +46,4 @@ htmlcov/
 *.log
 data/temporal/
 data/clusters/
+data/intel_cache/

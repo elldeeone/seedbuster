@@ -12,6 +12,7 @@ from .analyzer import BrowserAnalyzer, PhishingDetector
 from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
 from .analyzer.clustering import ThreatClusterManager, analyze_for_clustering
+from .analyzer.external_intel import ExternalIntelligence
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
@@ -53,6 +54,11 @@ class SeedBusterPipeline:
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
         self.temporal = TemporalTracker(config.data_dir / "temporal")
         self.cluster_manager = ThreatClusterManager(config.data_dir / "clusters")
+        self.external_intel = ExternalIntelligence(
+            urlscan_api_key=config.urlscan_api_key or None,
+            virustotal_api_key=config.virustotal_api_key or None,
+            cache_dir=config.data_dir / "intel_cache",
+        )
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
             keywords=config.keywords,
@@ -306,18 +312,26 @@ class SeedBusterPipeline:
                     "dns_resolves": False,
                 })
             else:
-                # Run browser and infrastructure analysis in PARALLEL
+                # Run browser, infrastructure, and external intel in PARALLEL
                 browser_task = asyncio.create_task(self.browser.analyze(domain))
                 infra_task = asyncio.create_task(self.infrastructure.analyze(domain))
+                external_task = asyncio.create_task(self.external_intel.query_all(domain))
 
                 browser_result = await browser_task
                 infra_result = await infra_task
+                external_result = await external_task
 
                 logger.info(
                     f"Infrastructure analysis for {domain}: "
                     f"score={infra_result.risk_score}, "
                     f"reasons={len(infra_result.risk_reasons)}"
                 )
+                if external_result.score > 0:
+                    logger.info(
+                        f"External intel for {domain}: "
+                        f"score={external_result.score}, "
+                        f"reasons={len(external_result.reasons)}"
+                    )
 
                 if not browser_result.success:
                     logger.warning(f"Failed to analyze {domain}: {browser_result.error}")
@@ -358,8 +372,10 @@ class SeedBusterPipeline:
                         infrastructure=infra_result,
                         temporal=temporal_analysis,
                     )
-                    analysis_score = detection.score
-                    reasons = detection.reasons
+
+                    # Add external intelligence results
+                    analysis_score = min(100, detection.score + external_result.score)
+                    reasons = detection.reasons + external_result.reasons
 
                     # Save temporal snapshot for future comparisons
                     self.temporal.add_snapshot(
@@ -433,6 +449,7 @@ class SeedBusterPipeline:
                             "related_domains": cluster_result.related_domains,
                             "confidence": cluster_result.confidence,
                         },
+                        "external_intel": external_result.to_dict(),
                     })
 
             # Update database

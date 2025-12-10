@@ -25,6 +25,10 @@ class Config:
     resend_api_key: str = ""
     resend_from_email: str = "SeedBuster <onboarding@resend.dev>"
 
+    # External intelligence API keys (optional, improves detection)
+    virustotal_api_key: str = ""  # Free tier: 4 req/min, 500/day
+    urlscan_api_key: str = ""  # Free tier: 50 scans/day (optional for search)
+
     # SMTP configuration for email reports (alternative to Resend)
     smtp_host: str = ""
     smtp_port: int = 587
@@ -136,6 +140,8 @@ def load_config() -> Config:
         phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
         resend_api_key=os.getenv("RESEND_API_KEY", ""),
         resend_from_email=os.getenv("RESEND_FROM_EMAIL", "SeedBuster <onboarding@resend.dev>"),
+        virustotal_api_key=os.getenv("VIRUSTOTAL_API_KEY", ""),
+        urlscan_api_key=os.getenv("URLSCAN_API_KEY", ""),
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),

@@ -131,6 +131,7 @@ class AlertFormatter:
         infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]
         code_reasons = [r for r in data.reasons if r.startswith("CODE:")]
         temporal_reasons = [r for r in data.reasons if r.startswith("TEMPORAL:")]
+        external_reasons = [r for r in data.reasons if r.startswith("EXTERNAL:")]
 
         # Categorize other reasons
         threat_intel = []
@@ -139,7 +140,7 @@ class AlertFormatter:
         other = []
 
         for r in data.reasons:
-            if r.startswith(("INFRA:", "CODE:", "TEMPORAL:")):
+            if r.startswith(("INFRA:", "CODE:", "TEMPORAL:", "EXTERNAL:")):
                 continue
             elif "KNOWN MALICIOUS" in r or "Malicious URL" in r:
                 threat_intel.append(r)
@@ -189,6 +190,14 @@ class AlertFormatter:
             lines.append("\U0001F551 Temporal:")
             for r in temporal_reasons:
                 clean = r.replace("TEMPORAL: ", "")
+                safe_reason = clean.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # External Intelligence section
+        if external_reasons:
+            lines.append("\U0001F50D External Intel:")
+            for r in external_reasons:
+                clean = r.replace("EXTERNAL: ", "")
                 safe_reason = clean.replace('_', ' ').replace('*', '')
                 lines.append(f"  • {safe_reason}")
 
