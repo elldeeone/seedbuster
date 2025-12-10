@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -121,9 +121,48 @@ class SeedBusterBot:
                     ],
                 ])
 
-            # Send screenshot if available
-            if data.screenshot_path and Path(data.screenshot_path).exists():
-                with open(data.screenshot_path, "rb") as f:
+            # Send screenshots if available
+            screenshots_to_send = []
+
+            # Check for multiple screenshots first
+            if data.screenshot_paths:
+                screenshots_to_send = [p for p in data.screenshot_paths if Path(p).exists()]
+            elif data.screenshot_path and Path(data.screenshot_path).exists():
+                screenshots_to_send = [data.screenshot_path]
+
+            if len(screenshots_to_send) > 1:
+                # Send analysis message FIRST (media group captions are limited)
+                await self._app.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=message,
+                )
+
+                # Then send screenshots as media group
+                media = []
+                for i, path in enumerate(screenshots_to_send):
+                    with open(path, "rb") as f:
+                        # Label each screenshot
+                        label = Path(path).stem.replace("screenshot", "").replace("_", " ").strip() or "Final"
+                        caption = f"📸 {label.title() if label else 'Final'}"
+                        media.append(InputMediaPhoto(
+                            media=f.read(),
+                            caption=caption,
+                        ))
+
+                await self._app.bot.send_media_group(
+                    chat_id=self.chat_id,
+                    media=media,
+                )
+                # Send keyboard separately since media_group doesn't support reply_markup
+                await self._app.bot.send_message(
+                    chat_id=self.chat_id,
+                    text="⬆️ *Actions for this alert:*",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            elif screenshots_to_send:
+                # Single screenshot
+                with open(screenshots_to_send[0], "rb") as f:
                     await self._app.bot.send_photo(
                         chat_id=self.chat_id,
                         photo=InputFile(f),
@@ -131,13 +170,14 @@ class SeedBusterBot:
                         reply_markup=keyboard,
                     )
             else:
+                # No screenshots
                 await self._app.bot.send_message(
                     chat_id=self.chat_id,
                     text=message,
                     reply_markup=keyboard,
                 )
 
-            logger.info(f"Sent alert for {data.domain}")
+            logger.info(f"Sent alert for {data.domain} ({len(screenshots_to_send)} screenshots)")
 
         except Exception as e:
             logger.error(f"Failed to send alert: {e}")

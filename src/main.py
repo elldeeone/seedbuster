@@ -9,6 +9,7 @@ from pathlib import Path
 from .config import load_config, Config
 from .discovery import DomainScorer, AsyncCertstreamListener
 from .analyzer import BrowserAnalyzer, PhishingDetector
+from .analyzer.infrastructure import InfrastructureAnalyzer
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
@@ -47,6 +48,7 @@ class SeedBusterPipeline:
             suspicious_tlds=config.suspicious_tlds,
         )
         self.browser = BrowserAnalyzer(timeout=config.analysis_timeout)
+        self.infrastructure = InfrastructureAnalyzer(timeout=10)
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
             keywords=config.keywords,
@@ -257,8 +259,18 @@ class SeedBusterPipeline:
                     "dns_resolves": False,
                 })
             else:
-                # Browse the site (DNS resolved)
-                browser_result = await self.browser.analyze(domain)
+                # Run browser and infrastructure analysis in PARALLEL
+                browser_task = asyncio.create_task(self.browser.analyze(domain))
+                infra_task = asyncio.create_task(self.infrastructure.analyze(domain))
+
+                browser_result = await browser_task
+                infra_result = await infra_task
+
+                logger.info(
+                    f"Infrastructure analysis for {domain}: "
+                    f"score={infra_result.risk_score}, "
+                    f"reasons={len(infra_result.risk_reasons)}"
+                )
 
                 if not browser_result.success:
                     logger.warning(f"Failed to analyze {domain}: {browser_result.error}")
@@ -266,14 +278,35 @@ class SeedBusterPipeline:
                     analysis_score = domain_score
                     reasons = domain_reasons + [browser_result.error or "Analysis failed"]
                 else:
-                    # Save evidence
+                    # Save all screenshots for comparison
+                    has_early = (
+                        hasattr(browser_result, 'screenshot_early') and
+                        browser_result.screenshot_early
+                    )
+                    has_blocked = (
+                        hasattr(browser_result, 'blocked_requests') and
+                        browser_result.blocked_requests
+                    )
+
+                    if has_early:
+                        # Save early screenshot (before JS-based evasion)
+                        await self.evidence_store.save_screenshot(domain, browser_result.screenshot_early, suffix="_early")
+                        if has_blocked:
+                            logger.info(f"Saved early screenshot for {domain} (anti-bot blocked)")
+
                     if browser_result.screenshot:
+                        # Save final screenshot
                         await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
+
                     if browser_result.html:
                         await self.evidence_store.save_html(domain, browser_result.html)
 
-                    # Detect phishing signals
-                    detection = self.detector.detect(browser_result, domain_score)
+                    # Detect phishing signals (including infrastructure intelligence)
+                    detection = self.detector.detect(
+                        browser_result,
+                        domain_score,
+                        infrastructure=infra_result
+                    )
                     analysis_score = detection.score
                     reasons = detection.reasons
 
@@ -289,6 +322,14 @@ class SeedBusterPipeline:
                         "visual_match": detection.visual_match_score,
                         "seed_form": detection.seed_form_detected,
                         "suspicious_endpoints": detection.suspicious_endpoints,
+                        "infrastructure": {
+                            "score": detection.infrastructure_score,
+                            "reasons": detection.infrastructure_reasons,
+                            "tls_age_days": infra_result.tls.age_days if infra_result.tls else None,
+                            "domain_age_days": infra_result.domain_info.age_days if infra_result.domain_info else None,
+                            "hosting_provider": infra_result.hosting.hosting_provider if infra_result.hosting else None,
+                            "uses_privacy_dns": infra_result.domain_info.uses_privacy_dns if infra_result.domain_info else False,
+                        },
                     })
 
             # Update database
@@ -304,6 +345,7 @@ class SeedBusterPipeline:
             # Send alert if suspicious
             if analysis_score >= self.config.analysis_score_threshold:
                 screenshot_path = self.evidence_store.get_screenshot_path(domain)
+                screenshot_paths = self.evidence_store.get_all_screenshot_paths(domain)
                 await self.bot.send_alert(AlertData(
                     domain=domain,
                     domain_id=self.evidence_store.get_domain_id(domain),
@@ -311,6 +353,7 @@ class SeedBusterPipeline:
                     score=analysis_score,
                     reasons=reasons,
                     screenshot_path=str(screenshot_path) if screenshot_path else None,
+                    screenshot_paths=[str(p) for p in screenshot_paths] if screenshot_paths else None,
                     evidence_path=evidence_path,
                 ))
 

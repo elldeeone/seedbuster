@@ -11,6 +11,33 @@ from playwright.async_api import async_playwright, Browser, Page, Error as Playw
 
 logger = logging.getLogger(__name__)
 
+# Known anti-bot/fingerprinting services to block
+ANTIBOT_DOMAINS = {
+    "ipdata.co",
+    "ipinfo.io",
+    "ipapi.co",
+    "ip-api.com",
+    "ipgeolocation.io",
+    "ipify.org",
+    "api.ipify.org",
+    "fingerprint.com",
+    "fpjs.io",
+    "arkoselabs.com",
+    "funcaptcha.com",
+    "datadome.co",
+    "perimeterx.net",
+    "px-cdn.net",
+    "hcaptcha.com",
+    "recaptcha.net",
+    "gstatic.com/recaptcha",
+    "challenges.cloudflare.com",
+    "kasada.io",
+    "queue-it.net",
+    "distil.net",
+    "imperva.com",
+    "incapsula.com",
+}
+
 # Realistic user agents for stealth mode
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -59,6 +86,72 @@ window.chrome = {
 // Ensure consistent screen dimensions
 Object.defineProperty(screen, 'availWidth', { get: () => window.innerWidth });
 Object.defineProperty(screen, 'availHeight', { get: () => window.innerHeight });
+
+// WebGL fingerprint spoofing
+const getParameterProxyHandler = {
+    apply: function(target, thisArg, args) {
+        const param = args[0];
+        const gl = thisArg;
+        // Return realistic values for common fingerprinting parameters
+        if (param === 37445) return 'Google Inc. (NVIDIA)'; // UNMASKED_VENDOR_WEBGL
+        if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)'; // UNMASKED_RENDERER_WEBGL
+        return target.apply(thisArg, args);
+    }
+};
+try {
+    WebGLRenderingContext.prototype.getParameter = new Proxy(
+        WebGLRenderingContext.prototype.getParameter, getParameterProxyHandler
+    );
+    WebGL2RenderingContext.prototype.getParameter = new Proxy(
+        WebGL2RenderingContext.prototype.getParameter, getParameterProxyHandler
+    );
+} catch(e) {}
+
+// Canvas fingerprint noise injection
+const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+HTMLCanvasElement.prototype.toDataURL = function(type) {
+    if (type === 'image/png' || type === undefined) {
+        const context = this.getContext('2d');
+        if (context) {
+            const imageData = context.getImageData(0, 0, this.width, this.height);
+            // Add subtle noise to prevent fingerprinting
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] ^= (Math.random() * 2) | 0;
+            }
+            context.putImageData(imageData, 0, 0);
+        }
+    }
+    return originalToDataURL.apply(this, arguments);
+};
+
+// AudioContext fingerprint spoofing
+const originalGetChannelData = AudioBuffer.prototype.getChannelData;
+AudioBuffer.prototype.getChannelData = function(channel) {
+    const result = originalGetChannelData.apply(this, arguments);
+    // Add subtle noise
+    for (let i = 0; i < result.length; i += 100) {
+        result[i] += (Math.random() * 0.0001);
+    }
+    return result;
+};
+
+// Prevent detection via connection info
+Object.defineProperty(navigator, 'connection', {
+    get: () => ({
+        effectiveType: '4g',
+        rtt: 50,
+        downlink: 10,
+        saveData: false
+    })
+});
+
+// Mock battery API (often used for fingerprinting)
+navigator.getBattery = () => Promise.resolve({
+    charging: true,
+    chargingTime: 0,
+    dischargingTime: Infinity,
+    level: 1.0
+});
 """
 
 
@@ -72,13 +165,16 @@ class BrowserResult:
 
     # Collected data
     screenshot: Optional[bytes] = None
+    screenshot_early: Optional[bytes] = None  # Captured before JS-based redirects
     html: Optional[str] = None
+    html_early: Optional[str] = None  # Captured before JS-based redirects
     har: Optional[dict] = None
     console_logs: list[str] = field(default_factory=list)
 
     # Page metadata
     final_url: Optional[str] = None
     title: Optional[str] = None
+    title_early: Optional[str] = None  # Title before JS-based redirects
     status_code: Optional[int] = None
 
     # Detected forms
@@ -88,6 +184,10 @@ class BrowserResult:
     # Network requests
     external_requests: list[str] = field(default_factory=list)
     form_submissions: list[dict] = field(default_factory=list)
+
+    # Anti-evasion data
+    blocked_requests: list[str] = field(default_factory=list)  # Blocked anti-bot requests
+    evasion_detected: bool = False  # True if content changed significantly after load
 
 
 class BrowserAnalyzer:
@@ -159,9 +259,32 @@ class BrowserAnalyzer:
             # Collect console logs
             page.on("console", lambda msg: result.console_logs.append(f"[{msg.type}] {msg.text}"))
 
-            # Track network requests
+            # Track network requests and block anti-bot services
             external_domains = set()
             form_posts = []
+            blocked_requests = []
+
+            async def handle_route(route):
+                """Block requests to known anti-bot services."""
+                url = route.request.url
+                try:
+                    # Extract domain from URL
+                    url_parts = url.split("/")
+                    if len(url_parts) >= 3:
+                        request_domain = url_parts[2].lower()
+                        # Check if this is an anti-bot service
+                        for antibot in ANTIBOT_DOMAINS:
+                            if antibot in request_domain:
+                                blocked_requests.append(url)
+                                logger.debug(f"Blocked anti-bot request: {url}")
+                                await route.abort()
+                                return
+                except Exception:
+                    pass
+                await route.continue_()
+
+            # Enable request interception to block anti-bot services
+            await page.route("**/*", handle_route)
 
             async def handle_request(request):
                 try:
@@ -181,15 +304,31 @@ class BrowserAnalyzer:
 
             page.on("request", handle_request)
 
-            # Navigate to the site
+            # Navigate to the site - first wait for DOM, then capture early evidence
             url = f"https://{domain}"
             try:
+                # First load: wait only for DOM content (before JS redirects)
                 response = await page.goto(
                     url,
                     timeout=self.timeout,
-                    wait_until="networkidle",
+                    wait_until="domcontentloaded",
                 )
                 result.status_code = response.status if response else None
+
+                # Capture EARLY evidence before JS-based evasion kicks in
+                # Wait for body to be visible and content to render
+                try:
+                    await page.wait_for_selector("body", state="visible", timeout=3000)
+                    await asyncio.sleep(1.5)  # Allow more time for initial render
+                except:
+                    await asyncio.sleep(2.0)  # Fallback wait if selector fails
+                result.screenshot_early = await page.screenshot(full_page=True)
+                result.html_early = await page.content()
+                result.title_early = await page.title()
+
+                # Now wait for full page load (networkidle)
+                await page.wait_for_load_state("networkidle", timeout=self.timeout)
+
             except PlaywrightError as e:
                 # Try HTTP if HTTPS fails
                 if "ERR_" in str(e) or "Timeout" in str(e):
@@ -198,9 +337,21 @@ class BrowserAnalyzer:
                         response = await page.goto(
                             url,
                             timeout=self.timeout,
-                            wait_until="networkidle",
+                            wait_until="domcontentloaded",
                         )
                         result.status_code = response.status if response else None
+
+                        # Capture early evidence
+                        try:
+                            await page.wait_for_selector("body", state="visible", timeout=3000)
+                            await asyncio.sleep(1.5)
+                        except:
+                            await asyncio.sleep(2.0)
+                        result.screenshot_early = await page.screenshot(full_page=True)
+                        result.html_early = await page.content()
+                        result.title_early = await page.title()
+
+                        await page.wait_for_load_state("networkidle", timeout=self.timeout)
                     except PlaywrightError as e2:
                         result.error = f"Failed to load: {str(e2)[:200]}"
                         return result
@@ -211,20 +362,30 @@ class BrowserAnalyzer:
             # Simulate human-like behavior to evade bot detection
             await self._simulate_human_behavior(page)
 
-            # Collect evidence
+            # Collect final evidence
             result.final_url = page.url
             result.title = await page.title()
             result.html = await page.content()
             result.screenshot = await page.screenshot(full_page=True)
             result.external_requests = list(external_domains)
             result.form_submissions = form_posts
+            result.blocked_requests = blocked_requests
+
+            # Detect evasion: check if content changed significantly
+            if result.title_early and result.title:
+                if result.title_early != result.title:
+                    result.evasion_detected = True
+                    logger.info(f"Evasion detected: title changed from '{result.title_early}' to '{result.title}'")
 
             # Analyze forms and inputs
             result.forms = await self._extract_forms(page)
             result.input_fields = await self._extract_inputs(page)
 
             result.success = True
-            logger.info(f"Successfully analyzed {domain}")
+            if blocked_requests:
+                logger.info(f"Successfully analyzed {domain} (blocked {len(blocked_requests)} anti-bot requests)")
+            else:
+                logger.info(f"Successfully analyzed {domain}")
 
         except Exception as e:
             result.error = f"Analysis error: {str(e)[:200]}"

@@ -13,6 +13,7 @@ import imagehash
 
 from .browser import BrowserResult
 from .threat_intel import ThreatIntelLoader, ThreatIntel
+from .infrastructure import InfrastructureResult
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,10 @@ class DetectionResult:
 
     # Network analysis
     suspicious_endpoints: list[str] = field(default_factory=list)
+
+    # Infrastructure analysis
+    infrastructure_score: int = 0
+    infrastructure_reasons: list[str] = field(default_factory=list)
 
 
 class PhishingDetector:
@@ -107,7 +112,12 @@ class PhishingDetector:
         except Exception as e:
             logger.error(f"Failed to save fingerprint {name}: {e}")
 
-    def detect(self, browser_result: BrowserResult, domain_score: int = 0) -> DetectionResult:
+    def detect(
+        self,
+        browser_result: BrowserResult,
+        domain_score: int = 0,
+        infrastructure: Optional[InfrastructureResult] = None
+    ) -> DetectionResult:
         """Analyze browser results for phishing indicators."""
         result = DetectionResult(
             domain=browser_result.domain,
@@ -163,6 +173,19 @@ class PhishingDetector:
         title_score, title_reasons = self._check_title(browser_result.title or "")
         result.score += title_score
         result.reasons.extend(title_reasons)
+
+        # 7. Anti-bot evasion detection
+        evasion_score, evasion_reasons = self._detect_evasion(browser_result)
+        result.score += evasion_score
+        result.reasons.extend(evasion_reasons)
+
+        # 8. Infrastructure intelligence
+        if infrastructure:
+            infra_score, infra_reasons = self._score_infrastructure(infrastructure)
+            result.score += infra_score
+            result.infrastructure_score = infra_score
+            result.infrastructure_reasons = infra_reasons
+            result.reasons.extend(infra_reasons)
 
         # Cap and classify
         result.score = min(result.score, 100)
@@ -410,5 +433,94 @@ class PhishingDetector:
             if keyword in title_lower:
                 score += points
                 reasons.append(reason)
+
+        return score, reasons
+
+    def _detect_evasion(self, result: BrowserResult) -> tuple[int, list[str]]:
+        """Detect anti-bot evasion techniques."""
+        score = 0
+        reasons = []
+
+        # Check if anti-bot services were blocked
+        if hasattr(result, 'blocked_requests') and result.blocked_requests:
+            score += 15
+            blocked_count = len(result.blocked_requests)
+            # Extract service names from URLs
+            services = set()
+            for url in result.blocked_requests:
+                try:
+                    domain = url.split("/")[2]
+                    services.add(domain.split(".")[-2])
+                except Exception:
+                    pass
+            if services:
+                reasons.append(f"Anti-bot services blocked: {', '.join(services)} ({blocked_count} requests)")
+            else:
+                reasons.append(f"Anti-bot services blocked ({blocked_count} requests)")
+
+        # Check if content changed (evasion detected)
+        if hasattr(result, 'evasion_detected') and result.evasion_detected:
+            score += 20
+            if result.title_early and result.title:
+                reasons.append(f"Evasion detected: title changed from '{result.title_early[:30]}...' to '{result.title[:30]}...'")
+            else:
+                reasons.append("Evasion detected: page content changed after load")
+
+        # Check early HTML for seed phrases (in case final page is a cover)
+        if hasattr(result, 'html_early') and result.html_early:
+            early_keyword_score, early_reasons = self._detect_keywords(result.html_early)
+            if early_keyword_score > 0 and hasattr(result, 'evasion_detected') and result.evasion_detected:
+                score += early_keyword_score
+                for reason in early_reasons:
+                    reasons.append(f"[Early capture] {reason}")
+
+        return score, reasons
+
+    def _score_infrastructure(
+        self, infra: InfrastructureResult
+    ) -> tuple[int, list[str]]:
+        """Score infrastructure signals for phishing indicators.
+
+        Infrastructure signals are powerful because they work even when
+        the site is cloaked or showing a cover page.
+        """
+        score = 0
+        reasons = []
+
+        # TLS Certificate signals
+        if infra.tls:
+            # Very new certificates are suspicious
+            if infra.tls.is_new:
+                score += 10
+                reasons.append(f"INFRA: New TLS cert ({infra.tls.age_days} days old)")
+
+            # Free + short-lived is common pattern for phishing
+            if infra.tls.is_free_cert and infra.tls.is_short_lived:
+                score += 5
+                reasons.append(f"INFRA: Free short-lived cert ({infra.tls.issuer})")
+
+        # Domain registration signals
+        if infra.domain_info:
+            # Very new domains are highly suspicious
+            if infra.domain_info.is_very_new:
+                score += 20
+                reasons.append(f"INFRA: Very new domain ({infra.domain_info.age_days} days)")
+            elif infra.domain_info.is_new_domain:
+                score += 10
+                reasons.append(f"INFRA: New domain ({infra.domain_info.age_days} days)")
+
+            # Privacy-focused DNS is a strong signal
+            if infra.domain_info.uses_privacy_dns:
+                score += 20
+                ns_list = infra.domain_info.nameservers
+                ns_sample = ns_list[0] if ns_list else "detected"
+                reasons.append(f"INFRA: Privacy DNS (Njalla): {ns_sample}")
+
+        # Hosting signals
+        if infra.hosting:
+            # Bulletproof hosting is very suspicious
+            if infra.hosting.is_bulletproof:
+                score += 25
+                reasons.append(f"INFRA: Bulletproof hosting ({infra.hosting.asn_name})")
 
         return score, reasons

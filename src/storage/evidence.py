@@ -29,10 +29,11 @@ class EvidenceStore:
         """Get short ID for domain (used in Telegram commands)."""
         return hashlib.sha256(domain.lower().encode()).hexdigest()[:8]
 
-    async def save_screenshot(self, domain: str, screenshot_bytes: bytes) -> Path:
-        """Save screenshot for a domain."""
+    async def save_screenshot(self, domain: str, screenshot_bytes: bytes, suffix: str = "") -> Path:
+        """Save screenshot for a domain. Optional suffix for multiple screenshots."""
         domain_dir = self.get_domain_dir(domain)
-        path = domain_dir / "screenshot.png"
+        filename = f"screenshot{suffix}.png"
+        path = domain_dir / filename
         path.write_bytes(screenshot_bytes)
         return path
 
@@ -76,6 +77,24 @@ class EvidenceStore:
         """Get screenshot path if it exists."""
         path = self.get_domain_dir(domain) / "screenshot.png"
         return path if path.exists() else None
+
+    def get_all_screenshot_paths(self, domain: str) -> list[Path]:
+        """Get all screenshot paths for a domain (early, final, etc.)."""
+        domain_dir = self.get_domain_dir(domain)
+        screenshots = []
+        # Check for early screenshot first
+        early = domain_dir / "screenshot_early.png"
+        if early.exists():
+            screenshots.append(early)
+        # Then main screenshot
+        main = domain_dir / "screenshot.png"
+        if main.exists():
+            screenshots.append(main)
+        # Then final screenshot
+        final = domain_dir / "screenshot_final.png"
+        if final.exists():
+            screenshots.append(final)
+        return screenshots
 
     def get_analysis_path(self, domain: str) -> Optional[Path]:
         """Get analysis JSON path if it exists."""

@@ -24,6 +24,7 @@ class AlertData:
     score: int
     reasons: list[str]
     screenshot_path: Optional[str] = None
+    screenshot_paths: Optional[list[str]] = None  # Multiple screenshots (early, final)
     evidence_path: Optional[str] = None
 
 
@@ -59,7 +60,14 @@ class AlertFormatter:
             "Detection signals:",
         ]
 
-        for reason in data.reasons[:8]:  # Limit reasons shown
+        # Prioritize INFRA reasons so they always show
+        infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]
+        other_reasons = [r for r in data.reasons if not r.startswith("INFRA:")]
+
+        # Show up to 10 other reasons + all INFRA reasons
+        display_reasons = other_reasons[:10] + infra_reasons
+
+        for reason in display_reasons:
             # Escape any special characters in reasons
             safe_reason = reason.replace('_', ' ').replace('*', '')
             lines.append(f"  - {safe_reason}")
