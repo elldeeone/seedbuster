@@ -14,6 +14,7 @@ import imagehash
 from .browser import BrowserResult
 from .threat_intel import ThreatIntelLoader, ThreatIntel
 from .infrastructure import InfrastructureResult
+from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class DetectionResult:
     # Infrastructure analysis
     infrastructure_score: int = 0
     infrastructure_reasons: list[str] = field(default_factory=list)
+
+    # Code analysis
+    code_score: int = 0
+    code_reasons: list[str] = field(default_factory=list)
+    kit_matches: list[str] = field(default_factory=list)
 
 
 class PhishingDetector:
@@ -83,6 +89,9 @@ class PhishingDetector:
         self.config_dir = config_dir or Path("config")
         self._threat_intel_loader = ThreatIntelLoader(self.config_dir)
         self._threat_intel = self._threat_intel_loader.load()
+
+        # Code analyzer for JS/HTML analysis
+        self._code_analyzer = CodeAnalyzer()
 
     def reload_threat_intel(self):
         """Reload threat intelligence from file (hot reload)."""
@@ -186,6 +195,15 @@ class PhishingDetector:
             result.infrastructure_score = infra_score
             result.infrastructure_reasons = infra_reasons
             result.reasons.extend(infra_reasons)
+
+        # 9. Code analysis (JS fingerprinting, obfuscation, kit signatures)
+        code_result = self._analyze_code(browser_result)
+        if code_result.risk_score > 0:
+            result.score += code_result.risk_score
+            result.code_score = code_result.risk_score
+            result.code_reasons = code_result.risk_reasons
+            result.kit_matches = [kit.kit_name for kit in code_result.kit_matches]
+            result.reasons.extend(code_result.risk_reasons)
 
         # Cap and classify
         result.score = min(result.score, 100)
@@ -524,3 +542,29 @@ class PhishingDetector:
                 reasons.append(f"INFRA: Bulletproof hosting ({infra.hosting.asn_name})")
 
         return score, reasons
+
+    def _analyze_code(self, browser_result: BrowserResult) -> CodeAnalysisResult:
+        """Analyze HTML/JavaScript for phishing indicators.
+
+        Also incorporates network requests as they may reveal
+        malicious endpoints even when the page content is cloaked.
+        """
+        # Combine HTML sources (early capture may have real content before cloaking)
+        html_content = ""
+        if browser_result.html:
+            html_content += browser_result.html
+        if hasattr(browser_result, 'html_early') and browser_result.html_early:
+            html_content += "\n" + browser_result.html_early
+
+        # Also include network request URLs as pseudo-code for endpoint detection
+        network_urls = ""
+        if browser_result.external_requests:
+            network_urls = "\n".join(browser_result.external_requests)
+
+        result = self._code_analyzer.analyze(
+            domain=browser_result.domain,
+            html=html_content,
+            javascript=network_urls,  # Network URLs can reveal C2 patterns
+        )
+
+        return result

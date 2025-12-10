@@ -330,6 +330,11 @@ class SeedBusterPipeline:
                             "hosting_provider": infra_result.hosting.hosting_provider if infra_result.hosting else None,
                             "uses_privacy_dns": infra_result.domain_info.uses_privacy_dns if infra_result.domain_info else False,
                         },
+                        "code_analysis": {
+                            "score": detection.code_score,
+                            "reasons": detection.code_reasons,
+                            "kit_matches": detection.kit_matches,
+                        },
                     })
 
             # Update database

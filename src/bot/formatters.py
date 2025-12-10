@@ -60,12 +60,13 @@ class AlertFormatter:
             "Detection signals:",
         ]
 
-        # Prioritize INFRA reasons so they always show
+        # Prioritize INFRA and CODE reasons so they always show
         infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]
-        other_reasons = [r for r in data.reasons if not r.startswith("INFRA:")]
+        code_reasons = [r for r in data.reasons if r.startswith("CODE:")]
+        other_reasons = [r for r in data.reasons if not r.startswith(("INFRA:", "CODE:"))]
 
-        # Show up to 10 other reasons + all INFRA reasons
-        display_reasons = other_reasons[:10] + infra_reasons
+        # Show up to 8 other reasons + all INFRA/CODE reasons
+        display_reasons = other_reasons[:8] + infra_reasons + code_reasons
 
         for reason in display_reasons:
             # Escape any special characters in reasons
