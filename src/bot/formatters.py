@@ -28,6 +28,20 @@ class TemporalInfo:
 
 
 @dataclass
+class ClusterInfo:
+    """Threat cluster information for alerts."""
+    cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
+    is_new_cluster: bool = True
+    related_domains: list[str] = None
+    confidence: float = 0.0
+
+    def __post_init__(self):
+        if self.related_domains is None:
+            self.related_domains = []
+
+
+@dataclass
 class AlertData:
     """Data for a phishing alert."""
 
@@ -40,6 +54,7 @@ class AlertData:
     screenshot_paths: Optional[list[str]] = None  # Multiple screenshots (early, final)
     evidence_path: Optional[str] = None
     temporal: Optional[TemporalInfo] = None  # Temporal analysis info
+    cluster: Optional[ClusterInfo] = None  # Threat cluster info
 
 
 class AlertFormatter:
@@ -101,6 +116,16 @@ class AlertFormatter:
             lines.append("")
             lines.append(f"\U0001F6A8 CLOAKING CONFIRMED ({temporal.cloaking_confidence:.0%} confidence)")
             lines.append("Site showed different content to rescan - evidence of intentional evasion")
+
+        # Add threat cluster info if linked to other domains
+        cluster = data.cluster
+        if cluster and cluster.related_domains:
+            lines.append("")
+            lines.append(f"\U0001F517 LINKED CAMPAIGN: {cluster.cluster_name}")
+            related_list = ", ".join(cluster.related_domains[:3])
+            if len(cluster.related_domains) > 3:
+                related_list += f" (+{len(cluster.related_domains) - 3} more)"
+            lines.append(f"Related: {related_list}")
 
         # Categorize reasons by type
         infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]

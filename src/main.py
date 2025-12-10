@@ -11,10 +11,11 @@ from .discovery import DomainScorer, AsyncCertstreamListener
 from .analyzer import BrowserAnalyzer, PhishingDetector
 from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
+from .analyzer.clustering import ThreatClusterManager, analyze_for_clustering
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
-from .bot.formatters import AlertData, TemporalInfo
+from .bot.formatters import AlertData, TemporalInfo, ClusterInfo
 from .reporter import ReportManager
 
 # Configure logging
@@ -51,6 +52,7 @@ class SeedBusterPipeline:
         self.browser = BrowserAnalyzer(timeout=config.analysis_timeout)
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
         self.temporal = TemporalTracker(config.data_dir / "temporal")
+        self.cluster_manager = ThreatClusterManager(config.data_dir / "clusters")
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
             keywords=config.keywords,
@@ -375,6 +377,24 @@ class SeedBusterPipeline:
                         scan_reason=scan_reason,
                     )
 
+                    # Cluster analysis - link related phishing sites
+                    cluster_result = analyze_for_clustering(
+                        manager=self.cluster_manager,
+                        domain=domain,
+                        detection_result={
+                            "score": analysis_score,
+                            "suspicious_endpoints": detection.suspicious_endpoints,
+                            "kit_matches": detection.kit_matches,
+                        },
+                        infrastructure={
+                            "nameservers": infra_result.domain_info.nameservers if infra_result.domain_info else [],
+                            "asn": str(infra_result.hosting.asn) if infra_result.hosting else None,
+                            "ip": infra_result.hosting.ip_address if infra_result.hosting else None,
+                        } if infra_result else None,
+                    )
+                    if cluster_result.related_domains:
+                        logger.info(f"Clustering: {domain} linked to {len(cluster_result.related_domains)} related sites")
+
                     # Convert verdict string to enum
                     verdict = Verdict(detection.verdict)
 
@@ -405,6 +425,13 @@ class SeedBusterPipeline:
                             "reasons": detection.temporal_reasons,
                             "cloaking_detected": detection.cloaking_detected,
                             "snapshots_count": temporal_analysis.snapshots_count,
+                        },
+                        "cluster": {
+                            "cluster_id": cluster_result.cluster_id,
+                            "cluster_name": cluster_result.cluster_name,
+                            "is_new_cluster": cluster_result.is_new_cluster,
+                            "related_domains": cluster_result.related_domains,
+                            "confidence": cluster_result.confidence,
                         },
                     })
 
@@ -448,6 +475,15 @@ class SeedBusterPipeline:
                 if is_rescan and len(snapshots) >= 2:
                     temporal_info.previous_score = snapshots[-2].score
 
+                # Create cluster info for alert
+                cluster_info = ClusterInfo(
+                    cluster_id=cluster_result.cluster_id,
+                    cluster_name=cluster_result.cluster_name,
+                    is_new_cluster=cluster_result.is_new_cluster,
+                    related_domains=cluster_result.related_domains,
+                    confidence=cluster_result.confidence,
+                )
+
                 await self.bot.send_alert(AlertData(
                     domain=domain,
                     domain_id=self.evidence_store.get_domain_id(domain),
@@ -458,6 +494,7 @@ class SeedBusterPipeline:
                     screenshot_paths=[str(p) for p in screenshot_paths] if screenshot_paths else None,
                     evidence_path=evidence_path,
                     temporal=temporal_info,
+                    cluster=cluster_info,
                 ))
 
             logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")

@@ -45,3 +45,4 @@ htmlcov/
 # Docker
 *.log
 data/temporal/
+data/clusters/
