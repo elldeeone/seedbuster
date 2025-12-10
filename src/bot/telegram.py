@@ -44,11 +44,16 @@ class SeedBusterBot:
 
         self._app: Optional[Application] = None
         self._queue_size_callback: Optional[Callable[[], int]] = None
+        self._rescan_callback: Optional[Callable[[str], None]] = None
         self._is_running = True
 
     def set_queue_size_callback(self, callback: Callable[[], int]):
         """Set callback to get current queue size."""
         self._queue_size_callback = callback
+
+    def set_rescan_callback(self, callback: Callable[[str], None]):
+        """Set callback to trigger manual rescan."""
+        self._rescan_callback = callback
 
     async def start(self):
         """Start the Telegram bot."""
@@ -62,6 +67,8 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("stats", self._cmd_stats))
         self._app.add_handler(CommandHandler("submit", self._cmd_submit))
         self._app.add_handler(CommandHandler("ack", self._cmd_ack))
+        self._app.add_handler(CommandHandler("defer", self._cmd_defer))
+        self._app.add_handler(CommandHandler("rescan", self._cmd_rescan))
         self._app.add_handler(CommandHandler("fp", self._cmd_fp))
         self._app.add_handler(CommandHandler("evidence", self._cmd_evidence))
         self._app.add_handler(CommandHandler("report", self._cmd_report))
@@ -71,6 +78,7 @@ class SeedBusterBot:
         # Callback handlers for inline buttons
         self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_reject, pattern="^reject_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_defer, pattern="^defer_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_report_status, pattern="^status_"))
 
         # Start polling in background
@@ -102,24 +110,69 @@ class SeedBusterBot:
             # Create inline keyboard for report actions (if high confidence)
             keyboard = None
             if include_report_buttons and self.report_manager and data.score >= 70:
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "✅ Approve & Report",
-                            callback_data=f"approve_{data.domain_id}"
-                        ),
-                        InlineKeyboardButton(
-                            "❌ False Positive",
-                            callback_data=f"reject_{data.domain_id}"
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "📊 Report Status",
-                            callback_data=f"status_{data.domain_id}"
-                        ),
-                    ],
-                ])
+                # Context-aware buttons based on temporal status
+                temporal = data.temporal
+
+                if temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
+                    # Initial scan with suspected cloaking - offer defer as primary
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "🕐 Defer (Wait for Rescans)",
+                                callback_data=f"defer_{data.domain_id}"
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "✅ Report Now",
+                                callback_data=f"approve_{data.domain_id}"
+                            ),
+                            InlineKeyboardButton(
+                                "❌ False Positive",
+                                callback_data=f"reject_{data.domain_id}"
+                            ),
+                        ],
+                    ])
+                elif temporal and temporal.cloaking_confirmed:
+                    # Rescan with confirmed cloaking - emphasize reporting
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "🚨 Report (Cloaking Confirmed)",
+                                callback_data=f"approve_{data.domain_id}"
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "❌ False Positive",
+                                callback_data=f"reject_{data.domain_id}"
+                            ),
+                            InlineKeyboardButton(
+                                "📊 Status",
+                                callback_data=f"status_{data.domain_id}"
+                            ),
+                        ],
+                    ])
+                else:
+                    # Standard buttons
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "✅ Approve & Report",
+                                callback_data=f"approve_{data.domain_id}"
+                            ),
+                            InlineKeyboardButton(
+                                "❌ False Positive",
+                                callback_data=f"reject_{data.domain_id}"
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "📊 Report Status",
+                                callback_data=f"status_{data.domain_id}"
+                            ),
+                        ],
+                    ])
 
             # Send screenshots if available
             screenshots_to_send = []
@@ -293,6 +346,59 @@ class SeedBusterBot:
             )
         else:
             await update.message.reply_text(f"Domain not found: {domain_id}")
+
+    async def _cmd_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /defer command - wait for rescans before deciding."""
+        if not context.args:
+            await update.message.reply_text("Usage: `/defer <domain_id>`", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        domain_id = context.args[0]
+        # Find domain by short ID prefix
+        domains = await self.database.get_recent_domains(limit=100)
+        target = None
+        for d in domains:
+            if self.evidence_store.get_domain_id(d["domain"]).startswith(domain_id):
+                target = d
+                break
+
+        if target:
+            await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
+            await update.message.reply_text(
+                f"\U0001F551 Deferred: `{target['domain']}`\n\n"
+                "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
+                "You'll receive an update when rescans complete.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            await update.message.reply_text(f"Domain not found: {domain_id}")
+
+    async def _cmd_rescan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /rescan command - manually trigger a rescan."""
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: `/rescan <domain>`\nExample: `/rescan kaspanet.app`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        domain = context.args[0].lower().strip()
+        # Remove protocol if included
+        domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+
+        if not self._rescan_callback:
+            await update.message.reply_text("Rescan not available - callback not configured.")
+            return
+
+        await update.message.reply_text(
+            f"\U0001F504 Triggering rescan for `{domain}`...",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+        try:
+            self._rescan_callback(domain)
+        except Exception as e:
+            await update.message.reply_text(f"Rescan failed: {e}")
 
     async def _cmd_fp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /fp (false positive) command."""
@@ -515,6 +621,35 @@ class SeedBusterBot:
             ])
         )
         await query.message.reply_text(summary)
+
+    async def _callback_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle defer button callback - wait for rescans."""
+        query = update.callback_query
+        await query.answer()
+
+        domain_short_id = query.data.replace("defer_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        # Update status to deferred
+        await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
+
+        # Update button to show deferred
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🕐 Deferred - Awaiting Rescans", callback_data="noop")]
+            ])
+        )
+        await query.message.reply_text(
+            f"🕐 Deferred: `{target['domain']}`\n\n"
+            "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
+            "You'll receive an update when rescans complete.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
     async def _callback_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle reject (false positive) button callback."""

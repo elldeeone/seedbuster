@@ -10,10 +10,11 @@ from .config import load_config, Config
 from .discovery import DomainScorer, AsyncCertstreamListener
 from .analyzer import BrowserAnalyzer, PhishingDetector
 from .analyzer.infrastructure import InfrastructureAnalyzer
+from .analyzer.temporal import TemporalTracker, ScanReason
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
-from .bot.formatters import AlertData
+from .bot.formatters import AlertData, TemporalInfo
 from .reporter import ReportManager
 
 # Configure logging
@@ -49,6 +50,7 @@ class SeedBusterPipeline:
         )
         self.browser = BrowserAnalyzer(timeout=config.analysis_timeout)
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
+        self.temporal = TemporalTracker(config.data_dir / "temporal")
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
             keywords=config.keywords,
@@ -82,6 +84,24 @@ class SeedBusterPipeline:
         except asyncio.QueueFull:
             logger.warning(f"Queue full, could not submit: {domain}")
 
+    async def _handle_rescan(self, domain: str, reason: ScanReason):
+        """Handle scheduled rescan - re-analyze domain and send update if changed."""
+        logger.info(f"Rescan triggered for {domain} (reason: {reason.value})")
+
+        # Queue the domain for re-analysis with rescan flag
+        # We store the reason in a dict to track rescan context
+        await self._analysis_queue.put((domain, reason))
+
+    def _manual_rescan(self, domain: str):
+        """Handle manual rescan request from Telegram."""
+        import asyncio
+        try:
+            # Create task to handle async rescan
+            asyncio.create_task(self._handle_rescan(domain, ScanReason.MANUAL))
+            logger.info(f"Manual rescan queued: {domain}")
+        except Exception as e:
+            logger.error(f"Failed to queue manual rescan for {domain}: {e}")
+
     async def start(self):
         """Start all pipeline components."""
         logger.info("Starting SeedBuster pipeline...")
@@ -97,6 +117,7 @@ class SeedBusterPipeline:
 
         # Start Telegram bot
         self.bot.set_queue_size_callback(lambda: self._discovery_queue.qsize())
+        self.bot.set_rescan_callback(self._manual_rescan)
         await self.bot.start()
         logger.info("Telegram bot started")
 
@@ -108,10 +129,15 @@ class SeedBusterPipeline:
         await self.ct_listener.start()
         logger.info("CT stream listener started")
 
+        # Set up temporal rescan callback and start rescan loop
+        self.temporal.set_rescan_callback(self._handle_rescan)
+        logger.info("Temporal tracker initialized")
+
         # Start worker tasks
         tasks = [
             asyncio.create_task(self._discovery_worker()),
             asyncio.create_task(self._analysis_worker()),
+            asyncio.create_task(self.temporal.run_rescan_loop()),
         ]
 
         # Send startup notification
@@ -213,20 +239,39 @@ class SeedBusterPipeline:
                 except asyncio.TimeoutError:
                     continue
 
-                # Analyze with semaphore
-                async with sem:
-                    await self._analyze_domain(task)
+                # Handle rescan tasks (tuple) vs regular tasks (dict)
+                if isinstance(task, tuple):
+                    # Rescan task: (domain, ScanReason)
+                    domain, scan_reason = task
+                    # Get domain record from database
+                    domains = await self.database.get_recent_domains(limit=100)
+                    domain_record = None
+                    for d in domains:
+                        if d["domain"] == domain:
+                            domain_record = d
+                            break
+
+                    if domain_record:
+                        async with sem:
+                            await self._analyze_domain(domain_record, scan_reason=scan_reason)
+                    else:
+                        logger.warning(f"Rescan: domain not found in DB: {domain}")
+                else:
+                    # Regular task from discovery
+                    async with sem:
+                        await self._analyze_domain(task)
 
             except Exception as e:
                 logger.error(f"Analysis worker error: {e}")
                 await asyncio.sleep(1)
 
-    async def _analyze_domain(self, task: dict):
+    async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
         """Analyze a single domain."""
         import socket
 
         domain_id = task["id"]
         domain = task["domain"]
+        is_rescan = scan_reason != ScanReason.INITIAL
         domain_score = task["domain_score"]
         domain_reasons = task.get("reasons", [])
 
@@ -301,14 +346,34 @@ class SeedBusterPipeline:
                     if browser_result.html:
                         await self.evidence_store.save_html(domain, browser_result.html)
 
-                    # Detect phishing signals (including infrastructure intelligence)
+                    # Get temporal analysis (if we have previous snapshots)
+                    temporal_analysis = self.temporal.analyze(domain)
+
+                    # Detect phishing signals (including all intelligence layers)
                     detection = self.detector.detect(
                         browser_result,
                         domain_score,
-                        infrastructure=infra_result
+                        infrastructure=infra_result,
+                        temporal=temporal_analysis,
                     )
                     analysis_score = detection.score
                     reasons = detection.reasons
+
+                    # Save temporal snapshot for future comparisons
+                    self.temporal.add_snapshot(
+                        domain=domain,
+                        html=browser_result.html,
+                        title=browser_result.title or "",
+                        screenshot=browser_result.screenshot,
+                        score=analysis_score,
+                        verdict=detection.verdict,
+                        reasons=reasons,
+                        external_domains=browser_result.external_requests,
+                        blocked_requests=len(getattr(browser_result, 'blocked_requests', []) or []),
+                        tls_age_days=infra_result.tls.age_days if infra_result.tls else -1,
+                        hosting_provider=infra_result.hosting.hosting_provider if infra_result.hosting else "",
+                        scan_reason=scan_reason,
+                    )
 
                     # Convert verdict string to enum
                     verdict = Verdict(detection.verdict)
@@ -335,6 +400,12 @@ class SeedBusterPipeline:
                             "reasons": detection.code_reasons,
                             "kit_matches": detection.kit_matches,
                         },
+                        "temporal": {
+                            "score": detection.temporal_score,
+                            "reasons": detection.temporal_reasons,
+                            "cloaking_detected": detection.cloaking_detected,
+                            "snapshots_count": temporal_analysis.snapshots_count,
+                        },
                     })
 
             # Update database
@@ -351,6 +422,32 @@ class SeedBusterPipeline:
             if analysis_score >= self.config.analysis_score_threshold:
                 screenshot_path = self.evidence_store.get_screenshot_path(domain)
                 screenshot_paths = self.evidence_store.get_all_screenshot_paths(domain)
+
+                # Determine if cloaking is suspected (anti-bot service blocked)
+                blocked_requests = getattr(browser_result, 'blocked_requests', []) or []
+                cloaking_suspected = len(blocked_requests) > 0
+
+                # Create temporal info for alert
+                # Note: After add_snapshot, snapshots_count is already incremented
+                # So we check > 1 (not <= 1) for initial scan determination
+                snapshots = self.temporal.get_snapshots(domain)
+                snapshot_count = len(snapshots)
+
+                temporal_info = TemporalInfo(
+                    is_initial_scan=not is_rescan,
+                    scan_number=snapshot_count,
+                    total_scans=5,  # Initial + 4 rescans
+                    rescans_scheduled=True,
+                    cloaking_suspected=cloaking_suspected,
+                    cloaking_confirmed=temporal_analysis.cloaking_detected,
+                    cloaking_confidence=temporal_analysis.cloaking_confidence,
+                    previous_score=None,  # Will be set on rescans
+                )
+
+                # Get previous score for rescans
+                if is_rescan and len(snapshots) >= 2:
+                    temporal_info.previous_score = snapshots[-2].score
+
                 await self.bot.send_alert(AlertData(
                     domain=domain,
                     domain_id=self.evidence_store.get_domain_id(domain),
@@ -360,6 +457,7 @@ class SeedBusterPipeline:
                     screenshot_path=str(screenshot_path) if screenshot_path else None,
                     screenshot_paths=[str(p) for p in screenshot_paths] if screenshot_paths else None,
                     evidence_path=evidence_path,
+                    temporal=temporal_info,
                 ))
 
             logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")

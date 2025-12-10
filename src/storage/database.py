@@ -15,6 +15,7 @@ class DomainStatus(str, Enum):
     PENDING = "pending"  # Discovered, awaiting analysis
     ANALYZING = "analyzing"  # Currently being analyzed
     ANALYZED = "analyzed"  # Analysis complete
+    DEFERRED = "deferred"  # Waiting for rescans (suspected cloaking)
     REPORTED = "reported"  # Reported to blocklists
     FALSE_POSITIVE = "false_positive"  # Marked as FP
     ALLOWLISTED = "allowlisted"  # On allowlist

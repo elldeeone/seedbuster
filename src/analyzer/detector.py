@@ -15,6 +15,7 @@ from .browser import BrowserResult
 from .threat_intel import ThreatIntelLoader, ThreatIntel
 from .infrastructure import InfrastructureResult
 from .code_analysis import CodeAnalyzer, CodeAnalysisResult
+from .temporal import TemporalAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,11 @@ class DetectionResult:
     code_score: int = 0
     code_reasons: list[str] = field(default_factory=list)
     kit_matches: list[str] = field(default_factory=list)
+
+    # Temporal analysis
+    temporal_score: int = 0
+    temporal_reasons: list[str] = field(default_factory=list)
+    cloaking_detected: bool = False
 
 
 class PhishingDetector:
@@ -125,7 +131,8 @@ class PhishingDetector:
         self,
         browser_result: BrowserResult,
         domain_score: int = 0,
-        infrastructure: Optional[InfrastructureResult] = None
+        infrastructure: Optional[InfrastructureResult] = None,
+        temporal: Optional[TemporalAnalysis] = None,
     ) -> DetectionResult:
         """Analyze browser results for phishing indicators."""
         result = DetectionResult(
@@ -204,6 +211,14 @@ class PhishingDetector:
             result.code_reasons = code_result.risk_reasons
             result.kit_matches = [kit.kit_name for kit in code_result.kit_matches]
             result.reasons.extend(code_result.risk_reasons)
+
+        # 10. Temporal analysis (cloaking detection, behavioral patterns)
+        if temporal and temporal.temporal_risk_score > 0:
+            result.score += temporal.temporal_risk_score
+            result.temporal_score = temporal.temporal_risk_score
+            result.temporal_reasons = temporal.temporal_reasons
+            result.cloaking_detected = temporal.cloaking_detected
+            result.reasons.extend(temporal.temporal_reasons)
 
         # Cap and classify
         result.score = min(result.score, 100)

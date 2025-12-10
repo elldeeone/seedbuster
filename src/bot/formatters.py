@@ -15,6 +15,19 @@ def escape_markdown(text: str) -> str:
 
 
 @dataclass
+class TemporalInfo:
+    """Temporal analysis information for alerts."""
+    is_initial_scan: bool = True
+    scan_number: int = 1
+    total_scans: int = 1
+    rescans_scheduled: bool = False
+    cloaking_suspected: bool = False  # Anti-bot detected on initial scan
+    cloaking_confirmed: bool = False  # Cloaking pattern detected from rescans
+    cloaking_confidence: float = 0.0
+    previous_score: Optional[int] = None  # For rescan comparisons
+
+
+@dataclass
 class AlertData:
     """Data for a phishing alert."""
 
@@ -26,6 +39,7 @@ class AlertData:
     screenshot_path: Optional[str] = None
     screenshot_paths: Optional[list[str]] = None  # Multiple screenshots (early, final)
     evidence_path: Optional[str] = None
+    temporal: Optional[TemporalInfo] = None  # Temporal analysis info
 
 
 class AlertFormatter:
@@ -51,36 +65,123 @@ class AlertFormatter:
         emoji = cls.VERDICT_EMOJI.get(data.verdict, "\u2753")
         label = cls.VERDICT_LABEL.get(data.verdict, "UNKNOWN")
 
+        # Determine header based on temporal status
+        temporal = data.temporal
+        if temporal and not temporal.is_initial_scan:
+            # This is a rescan update
+            header = f"\U0001F504 RESCAN UPDATE (Scan {temporal.scan_number}/{temporal.total_scans})"
+            if temporal.previous_score is not None:
+                score_change = data.score - temporal.previous_score
+                if score_change < 0:
+                    header += f"\nScore: {temporal.previous_score} \u2192 {data.score} (\u2193{abs(score_change)})"
+                elif score_change > 0:
+                    header += f"\nScore: {temporal.previous_score} \u2192 {data.score} (\u2191{score_change})"
+        elif temporal and temporal.is_initial_scan:
+            header = f"{emoji} SUSPICIOUS DOMAIN DETECTED (INITIAL SCAN)"
+        else:
+            header = f"{emoji} SUSPICIOUS DOMAIN DETECTED"
+
         lines = [
-            f"{emoji} SUSPICIOUS DOMAIN DETECTED",
+            header,
             "",
             f"Domain: {data.domain}",
             f"Confidence: {label} ({data.score}/100)",
-            "",
-            "Detection signals:",
         ]
 
-        # Prioritize INFRA and CODE reasons so they always show
+        # Add temporal status section for initial scans
+        if temporal and temporal.is_initial_scan:
+            lines.append("")
+            if temporal.rescans_scheduled:
+                lines.append("\U0001F551 Rescans scheduled: 6h / 12h / 24h / 48h")
+            if temporal.cloaking_suspected:
+                lines.append("\u26A0\uFE0F Cloaking suspected: Anti-bot service detected")
+
+        # Add cloaking confirmation for rescans
+        if temporal and temporal.cloaking_confirmed:
+            lines.append("")
+            lines.append(f"\U0001F6A8 CLOAKING CONFIRMED ({temporal.cloaking_confidence:.0%} confidence)")
+            lines.append("Site showed different content to rescan - evidence of intentional evasion")
+
+        # Categorize reasons by type
         infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]
         code_reasons = [r for r in data.reasons if r.startswith("CODE:")]
-        other_reasons = [r for r in data.reasons if not r.startswith(("INFRA:", "CODE:"))]
+        temporal_reasons = [r for r in data.reasons if r.startswith("TEMPORAL:")]
 
-        # Show up to 8 other reasons + all INFRA/CODE reasons
-        display_reasons = other_reasons[:8] + infra_reasons + code_reasons
+        # Categorize other reasons
+        threat_intel = []
+        antibot = []
+        domain_signals = []
+        other = []
 
-        for reason in display_reasons:
-            # Escape any special characters in reasons
-            safe_reason = reason.replace('_', ' ').replace('*', '')
-            lines.append(f"  - {safe_reason}")
+        for r in data.reasons:
+            if r.startswith(("INFRA:", "CODE:", "TEMPORAL:")):
+                continue
+            elif "KNOWN MALICIOUS" in r or "Malicious URL" in r:
+                threat_intel.append(r)
+            elif "Anti-bot" in r or "blocked" in r.lower():
+                antibot.append(r)
+            elif "domain" in r.lower() or "title" in r.lower() or "suspicion score" in r.lower():
+                domain_signals.append(r)
+            else:
+                other.append(r)
 
-        lines.extend([
-            "",
-            "Actions:",
-            f"/ack {data.domain_id} - Mark reviewed",
-            f"/fp {data.domain_id} - False positive",
-            f"/report {data.domain_id} - Submit to blocklists",
-            f"/evidence {data.domain_id} - Get evidence files",
-        ])
+        # Build organized signal sections
+        lines.append("")
+
+        # Threat Intelligence section
+        if threat_intel:
+            lines.append("\U0001F6A8 Threat Intel:")
+            for r in threat_intel[:6]:
+                safe_reason = r.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Anti-bot/Evasion section
+        if antibot:
+            lines.append("\U0001F575 Evasion:")
+            for r in antibot:
+                safe_reason = r.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Infrastructure section
+        if infra_reasons:
+            lines.append("\U0001F5A7 Infrastructure:")
+            for r in infra_reasons:
+                # Remove "INFRA: " prefix for cleaner display
+                clean = r.replace("INFRA: ", "")
+                safe_reason = clean.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Code Analysis section
+        if code_reasons:
+            lines.append("\U0001F4BB Code Analysis:")
+            for r in code_reasons:
+                clean = r.replace("CODE: ", "")
+                safe_reason = clean.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Temporal section (for rescans)
+        if temporal_reasons:
+            lines.append("\U0001F551 Temporal:")
+            for r in temporal_reasons:
+                clean = r.replace("TEMPORAL: ", "")
+                safe_reason = clean.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Domain signals section
+        if domain_signals:
+            lines.append("\U0001F310 Domain:")
+            for r in domain_signals[:4]:
+                safe_reason = r.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # Other signals (if any remaining)
+        if other:
+            lines.append("\U0001F50D Other:")
+            for r in other[:3]:
+                safe_reason = r.replace('_', ' ').replace('*', '')
+                lines.append(f"  • {safe_reason}")
+
+        # No text-based actions - buttons handle this now
 
         return "\n".join(lines)
 
@@ -168,6 +269,7 @@ class AlertFormatter:
 `/submit <url>` - Submit domain for analysis
 `/ack <id>` - Acknowledge alert
 `/fp <id>` - Mark as false positive
+`/defer <id>` - Wait for rescans (suspected cloaking)
 `/evidence <id>` - Get evidence files
 
 *Reporting:*

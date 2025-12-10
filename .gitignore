@@ -44,3 +44,4 @@ htmlcov/
 
 # Docker
 *.log
+data/temporal/
