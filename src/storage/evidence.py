@@ -79,21 +79,38 @@ class EvidenceStore:
         return path if path.exists() else None
 
     def get_all_screenshot_paths(self, domain: str) -> list[Path]:
-        """Get all screenshot paths for a domain (early, final, etc.)."""
+        """Get all screenshot paths for a domain, prioritizing suspicious findings."""
         domain_dir = self.get_domain_dir(domain)
         screenshots = []
-        # Check for early screenshot first
+
+        # Priority order: seedform > suspicious > early > main > other exploration
+        # First: seed form screenshots (most important evidence)
+        seedform_shots = sorted(domain_dir.glob("screenshot_exploration_seedform_*.png"))
+        screenshots.extend(seedform_shots)
+
+        # Then: suspicious exploration screenshots
+        suspicious_shots = sorted(domain_dir.glob("screenshot_exploration_suspicious_*.png"))
+        screenshots.extend(suspicious_shots)
+
+        # Then: early screenshot (before anti-bot blocking)
         early = domain_dir / "screenshot_early.png"
         if early.exists():
             screenshots.append(early)
-        # Then main screenshot
+
+        # Then: main screenshot
         main = domain_dir / "screenshot.png"
         if main.exists():
             screenshots.append(main)
-        # Then final screenshot
+
+        # Then: final screenshot
         final = domain_dir / "screenshot_final.png"
         if final.exists():
             screenshots.append(final)
+
+        # Finally: other exploration screenshots (limited to avoid spam)
+        other_exploration = sorted(domain_dir.glob("screenshot_exploration_[0-9]*.png"))[:2]
+        screenshots.extend(other_exploration)
+
         return screenshots
 
     def get_analysis_path(self, domain: str) -> Optional[Path]:

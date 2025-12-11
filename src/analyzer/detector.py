@@ -99,10 +99,11 @@ class PhishingDetector:
         # Code analyzer for JS/HTML analysis
         self._code_analyzer = CodeAnalyzer()
 
-    def reload_threat_intel(self):
-        """Reload threat intelligence from file (hot reload)."""
+    def reload_threat_intel(self) -> str:
+        """Reload threat intelligence from file (hot reload). Returns version."""
         self._threat_intel = self._threat_intel_loader.reload()
-        logger.info("Threat intel reloaded")
+        logger.info(f"Threat intel reloaded: v{self._threat_intel.version}")
+        return self._threat_intel.version
 
     def _load_fingerprints(self):
         """Load stored fingerprints of legitimate sites."""
@@ -220,6 +221,12 @@ class PhishingDetector:
             result.cloaking_detected = temporal.cloaking_detected
             result.reasons.extend(temporal.temporal_reasons)
 
+        # 11. Exploration results (click-through discovered forms)
+        if browser_result.explored and browser_result.exploration_steps:
+            explore_score, explore_reasons = self._analyze_exploration(browser_result)
+            result.score += explore_score
+            result.reasons.extend(explore_reasons)
+
         # Cap and classify
         result.score = min(result.score, 100)
         result.confidence = result.score / 100.0
@@ -267,6 +274,14 @@ class PhishingDetector:
         """Detect seed phrase input forms."""
         score = 0
         reasons = []
+
+        # Check exploration steps for seed forms found during click-through
+        if result.exploration_steps:
+            for step in result.exploration_steps:
+                if getattr(step, "is_seed_form", False):
+                    score += 50  # High score - definitive evidence
+                    reasons.append(f"Seed phrase form found via exploration: '{step.button_text}'")
+                    return score, reasons  # This is definitive, no need to check further
 
         # Count text inputs that could be for seed words
         seed_like_inputs = 0
@@ -583,3 +598,88 @@ class PhishingDetector:
         )
 
         return result
+
+    def _analyze_exploration(self, browser_result: BrowserResult) -> tuple[int, list[str]]:
+        """Analyze click-through exploration results for hidden phishing forms.
+
+        This checks what was found when clicking through wallet/recovery buttons.
+        """
+        score = 0
+        reasons = []
+
+        for step in browser_result.exploration_steps:
+            if not step.success:
+                continue
+
+            # Count seed-like inputs found in this step
+            seed_like_inputs = 0
+            for inp in step.input_fields:
+                inp_type = inp.get("type", "").lower()
+                placeholder = inp.get("placeholder", "").lower()
+                name = inp.get("name", "").lower()
+                inp_id = inp.get("id", "").lower()
+
+                combined = placeholder + name + inp_id
+                if inp_type in ("text", "password", ""):
+                    if any(kw in combined for kw in ["word", "seed", "phrase", "mnemonic", "recovery"]):
+                        seed_like_inputs += 1
+                    elif re.search(r"(word|w|seed)\s*#?\d+", combined, re.I):
+                        seed_like_inputs += 1
+
+            # Check for 12/24 text inputs (seed phrase form pattern)
+            text_input_count = sum(
+                1 for inp in step.input_fields if inp.get("type", "") in ("text", "password", "")
+            )
+
+            if text_input_count in (12, 24) or seed_like_inputs >= 10:
+                score += 40
+                reasons.append(
+                    f"EXPLORE: Seed form found after clicking '{step.button_text}' "
+                    f"({text_input_count} inputs)"
+                )
+            elif text_input_count in range(10, 26) and seed_like_inputs >= 3:
+                score += 30
+                reasons.append(
+                    f"EXPLORE: Possible seed form after '{step.button_text}' "
+                    f"({text_input_count} inputs, {seed_like_inputs} seed-like)"
+                )
+            elif seed_like_inputs >= 3:
+                score += 20
+                reasons.append(
+                    f"EXPLORE: Seed inputs after '{step.button_text}' ({seed_like_inputs} found)"
+                )
+
+            # Check HTML content from exploration for malicious patterns
+            if step.html:
+                # Check for exfiltration patterns
+                intel = self._threat_intel
+                for indicator in intel.malicious_domains:
+                    if indicator.value in step.html:
+                        score += 35
+                        reasons.append(
+                            f"EXPLORE: Malicious endpoint found after '{step.button_text}': "
+                            f"{indicator.value[:40]}"
+                        )
+
+                # Check for known API keys
+                api_key_matches = intel.check_api_keys(step.html)
+                for match in api_key_matches:
+                    score += 30
+                    reasons.append(
+                        f"EXPLORE: Malicious API key after '{step.button_text}'"
+                    )
+
+                # Analyze code in exploration step
+                step_code_result = self._code_analyzer.analyze(
+                    domain=browser_result.domain,
+                    html=step.html,
+                )
+                if step_code_result.kit_matches:
+                    for kit in step_code_result.kit_matches:
+                        if kit.confidence >= 0.5:
+                            score += 25
+                            reasons.append(
+                                f"EXPLORE: Kit '{kit.kit_name}' found after '{step.button_text}'"
+                            )
+
+        return score, reasons

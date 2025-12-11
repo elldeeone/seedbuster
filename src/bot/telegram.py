@@ -45,6 +45,7 @@ class SeedBusterBot:
         self._app: Optional[Application] = None
         self._queue_size_callback: Optional[Callable[[], int]] = None
         self._rescan_callback: Optional[Callable[[str], None]] = None
+        self._reload_callback: Optional[Callable[[], str]] = None
         self._is_running = True
 
     def set_queue_size_callback(self, callback: Callable[[], int]):
@@ -54,6 +55,10 @@ class SeedBusterBot:
     def set_rescan_callback(self, callback: Callable[[str], None]):
         """Set callback to trigger manual rescan."""
         self._rescan_callback = callback
+
+    def set_reload_callback(self, callback: Callable[[], str]):
+        """Set callback to reload threat intel (returns version string)."""
+        self._reload_callback = callback
 
     async def start(self):
         """Start the Telegram bot."""
@@ -74,12 +79,16 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("report", self._cmd_report))
         self._app.add_handler(CommandHandler("threshold", self._cmd_threshold))
         self._app.add_handler(CommandHandler("allowlist", self._cmd_allowlist))
+        self._app.add_handler(CommandHandler("reload", self._cmd_reload))
 
         # Callback handlers for inline buttons
         self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_reject, pattern="^reject_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_defer, pattern="^defer_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_report_status, pattern="^status_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_rescan, pattern="^rescan_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_evidence, pattern="^evidence_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_scanpath, pattern="^scanpath_"))
 
         # Start polling in background
         await self._app.initialize()
@@ -110,10 +119,31 @@ class SeedBusterBot:
             # Create inline keyboard for report actions (if high confidence)
             keyboard = None
             if include_report_buttons and self.report_manager and data.score >= 70:
-                # Context-aware buttons based on temporal status
+                # Context-aware buttons based on detection status
+                # Priority: seed_form_found > cloaking_confirmed > cloaking_suspected > standard
                 temporal = data.temporal
 
-                if temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
+                if data.seed_form_found:
+                    # HIGHEST PRIORITY: Seed form found - definitive phishing confirmation
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "🎯 Report (Seed Form Found)",
+                                callback_data=f"approve_{data.domain_id}"
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "❌ False Positive",
+                                callback_data=f"reject_{data.domain_id}"
+                            ),
+                            InlineKeyboardButton(
+                                "📊 Status",
+                                callback_data=f"status_{data.domain_id}"
+                            ),
+                        ],
+                    ])
+                elif temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
                     # Initial scan with suspected cloaking - offer defer as primary
                     keyboard = InlineKeyboardMarkup([
                         [
@@ -305,19 +335,108 @@ class SeedBusterBot:
         """Handle /submit command."""
         if not context.args:
             await update.message.reply_text(
-                "Usage: `/submit <domain>`\nExample: `/submit suspicious-kaspa.xyz`",
+                "Usage: `/submit <url>`\n"
+                "Examples:\n"
+                "  `/submit suspicious-kaspa.xyz`\n"
+                "  `/submit suspicious-kaspa.xyz/new`\n"
+                "  `/submit https://phishing-site.com/wallet`",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
-        domain = context.args[0].lower()
-        # Clean up URL if provided
-        domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+        url_input = context.args[0].lower()
+        # Clean up URL - remove protocol but keep path
+        url_input = url_input.replace("https://", "").replace("http://", "")
 
-        if self.submit_callback:
-            self.submit_callback(domain)
+        # Split into domain and path
+        if "/" in url_input:
+            domain = url_input.split("/")[0]
+            path = "/" + "/".join(url_input.split("/")[1:])
+            full_url = f"{domain}{path}"
+        else:
+            domain = url_input
+            path = ""
+            full_url = domain
+
+        # Check if domain was already analyzed (check both domain and full URL)
+        existing = await self.database.get_domain(full_url) or await self.database.get_domain(domain)
+        if existing:
+            # Domain exists - show previous results with options
+            existing_domain = existing.get("domain", domain)
+            score = existing.get("analysis_score") or 0
+            verdict = existing.get("verdict", "unknown")
+            status = existing.get("status", "unknown")
+            analyzed_at = existing.get("analyzed_at", "unknown")
+            domain_id = self.evidence_store.get_domain_id(existing_domain)
+
+            # Build keyboard - add "Scan This Path" if path differs
+            path_note = ""
+            has_new_path = path and path not in existing_domain
+
+            if has_new_path:
+                # Path differs - offer to scan the specific path
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            f"🔍 Scan {path}",
+                            callback_data=f"scanpath_{full_url[:50]}"  # Truncate for callback limit
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Rescan Base",
+                            callback_data=f"rescan_{domain_id}"
+                        ),
+                        InlineKeyboardButton(
+                            "📁 Evidence",
+                            callback_data=f"evidence_{domain_id}"
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "📊 Report Status",
+                            callback_data=f"status_{domain_id}"
+                        ),
+                    ],
+                ])
+                path_note = f"\n\n_Path `{path}` not yet analyzed._"
+            else:
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Rescan Now",
+                            callback_data=f"rescan_{domain_id}"
+                        ),
+                        InlineKeyboardButton(
+                            "📁 Evidence",
+                            callback_data=f"evidence_{domain_id}"
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "📊 Report Status",
+                            callback_data=f"status_{domain_id}"
+                        ),
+                    ],
+                ])
+
             await update.message.reply_text(
-                f"Submitted `{domain}` for analysis.",
+                f"*Domain already analyzed:* `{existing_domain}`\n\n"
+                f"Score: {score}/100 ({verdict})\n"
+                f"Status: {status}\n"
+                f"Analyzed: {analyzed_at}{path_note}\n\n"
+                "Choose an action below:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=keyboard,
+            )
+            return
+
+        # New domain/URL - submit for analysis (pass full URL with path)
+        if self.submit_callback:
+            self.submit_callback(full_url)
+            display = full_url if path else domain
+            await update.message.reply_text(
+                f"Submitted `{display}` for analysis.",
                 parse_mode=ParseMode.MARKDOWN,
             )
         else:
@@ -726,6 +845,202 @@ class SeedBusterBot:
                 parse_mode=ParseMode.MARKDOWN,
             )
 
+    async def _callback_rescan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle rescan button callback."""
+        query = update.callback_query
+        await query.answer()
+
+        domain_short_id = query.data.replace("rescan_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        if not self._rescan_callback:
+            await query.message.reply_text("Rescan not available - callback not configured.")
+            return
+
+        # Update button to show processing
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Rescanning...", callback_data="noop")]
+            ])
+        )
+
+        # Trigger rescan
+        try:
+            self._rescan_callback(target["domain"])
+            await query.message.reply_text(
+                f"🔄 Rescan triggered for `{target['domain']}`\n"
+                "Results will be posted when complete.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception as e:
+            await query.message.reply_text(f"Rescan failed: {e}")
+
+    async def _callback_evidence(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle evidence button callback."""
+        query = update.callback_query
+        await query.answer()
+
+        domain_short_id = query.data.replace("evidence_", "")
+
+        # Find the domain
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        # Send evidence files
+        evidence_dir = self.evidence_store.get_domain_dir(target["domain"])
+
+        if not evidence_dir.exists():
+            await query.message.reply_text(
+                f"No evidence found for `{target['domain']}`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        # Send screenshot
+        screenshot = evidence_dir / "screenshot.png"
+        if screenshot.exists():
+            with open(screenshot, "rb") as f:
+                await query.message.reply_photo(
+                    photo=InputFile(f),
+                    caption=f"Screenshot for `{target['domain']}`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+        # Parse and send analysis summary
+        analysis_file = evidence_dir / "analysis.json"
+        if analysis_file.exists():
+            import json
+            try:
+                data = json.loads(analysis_file.read_text())
+                summary = self._format_analysis_summary(data)
+                await query.message.reply_text(summary)
+            except Exception as e:
+                logger.error(f"Error parsing analysis: {e}")
+
+            # Also send the raw JSON file
+            with open(analysis_file, "rb") as f:
+                await query.message.reply_document(
+                    document=InputFile(f, filename="analysis.json"),
+                    caption="Raw analysis JSON",
+                )
+
+    async def _callback_scanpath(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle scan path button callback - analyze a specific URL path."""
+        query = update.callback_query
+        await query.answer()
+
+        # Extract full URL from callback data
+        full_url = query.data.replace("scanpath_", "")
+
+        if not self.submit_callback:
+            await query.message.reply_text("Submission not available - callback not configured.")
+            return
+
+        # Update button to show processing
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Scanning...", callback_data="noop")]
+            ])
+        )
+
+        # Submit for analysis
+        try:
+            self.submit_callback(full_url)
+            await query.message.reply_text(
+                f"🔍 Submitted `{full_url}` for analysis.\n"
+                "Results will be posted when complete.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception as e:
+            await query.message.reply_text(f"Scan failed: {e}")
+
+    def _format_analysis_summary(self, data: dict) -> str:
+        """Format analysis JSON into readable summary."""
+        lines = []
+
+        domain = data.get("domain", "unknown")
+        score = data.get("score", 0)
+        verdict = data.get("verdict", "unknown")
+
+        lines.append(f"=== ANALYSIS: {domain} ===")
+        lines.append(f"Score: {score}/100 ({verdict.upper()})")
+        lines.append("")
+
+        # Threat Intel section
+        reasons = data.get("reasons", [])
+        threat_intel = [r for r in reasons if "KNOWN MALICIOUS" in r or "Malicious" in r]
+        if threat_intel:
+            lines.append("THREAT INTEL:")
+            for r in threat_intel:
+                lines.append(f"  * {r}")
+            lines.append("")
+
+        # Evasion section
+        evasion = [r for r in reasons if "Anti-bot" in r or "blocked" in r.lower()]
+        if evasion:
+            lines.append("EVASION:")
+            for r in evasion:
+                lines.append(f"  * {r}")
+            lines.append("")
+
+        # Infrastructure section
+        infra = data.get("infrastructure", {})
+        if infra.get("reasons"):
+            lines.append("INFRASTRUCTURE:")
+            for r in infra.get("reasons", []):
+                lines.append(f"  * {r}")
+            if infra.get("tls_age_days") is not None:
+                lines.append(f"  * TLS cert age: {infra['tls_age_days']} days")
+            if infra.get("uses_privacy_dns"):
+                lines.append("  * Uses privacy DNS")
+            lines.append("")
+
+        # Code Analysis section
+        code = data.get("code_analysis", {})
+        if code.get("reasons") or code.get("kit_matches"):
+            lines.append("CODE ANALYSIS:")
+            for r in code.get("reasons", []):
+                lines.append(f"  * {r}")
+            if code.get("kit_matches"):
+                lines.append(f"  * Kit matches: {', '.join(code['kit_matches'])}")
+            lines.append("")
+
+        # Cluster section
+        cluster = data.get("cluster", {})
+        if cluster.get("cluster_name"):
+            lines.append("CAMPAIGN:")
+            lines.append(f"  * {cluster['cluster_name']}")
+            if cluster.get("related_domains"):
+                lines.append(f"  * Related: {', '.join(cluster['related_domains'])}")
+            lines.append("")
+
+        # Suspicious endpoints
+        endpoints = data.get("suspicious_endpoints", [])
+        if endpoints:
+            lines.append("SUSPICIOUS ENDPOINTS:")
+            for ep in endpoints[:5]:  # Limit to 5
+                lines.append(f"  * {ep}")
+            if len(endpoints) > 5:
+                lines.append(f"  * ... and {len(endpoints) - 5} more")
+            lines.append("")
+
+        # Other signals
+        other = [r for r in reasons if not any(x in r for x in ["KNOWN", "Malicious", "Anti-bot", "blocked", "INFRA", "CODE"])]
+        if other:
+            lines.append("OTHER SIGNALS:")
+            for r in other[:5]:
+                lines.append(f"  * {r}")
+            lines.append("")
+
+        return "\n".join(lines)
+
     async def _cmd_threshold(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /threshold command."""
         # TODO: Implement runtime threshold adjustment
@@ -741,3 +1056,22 @@ class SeedBusterBot:
             "Allowlist management coming soon.\n"
             "Currently managed via `config/allowlist.txt`",
         )
+
+    async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /reload command - hot reload threat intel."""
+        if not self._reload_callback:
+            await update.message.reply_text(
+                "Reload not available - callback not configured."
+            )
+            return
+
+        try:
+            version = self._reload_callback()
+            await update.message.reply_text(
+                f"Threat intel reloaded (v{version})",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            logger.info(f"Threat intel reloaded via /reload command (v{version})")
+        except Exception as e:
+            logger.error(f"Reload failed: {e}")
+            await update.message.reply_text(f"Reload failed: {e}")

@@ -126,6 +126,7 @@ class SeedBusterPipeline:
         # Start Telegram bot
         self.bot.set_queue_size_callback(lambda: self._discovery_queue.qsize())
         self.bot.set_rescan_callback(self._manual_rescan)
+        self.bot.set_reload_callback(self.detector.reload_threat_intel)
         await self.bot.start()
         logger.info("Telegram bot started")
 
@@ -289,13 +290,14 @@ class SeedBusterPipeline:
             # Update status
             await self.database.update_domain_status(domain_id, DomainStatus.ANALYZING)
 
-            # Quick DNS check first
+            # Quick DNS check first (extract hostname only, ignore path)
+            hostname = domain.split("/")[0]
             dns_resolves = True
             try:
-                socket.gethostbyname(domain)
+                socket.gethostbyname(hostname)
             except socket.gaierror:
                 dns_resolves = False
-                logger.info(f"Domain does not resolve: {domain}")
+                logger.info(f"Domain does not resolve: {hostname}")
 
             if not dns_resolves:
                 # Domain doesn't exist - report based on domain score alone
@@ -358,6 +360,33 @@ class SeedBusterPipeline:
                     if browser_result.screenshot:
                         # Save final screenshot
                         await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
+
+                    # Save exploration screenshots (especially ones with suspicious content)
+                    # Note: Check exploration_steps directly, not 'explored' flag
+                    # Steps are captured incrementally, but 'explored' is only set at the end
+                    # If exploration fails partway through, we still want to save captured steps
+                    if browser_result.exploration_steps:
+                        for i, step in enumerate(browser_result.exploration_steps):
+                            if step.screenshot and step.success:
+                                # Check if browser detected this as a seed form
+                                # (includes textarea with mnemonic text, not just 12+ inputs)
+                                if getattr(step, "is_seed_form", False):
+                                    suffix = f"_exploration_seedform_{i+1}"
+                                    logger.info(f"Saving seed form screenshot: {step.button_text} (mnemonic form detected)")
+                                else:
+                                    # Fallback: count text inputs
+                                    text_inputs = [
+                                        inp for inp in step.input_fields
+                                        if inp.get("type") in ("text", "password", "")
+                                    ]
+                                    if len(text_inputs) >= 12:
+                                        suffix = f"_exploration_seedform_{i+1}"
+                                        logger.info(f"Saving seed form screenshot: {step.button_text} ({len(text_inputs)} inputs)")
+                                    elif len(text_inputs) >= 6:
+                                        suffix = f"_exploration_suspicious_{i+1}"
+                                    else:
+                                        suffix = f"_exploration_{i+1}"
+                                await self.evidence_store.save_screenshot(domain, step.screenshot, suffix=suffix)
 
                     if browser_result.html:
                         await self.evidence_store.save_html(domain, browser_result.html)
@@ -512,6 +541,7 @@ class SeedBusterPipeline:
                     evidence_path=evidence_path,
                     temporal=temporal_info,
                     cluster=cluster_info,
+                    seed_form_found=detection.seed_form_detected,
                 ))
 
             logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")

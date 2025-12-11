@@ -2,8 +2,8 @@
 # This file can be updated without code changes
 # Format: YAML for human readability
 
-version: "1.0"
-last_updated: "2025-12-08"
+version: "1.3"
+last_updated: "2025-12-11"
 
 # Known malicious domains (exfiltration backends, C2, etc.)
 malicious_domains:
@@ -12,7 +12,7 @@ malicious_domains:
     confidence: "high"
     first_seen: "2025-12-08"
     source: "manual_analysis"
-    notes: "IP logging backend for kaspa-wallet.co"
+    notes: "IP logging/blocking backend - returns 'IP blocked' after first visit"
 
   - domain: "whale-app-poxe2.ondigitalocean.app"
     type: "exfiltration"
@@ -20,6 +20,42 @@ malicious_domains:
     first_seen: "2025-12-08"
     source: "manual_analysis"
     notes: "Seed phrase exfiltration backend"
+
+  - domain: "kaspa-backend.vercel.app"
+    type: "c2_notification"
+    confidence: "high"
+    first_seen: "2025-12-11"
+    source: "har_capture"
+    notes: "Real-time attacker notification system - alerts on page_entry events"
+
+  - domain: "wallet-kaspanet.com"
+    type: "phishing_host"
+    confidence: "high"
+    first_seen: "2025-12-11"
+    source: "manual_analysis"
+    notes: "Hosts 12-word seed phrase form at /?view=recover"
+
+  - domain: "kaspanet.app"
+    type: "landing_redirect"
+    confidence: "high"
+    first_seen: "2025-12-11"
+    source: "manual_analysis"
+    notes: "Landing page that redirects to wallet-kaspanet.com phishing form"
+
+  - domain: "kaspanet.one"
+    type: "phishing_host"
+    confidence: "high"
+    first_seen: "2025-12-11"
+    source: "manual_verification"
+    status: "parked"
+    notes: "Redirect target from app-kaspa-ng.org create wallet flow - currently parked at Sedo"
+
+  - domain: "app-kaspa-ng.org"
+    type: "phishing_host"
+    confidence: "high"
+    first_seen: "2025-12-11"
+    source: "manual_verification"
+    notes: "Hosts identical phishing kit - same landing page with seed phrase form"
 
 # Known malicious URL patterns (regex supported)
 malicious_patterns:
@@ -38,17 +74,45 @@ malicious_patterns:
     confidence: "high"
     notes: "Text data exfiltration"
 
+  - pattern: "/api/notification"
+    type: "c2_notification"
+    confidence: "high"
+    notes: "Real-time attacker notification endpoint"
+
+  - pattern: "/api/form/text"
+    type: "exfiltration"
+    confidence: "high"
+    notes: "Text exfiltration - used by both whale backend and vercel backend"
+
+  - pattern: "\\?view=recover"
+    type: "phishing_form"
+    confidence: "high"
+    notes: "Seed phrase recovery form URL parameter"
+
+  - pattern: "/seedphrase\\.txt"
+    type: "bip39_wordlist"
+    confidence: "medium"
+    notes: "BIP39 wordlist for seed phrase validation"
+
 # Exposed API keys (found in malicious sites)
 api_keys:
   - key: "520a83d66268292f5b97ca64c496ef3b9cfb1bb1f85f2615b103f66f"
     service: "ipdata.co"
     first_seen: "2025-12-08"
-    associated_domain: "kaspa-wallet.co"
+    associated_domains:
+      - "kaspa-wallet.co"
+      - "kaspanet.app"
+      - "wallet-kaspanet.com"
+    notes: "Used for VPN/proxy/datacenter/Tor detection"
 
   - key: "e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b"
     service: "whale_backend"
     first_seen: "2025-12-08"
-    associated_domain: "kaspa-wallet.co"
+    associated_domains:
+      - "kaspa-wallet.co"
+      - "kaspanet.app"
+      - "wallet-kaspanet.com"
+    notes: "x-api-key header for whale-app-poxe2 exfiltration endpoint"
 
 # Cloud hosting patterns commonly abused
 suspicious_hosting:
@@ -92,5 +156,122 @@ scammer_signatures:
     indicators:
       - "whale-app"
       - "walrus-app"
+      - "kaspa-backend.vercel.app"
     confidence: "high"
-    notes: "Animal-themed DO apps, Express.js backends"
+    notes: "Animal-themed DO apps, Vercel notification backend, Express.js"
+    known_frontends:
+      - "kaspanet.app"
+      - "kaspa-wallet.co"
+      - "wallet-kaspanet.com"
+      - "kaspanet.one"
+      - "app-kaspa-ng.org"
+    cloaking_method: "IP-based via walrus backend + ipdata.co bot detection"
+    attack_flow: "landing -> redirect -> 12-word seed form -> whale exfil + vercel notification"
+
+# Kit fingerprints for automated detection
+# These are unique identifiers found in phishing kit code
+kit_fingerprints:
+  # Typos in code - strong indicators of specific kit
+  typos:
+    - pattern: "broswer"
+      correct: "browser"
+      confidence: "high"
+      kit: "whale_walrus_gang"
+      notes: "Misspelling in JS code - unique fingerprint for this kit"
+
+  # App name strings embedded in code
+  app_names:
+    - pattern: 'appName:"Kaspa.ng"'
+      confidence: "high"
+      kit: "whale_walrus_gang"
+      notes: "Domain doesn't exist - kit identity string"
+
+    - pattern: 'appName:"Kaspa.one"'
+      confidence: "high"
+      kit: "whale_walrus_gang"
+      notes: "Points to parked domain - kit identity string"
+
+    - pattern: 'appName:"Kaspa"'
+      confidence: "medium"
+      kit: "whale_walrus_gang"
+      notes: "Generic but part of kit pattern"
+
+  # Suspicious field names
+  form_fields:
+    - pattern: "walletSecret"
+      confidence: "high"
+      type: "credential_theft"
+      notes: "Additional theft vector - captures wallet encryption password"
+
+    - pattern: "seedphrase"
+      confidence: "medium"
+      type: "credential_theft"
+      notes: "BIP39 seed phrase field - common in crypto phishing"
+
+  # Debug/development strings left in code
+  debug_strings:
+    - pattern: "Phishing Hint"
+      confidence: "very_high"
+      notes: "Ironic self-identification - strong indicator"
+
+    - pattern: "page_entry"
+      confidence: "medium"
+      kit: "whale_walrus_gang"
+      notes: "Event type sent to C2 notification endpoint"
+
+    - pattern: "Regular Visitor"
+      confidence: "medium"
+      kit: "whale_walrus_gang"
+      notes: "Classification string in cloaking logic"
+
+  # Cloaking state variables
+  cloaking_vars:
+    - pattern: "hasSeenWallet"
+      confidence: "high"
+      notes: "localStorage key for cloaking state"
+
+    - pattern: "hasVisited"
+      confidence: "medium"
+      notes: "localStorage key for visit tracking"
+
+    - pattern: "is_datacenter"
+      confidence: "high"
+      notes: "Bot detection check - blocks datacenter IPs"
+
+    - pattern: "is_vpn"
+      confidence: "high"
+      notes: "Bot detection check - blocks VPN users"
+
+    - pattern: "is_tor"
+      confidence: "high"
+      notes: "Bot detection check - blocks Tor users"
+
+    - pattern: "is_proxy"
+      confidence: "high"
+      notes: "Bot detection check - blocks proxy users"
+
+  # Kaspa-NG phishing clone indicators
+  # NOTE: Kaspa-NG is a LEGITIMATE wallet at kaspa-ng.org (web + desktop)
+  # These patterns detect PHISHING CLONES, not the legitimate site
+  kaspa_ng_phishing:
+    - pattern: "app-kaspa-ng\\.org"
+      confidence: "very_high"
+      kit: "whale_walrus_gang"
+      notes: "Known phishing domain cloning kaspa-ng.org"
+
+    - pattern: "noindex.*nofollow"
+      confidence: "high"
+      kit: "whale_walrus_gang"
+      notes: "SEO hiding - legitimate kaspa-ng.org doesn't hide from search engines"
+
+    - pattern: "broswer"
+      confidence: "very_high"
+      kit: "whale_walrus_gang"
+      notes: "Typo in phishing kit code - 'broswer' instead of 'browser'"
+
+  # SEO hiding is a strong phishing indicator
+  # Legitimate sites WANT to be indexed; phishing sites hide
+  seo_hiding:
+    - pattern: 'noindex.*nofollow'
+      confidence: "high"
+      notes: "Hiding from search engines - phishing sites hide, legitimate sites don't"

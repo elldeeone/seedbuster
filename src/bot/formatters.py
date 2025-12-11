@@ -55,6 +55,7 @@ class AlertData:
     evidence_path: Optional[str] = None
     temporal: Optional[TemporalInfo] = None  # Temporal analysis info
     cluster: Optional[ClusterInfo] = None  # Threat cluster info
+    seed_form_found: bool = False  # True if seed phrase entry form was discovered
 
 
 class AlertFormatter:
@@ -102,6 +103,12 @@ class AlertFormatter:
             f"Domain: {data.domain}",
             f"Confidence: {label} ({data.score}/100)",
         ]
+
+        # SEED FORM FOUND - the definitive indicator (show first!)
+        if data.seed_form_found:
+            lines.append("")
+            lines.append("\U0001F3AF SEED FORM FOUND - CONFIRMED PHISHING")
+            lines.append("Exploration discovered seed phrase entry form")
 
         # Add temporal status section for initial scans
         if temporal and temporal.is_initial_scan:

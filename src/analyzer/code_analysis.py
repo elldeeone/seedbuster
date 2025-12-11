@@ -245,6 +245,28 @@ class CodeAnalyzer:
             ],
             "min_matches": 2,
         },
+        "kaspa_ng_phishing": {
+            # Phishing clone of legitimate kaspa-ng.org
+            # Key indicators: malicious backend infrastructure + SEO hiding
+            "patterns": [
+                r"kaspa-backend\.vercel\.app",  # Known C2 notification backend
+                r"whale-app.*\.ondigitalocean\.app",  # Known exfil backend
+                r"walrus-app.*\.ondigitalocean\.app",  # Known IP logging backend
+                r"kaspanet\.one",  # Phishing redirect target
+                r"appName.*Kaspa\.ng",  # Kit identity string (domain doesn't exist)
+                r"appName.*Kaspa\.one",  # Kit identity string (parked domain)
+                r"/api/form/text",  # Exfil endpoint pattern
+                r"/api/notification",  # C2 notification pattern
+                r"/log-ip",  # IP logging endpoint
+            ],
+            "html_patterns": [
+                r'noindex.*nofollow',  # SEO hiding - legitimate sites don't hide
+                r"is_datacenter|is_vpn|is_tor|is_proxy",  # Anti-bot cloaking variables
+                r"hasSeenWallet|hasVisited",  # Cloaking state tracking
+                r"broswer",  # Typo fingerprint unique to this kit
+            ],
+            "min_matches": 2,
+        },
         "generic_seed_stealer": {
             "patterns": [
                 r"mnemonic",
