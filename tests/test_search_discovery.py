@@ -39,6 +39,7 @@ async def test_search_discovery_enqueues_results():
     queue: asyncio.Queue[object] = asyncio.Queue(maxsize=10)
     provider = _StubProvider(
         [
+            SearchResult(url="https://www.reddit.com/r/kaspa/comments/123/recover_wallet_seed/"),
             SearchResult(url="https://phish.example/wallet"),
             SearchResult(url="https://phish.example/wallet"),  # duplicate
             SearchResult(url="https://safe.example/"),
@@ -52,6 +53,7 @@ async def test_search_discovery_enqueues_results():
         interval_seconds=3600,
         results_per_query=10,
         force_analyze=True,
+        exclude_domains={"reddit.com"},
     )
 
     await discovery.run_once()
@@ -63,4 +65,3 @@ async def test_search_discovery_enqueues_results():
     assert first == {"domain": "phish.example/wallet", "source": "search", "force": True}
     assert second == {"domain": "safe.example", "source": "search", "force": True}
     assert provider.calls == [("kaspa wallet", 10)]
-

@@ -8,6 +8,36 @@ from typing import Set
 from dotenv import load_dotenv
 
 
+DEFAULT_SEARCH_EXCLUDE_DOMAINS: set[str] = {
+    # Social/discussion platforms (common false positives for wallet/seed queries)
+    "reddit.com",
+    "twitter.com",
+    "x.com",
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "quora.com",
+    "discord.com",
+    "discord.gg",
+    "t.me",
+    "telegram.me",
+    # Code/blog/video platforms (often educational results, rarely the phishing kit itself)
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "medium.com",
+    "youtube.com",
+    "youtu.be",
+    "stackoverflow.com",
+    "stackexchange.com",
+    "wikipedia.org",
+    # Major portals (reduce noise)
+    "google.com",
+    "microsoft.com",
+    "apple.com",
+}
+
+
 @dataclass
 class Config:
     """Application configuration loaded from environment."""
@@ -46,6 +76,9 @@ class Config:
     search_discovery_interval_minutes: int = 60
     search_discovery_results_per_query: int = 20
     search_discovery_force_analyze: bool = False  # bypass DOMAIN_SCORE_THRESHOLD for search hits
+    search_discovery_exclude_domains: Set[str] = field(
+        default_factory=lambda: set(DEFAULT_SEARCH_EXCLUDE_DOMAINS)
+    )
 
     # Google Programmable Search Engine (Custom Search JSON API)
     google_cse_api_key: str = ""
@@ -165,6 +198,11 @@ def load_config() -> Config:
     search_kwargs: dict[str, object] = {}
     if queries_str.strip():
         search_kwargs["search_discovery_queries"] = [q.strip() for q in queries_str.split(";") if q.strip()]
+
+    exclude_str = os.getenv("SEARCH_DISCOVERY_EXCLUDE_DOMAINS", "")
+    if exclude_str.strip():
+        exclude = {d.strip().lower() for d in exclude_str.split(",") if d.strip()}
+        search_kwargs["search_discovery_exclude_domains"] = set(DEFAULT_SEARCH_EXCLUDE_DOMAINS) | exclude
 
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),

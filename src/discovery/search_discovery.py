@@ -6,10 +6,11 @@ import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, Set
 from urllib.parse import urlparse
 
 import aiohttp
+import tldextract
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,13 @@ def _is_interesting_path(pathish: str) -> bool:
     return any(k in lowered for k in keywords)
 
 
+def _registered_domain(hostname: str) -> str:
+    extracted = tldextract.extract(hostname)
+    if extracted.domain and extracted.suffix:
+        return f"{extracted.domain}.{extracted.suffix}".lower()
+    return hostname.lower()
+
+
 def normalize_search_target(url: str) -> tuple[str, str] | None:
     """
     Convert a search result URL into (hostname, target) used by the pipeline.
@@ -241,6 +249,7 @@ class SearchDiscovery:
         interval_seconds: int,
         results_per_query: int,
         force_analyze: bool = False,
+        exclude_domains: Set[str] | None = None,
     ):
         self.queue = queue
         self.provider = provider
@@ -248,6 +257,7 @@ class SearchDiscovery:
         self.interval_seconds = max(60, int(interval_seconds))
         self.results_per_query = max(1, int(results_per_query))
         self.force_analyze = bool(force_analyze)
+        self.exclude_domains = {d.lower() for d in (exclude_domains or set())}
 
         self._seen_targets: set[str] = set()
         self._seen_order: deque[str] = deque()
@@ -290,7 +300,12 @@ class SearchDiscovery:
                 normalized = normalize_search_target(result.url)
                 if not normalized:
                     continue
-                _hostname, target = normalized
+                hostname, target = normalized
+
+                # Drop obvious false positives (forums/social/video/docs).
+                registered = _registered_domain(hostname)
+                if registered in self.exclude_domains or hostname in self.exclude_domains:
+                    continue
 
                 if target in self._seen_targets:
                     continue

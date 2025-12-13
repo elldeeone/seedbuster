@@ -203,6 +203,7 @@ class SeedBusterPipeline:
                     interval_seconds=self.config.search_discovery_interval_minutes * 60,
                     results_per_query=self.config.search_discovery_results_per_query,
                     force_analyze=self.config.search_discovery_force_analyze,
+                    exclude_domains=self.config.search_discovery_exclude_domains,
                 )
                 logger.info("Search discovery enabled")
 
