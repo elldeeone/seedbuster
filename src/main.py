@@ -36,6 +36,8 @@ class SeedBusterPipeline:
         self.config = config
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._stop_lock = asyncio.Lock()
+        self._stop_task: asyncio.Task | None = None
 
         # Queues for pipeline stages
         self._discovery_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
@@ -174,12 +176,21 @@ class SeedBusterPipeline:
 
     async def stop(self):
         """Stop all pipeline components."""
+        async with self._stop_lock:
+            if self._stop_task is None:
+                self._stop_task = asyncio.create_task(self._stop_impl())
+            stop_task = self._stop_task
+        await stop_task
+
+    async def _stop_impl(self):
+        """One-shot shutdown implementation (idempotent via stop())."""
         logger.info("Stopping SeedBuster pipeline...")
         self._running = False
 
         # Stop components in reverse order
         if self.ct_listener:
             await self.ct_listener.stop()
+            self.ct_listener = None
 
         # Stop worker tasks (including infinite rescan loop)
         for task in self._tasks:
@@ -766,6 +777,8 @@ async def run_pipeline():
     try:
         await pipeline.start()
     except KeyboardInterrupt:
+        pass
+    finally:
         await pipeline.stop()
 
 

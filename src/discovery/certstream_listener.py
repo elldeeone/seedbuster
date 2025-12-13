@@ -146,9 +146,17 @@ class AsyncCertstreamListener:
 
     async def stop(self):
         """Stop the listener."""
-        if self._listener:
-            self._listener.stop()
-        if self._thread:
-            self._thread.join(timeout=5)
+        listener = self._listener
+        thread = self._thread
+
+        self._listener = None
+        self._thread = None
         self._loop = None
+
+        if listener:
+            listener.stop()
+        if thread:
+            await asyncio.to_thread(thread.join, 1)
+            if thread.is_alive():
+                logger.warning("Certstream thread did not stop within timeout; exiting anyway")
         logger.info("Async certstream listener stopped")
