@@ -1,6 +1,5 @@
 """Phishing detection logic for SeedBuster."""
 
-import hashlib
 import io
 import logging
 import re
@@ -12,7 +11,7 @@ from PIL import Image
 import imagehash
 
 from .browser import BrowserResult
-from .threat_intel import ThreatIntelLoader, ThreatIntel
+from .threat_intel import ThreatIntelLoader
 from .infrastructure import InfrastructureResult
 from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 from .temporal import TemporalAnalysis

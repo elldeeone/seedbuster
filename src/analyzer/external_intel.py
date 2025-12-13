@@ -230,7 +230,7 @@ class ExternalIntelligence:
                                     result.scan_date = datetime.fromisoformat(
                                         task["time"].replace("Z", "+00:00")
                                     )
-                                except:
+                                except ValueError:
                                     pass
 
                             logger.debug(f"urlscan.io: {domain} = {result.verdict} (score: {result.score})")
@@ -376,7 +376,7 @@ class ExternalIntelligence:
                                         result.date_added = datetime.strptime(
                                             date_added, "%Y-%m-%d %H:%M:%S"
                                         )
-                                    except:
+                                    except ValueError:
                                         pass
 
                             logger.debug(
@@ -453,7 +453,7 @@ class ExternalIntelligence:
                 )
             elif vt.malicious_count >= 1:
                 score += 10
-                reasons.append(f"EXTERNAL: VirusTotal 1 engine flagged malicious")
+                reasons.append("EXTERNAL: VirusTotal 1 engine flagged malicious")
 
             if vt.suspicious_count >= 3:
                 score += 10

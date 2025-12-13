@@ -48,7 +48,7 @@ async def main():
             reverse = socket.gethostbyaddr(ip)
             intel["dns"]["reverse"] = reverse[0]
             print(f"    Reverse DNS: {reverse[0]}")
-        except:
+        except (socket.herror, OSError):
             intel["dns"]["reverse"] = None
 
     except socket.gaierror:
@@ -235,7 +235,7 @@ async def main():
 
         intel["scripts"]["suspicious_patterns"] = found_patterns
         if found_patterns:
-            print(f"    Suspicious JS patterns found:")
+            print("    Suspicious JS patterns found:")
             for p in found_patterns:
                 print(f"      - {p}")
                 intel["indicators"].append(f"JS pattern: {p}")
@@ -245,7 +245,7 @@ async def main():
         external_endpoints = [e for e in endpoints if domain not in e]
         if external_endpoints:
             intel["scripts"]["external_endpoints"] = external_endpoints[:20]  # Limit
-            print(f"\n    Hardcoded external endpoints:")
+            print("\n    Hardcoded external endpoints:")
             for ep in external_endpoints[:10]:
                 print(f"      - {ep[:80]}")
 

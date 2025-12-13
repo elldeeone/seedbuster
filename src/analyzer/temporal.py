@@ -357,7 +357,6 @@ class TemporalTracker:
         scores = [s.score for s in snapshots]
         titles = set(s.title for s in snapshots if s.title)
         html_hashes = set(s.html_hash for s in snapshots if s.html_hash)
-        verdicts = [s.verdict for s in snapshots]
 
         # Content change detection
         analysis.content_changed = len(html_hashes) > 1

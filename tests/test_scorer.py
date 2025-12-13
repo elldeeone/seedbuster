@@ -93,10 +93,9 @@ class TestIDNHomograph:
 
     def test_cyrillic_a(self, scorer):
         """Cyrillic 'а' should be detected."""
-        # kаspa with Cyrillic а
-        result = scorer.score_domain("xn--ksp-8cd.com")  # Punycode for kаspa
-        # This tests the punycode handling - actual IDN detection
-        # depends on input format
+        # kаspa with Cyrillic 'а' (U+0430)
+        result = scorer.score_domain("kаspa.com")
+        assert any("IDN homograph attack detected" in r for r in result.reasons)
 
     def test_mixed_script(self, scorer):
         """Mixed script domains should be flagged."""

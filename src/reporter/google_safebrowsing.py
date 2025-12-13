@@ -1,8 +1,6 @@
 """Google Safe Browsing form reporter for SeedBuster."""
 
 import logging
-import urllib.parse
-from typing import Optional
 
 from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
 
@@ -37,7 +35,7 @@ class GoogleSafeBrowsingReporter(BaseReporter):
     def get_report_text(self, evidence: ReportEvidence) -> str:
         """Generate the additional details text for copy-paste."""
         details_parts = [
-            f"Cryptocurrency seed phrase phishing site.",
+            "Cryptocurrency seed phrase phishing site.",
             f"Confidence: {evidence.confidence_score}%",
             "",
             "Detection reasons:",

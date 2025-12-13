@@ -5,8 +5,6 @@ and network characteristics to detect phishing patterns.
 """
 
 import asyncio
-import hashlib
-import ipaddress
 import logging
 import re
 import socket
@@ -14,7 +12,6 @@ import ssl
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
 
 import aiohttp
 
@@ -436,7 +433,6 @@ class InfrastructureAnalyzer:
             session = await self._get_session()
             try:
                 # Try RDAP for domain info
-                tld = domain.split('.')[-1]
                 rdap_url = f"https://rdap.org/domain/{domain}"
 
                 async with session.get(rdap_url) as resp:

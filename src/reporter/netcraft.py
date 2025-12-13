@@ -1,7 +1,6 @@
 """Netcraft reporter for SeedBuster."""
 
 import logging
-from typing import Optional
 
 import httpx
 
@@ -48,7 +47,7 @@ class NetcraftReporter(BaseReporter):
 
         # Build reason string
         reason_parts = [
-            f"Cryptocurrency seed phrase phishing site.",
+            "Cryptocurrency seed phrase phishing site.",
             f"Confidence: {evidence.confidence_score}%",
         ]
         for r in evidence.detection_reasons[:3]:
@@ -90,7 +89,7 @@ class NetcraftReporter(BaseReporter):
                             platform=self.platform_name,
                             status=ReportStatus.SUBMITTED,
                             report_id=uuid,
-                            message=f"Submitted to Netcraft" + (f" (UUID: {uuid})" if uuid else ""),
+                            message="Submitted to Netcraft" + (f" (UUID: {uuid})" if uuid else ""),
                         )
                     except Exception:
                         return ReportResult(

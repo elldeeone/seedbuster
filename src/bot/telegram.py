@@ -1,18 +1,15 @@
 """Telegram bot for SeedBuster interaction."""
 
-import asyncio
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
     CallbackQueryHandler,
-    filters,
 )
 from telegram.constants import ParseMode
 
@@ -21,6 +18,9 @@ from ..storage.database import Database, DomainStatus
 from ..storage.evidence import EvidenceStore
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..reporter.manager import ReportManager
 
 
 class SeedBusterBot:
@@ -34,6 +34,8 @@ class SeedBusterBot:
         evidence_store: EvidenceStore,
         submit_callback: Optional[Callable[[str], None]] = None,
         report_manager: Optional["ReportManager"] = None,
+        report_require_approval: bool = True,
+        report_min_score: int = 70,
     ):
         self.token = token
         self.chat_id = chat_id
@@ -41,6 +43,8 @@ class SeedBusterBot:
         self.evidence_store = evidence_store
         self.submit_callback = submit_callback
         self.report_manager = report_manager
+        self.report_require_approval = report_require_approval
+        self.report_min_score = report_min_score
 
         self._app: Optional[Application] = None
         self._queue_size_callback: Optional[Callable[[], int]] = None
@@ -118,88 +122,97 @@ class SeedBusterBot:
 
             # Create inline keyboard for report actions (if high confidence)
             keyboard = None
-            if include_report_buttons and self.report_manager and data.score >= 70:
+            if include_report_buttons and self.report_manager and data.score >= self.report_min_score:
                 # Context-aware buttons based on detection status
                 # Priority: seed_form_found > cloaking_confirmed > cloaking_suspected > standard
+                available_platforms = self.report_manager.get_available_platforms()
+                show_report_button = self.report_require_approval and bool(available_platforms)
                 temporal = data.temporal
 
                 if data.seed_form_found:
                     # HIGHEST PRIORITY: Seed form found - definitive phishing confirmation
-                    keyboard = InlineKeyboardMarkup([
-                        [
+                    rows = []
+                    if show_report_button:
+                        rows.append([
                             InlineKeyboardButton(
                                 "🎯 Report (Seed Form Found)",
-                                callback_data=f"approve_{data.domain_id}"
+                                callback_data=f"approve_{data.domain_id}",
                             ),
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "❌ False Positive",
-                                callback_data=f"reject_{data.domain_id}"
-                            ),
-                            InlineKeyboardButton(
-                                "📊 Status",
-                                callback_data=f"status_{data.domain_id}"
-                            ),
-                        ],
+                        ])
+                    rows.append([
+                        InlineKeyboardButton(
+                            "❌ False Positive",
+                            callback_data=f"reject_{data.domain_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "📊 Status",
+                            callback_data=f"status_{data.domain_id}",
+                        ),
                     ])
+                    keyboard = InlineKeyboardMarkup(rows)
                 elif temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
                     # Initial scan with suspected cloaking - offer defer as primary
-                    keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "🕐 Defer (Wait for Rescans)",
-                                callback_data=f"defer_{data.domain_id}"
-                            ),
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "✅ Report Now",
-                                callback_data=f"approve_{data.domain_id}"
-                            ),
-                            InlineKeyboardButton(
-                                "❌ False Positive",
-                                callback_data=f"reject_{data.domain_id}"
-                            ),
-                        ],
-                    ])
+                    rows = [[
+                        InlineKeyboardButton(
+                            "🕐 Defer (Wait for Rescans)",
+                            callback_data=f"defer_{data.domain_id}",
+                        ),
+                    ]]
+                    action_row = []
+                    if show_report_button:
+                        action_row.append(InlineKeyboardButton(
+                            "✅ Report Now",
+                            callback_data=f"approve_{data.domain_id}",
+                        ))
+                    action_row.append(InlineKeyboardButton(
+                        "❌ False Positive",
+                        callback_data=f"reject_{data.domain_id}",
+                    ))
+                    action_row.append(InlineKeyboardButton(
+                        "📊 Status",
+                        callback_data=f"status_{data.domain_id}",
+                    ))
+                    rows.append(action_row)
+                    keyboard = InlineKeyboardMarkup(rows)
                 elif temporal and temporal.cloaking_confirmed:
                     # Rescan with confirmed cloaking - emphasize reporting
-                    keyboard = InlineKeyboardMarkup([
-                        [
+                    rows = []
+                    if show_report_button:
+                        rows.append([
                             InlineKeyboardButton(
                                 "🚨 Report (Cloaking Confirmed)",
-                                callback_data=f"approve_{data.domain_id}"
+                                callback_data=f"approve_{data.domain_id}",
                             ),
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "❌ False Positive",
-                                callback_data=f"reject_{data.domain_id}"
-                            ),
-                            InlineKeyboardButton(
-                                "📊 Status",
-                                callback_data=f"status_{data.domain_id}"
-                            ),
-                        ],
+                        ])
+                    rows.append([
+                        InlineKeyboardButton(
+                            "❌ False Positive",
+                            callback_data=f"reject_{data.domain_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "📊 Status",
+                            callback_data=f"status_{data.domain_id}",
+                        ),
                     ])
+                    keyboard = InlineKeyboardMarkup(rows)
                 else:
                     # Standard buttons
+                    first_row = []
+                    if show_report_button:
+                        first_row.append(InlineKeyboardButton(
+                            "✅ Approve & Report",
+                            callback_data=f"approve_{data.domain_id}",
+                        ))
+                    first_row.append(InlineKeyboardButton(
+                        "❌ False Positive",
+                        callback_data=f"reject_{data.domain_id}",
+                    ))
                     keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "✅ Approve & Report",
-                                callback_data=f"approve_{data.domain_id}"
-                            ),
-                            InlineKeyboardButton(
-                                "❌ False Positive",
-                                callback_data=f"reject_{data.domain_id}"
-                            ),
-                        ],
+                        first_row,
                         [
                             InlineKeyboardButton(
                                 "📊 Report Status",
-                                callback_data=f"status_{data.domain_id}"
+                                callback_data=f"status_{data.domain_id}",
                             ),
                         ],
                     ])
@@ -283,10 +296,19 @@ class SeedBusterBot:
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
 
+    def _is_authorized(self, update: Update) -> bool:
+        """Return True if this update is from the configured chat."""
+        chat = update.effective_chat
+        if not chat:
+            return False
+        return str(chat.id) == str(self.chat_id)
+
     # Command handlers
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command."""
+        if not self._is_authorized(update):
+            return
         await update.message.reply_text(
             "*SeedBuster* - Kaspa Phishing Detection\n\n"
             "I monitor Certificate Transparency logs for suspicious Kaspa-related domains "
@@ -297,6 +319,8 @@ class SeedBusterBot:
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
+        if not self._is_authorized(update):
+            return
         await update.message.reply_text(
             AlertFormatter.format_help(),
             parse_mode=ParseMode.MARKDOWN,
@@ -304,6 +328,8 @@ class SeedBusterBot:
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command."""
+        if not self._is_authorized(update):
+            return
         stats = await self.database.get_stats()
         queue_size = self._queue_size_callback() if self._queue_size_callback else 0
 
@@ -317,6 +343,8 @@ class SeedBusterBot:
 
     async def _cmd_recent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /recent command."""
+        if not self._is_authorized(update):
+            return
         limit = 10
         if context.args:
             try:
@@ -332,11 +360,15 @@ class SeedBusterBot:
 
     async def _cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stats command."""
+        if not self._is_authorized(update):
+            return
         # Same as status for now
         await self._cmd_status(update, context)
 
     async def _cmd_submit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /submit command."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text(
                 "Usage: `/submit <url>`\n"
@@ -448,6 +480,8 @@ class SeedBusterBot:
 
     async def _cmd_ack(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /ack command."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text("Usage: `/ack <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
@@ -472,6 +506,8 @@ class SeedBusterBot:
 
     async def _cmd_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /defer command - wait for rescans before deciding."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text("Usage: `/defer <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
@@ -498,6 +534,8 @@ class SeedBusterBot:
 
     async def _cmd_rescan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /rescan command - manually trigger a rescan."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text(
                 "Usage: `/rescan <domain>`\nExample: `/rescan kaspanet.app`",
@@ -525,6 +563,8 @@ class SeedBusterBot:
 
     async def _cmd_fp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /fp (false positive) command."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text("Usage: `/fp <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
@@ -549,6 +589,8 @@ class SeedBusterBot:
 
     async def _cmd_evidence(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /evidence command."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text(
                 "Usage: `/evidence <domain_id>`",
@@ -601,6 +643,8 @@ class SeedBusterBot:
 
     async def _cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /report command."""
+        if not self._is_authorized(update):
+            return
         if not context.args:
             await update.message.reply_text(
                 "Usage:\n"
@@ -657,6 +701,15 @@ class SeedBusterBot:
                     parse_mode=ParseMode.MARKDOWN,
                 )
         else:
+            analysis_score = int(target.get("analysis_score") or 0)
+            if analysis_score < self.report_min_score:
+                await update.message.reply_text(
+                    f"Refusing to report `{domain}`: score {analysis_score} < {self.report_min_score}.\n"
+                    "If you still want to report, increase `REPORT_MIN_SCORE` or re-run analysis.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
             # Submit reports
             platforms = None if action == "all" else [action]
             await update.message.reply_text(
@@ -704,6 +757,8 @@ class SeedBusterBot:
 
     async def _callback_approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle approve button callback."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -747,6 +802,8 @@ class SeedBusterBot:
 
     async def _callback_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle defer button callback - wait for rescans."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -776,6 +833,8 @@ class SeedBusterBot:
 
     async def _callback_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle reject (false positive) button callback."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -806,6 +865,8 @@ class SeedBusterBot:
 
     async def _callback_report_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle report status button callback."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -831,7 +892,7 @@ class SeedBusterBot:
                 parse_mode=ParseMode.MARKDOWN,
             )
         else:
-            status_lines = [f"*Report Status:*\n"]
+            status_lines = ["*Report Status:*\n"]
             for r in reports:
                 status_emoji = {
                     "submitted": "✅",
@@ -851,6 +912,8 @@ class SeedBusterBot:
 
     async def _callback_rescan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle rescan button callback."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -886,6 +949,8 @@ class SeedBusterBot:
 
     async def _callback_evidence(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle evidence button callback."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -937,6 +1002,8 @@ class SeedBusterBot:
 
     async def _callback_scanpath(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle scan path button callback - analyze a specific URL path."""
+        if not self._is_authorized(update):
+            return
         query = update.callback_query
         await query.answer()
 
@@ -1047,6 +1114,8 @@ class SeedBusterBot:
 
     async def _cmd_threshold(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /threshold command."""
+        if not self._is_authorized(update):
+            return
         # TODO: Implement runtime threshold adjustment
         await update.message.reply_text(
             "Threshold adjustment coming soon.\n"
@@ -1055,6 +1124,8 @@ class SeedBusterBot:
 
     async def _cmd_allowlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /allowlist command."""
+        if not self._is_authorized(update):
+            return
         # TODO: Implement allowlist management
         await update.message.reply_text(
             "Allowlist management coming soon.\n"
@@ -1063,6 +1134,8 @@ class SeedBusterBot:
 
     async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /reload command - hot reload threat intel."""
+        if not self._is_authorized(update):
+            return
         if not self._reload_callback:
             await update.message.reply_text(
                 "Reload not available - callback not configured."

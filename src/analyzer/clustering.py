@@ -13,7 +13,6 @@ Enables tracking of threat actor campaigns over time.
 import hashlib
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -239,7 +238,7 @@ class ThreatClusterManager:
                 parsed = urlparse(url)
                 return parsed.netloc.lower()
             return url.lower()
-        except:
+        except Exception:
             return None
 
     def find_matching_cluster(

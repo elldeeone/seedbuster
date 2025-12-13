@@ -99,7 +99,7 @@ Source: https://github.com/elldeeone/seedbuster
         # Extract DO apps
         do_apps = [d for d in (evidence.backend_domains or []) if "ondigitalocean.app" in d]
 
-        body = f"""
+        body = """
 ================================================================================
               URGENT: CRYPTOCURRENCY PHISHING INFRASTRUCTURE
                     DigitalOcean App Platform Abuse Report
@@ -300,7 +300,7 @@ Source:   https://github.com/elldeeone/seedbuster
     def phishtank_comment(cls, evidence: ReportEvidence) -> str:
         """Generate a comment for PhishTank submission."""
         lines = [
-            f"Cryptocurrency seed phrase phishing site.",
+            "Cryptocurrency seed phrase phishing site.",
             f"Confidence: {evidence.confidence_score}%",
             "",
             "Detection reasons:",

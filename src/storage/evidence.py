@@ -1,5 +1,6 @@
 """Evidence file storage for SeedBuster."""
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime
@@ -34,21 +35,22 @@ class EvidenceStore:
         domain_dir = self.get_domain_dir(domain)
         filename = f"screenshot{suffix}.png"
         path = domain_dir / filename
-        path.write_bytes(screenshot_bytes)
+        await asyncio.to_thread(path.write_bytes, screenshot_bytes)
         return path
 
     async def save_html(self, domain: str, html_content: str) -> Path:
         """Save HTML snapshot for a domain."""
         domain_dir = self.get_domain_dir(domain)
         path = domain_dir / "page.html"
-        path.write_text(html_content, encoding="utf-8")
+        await asyncio.to_thread(path.write_text, html_content, encoding="utf-8")
         return path
 
     async def save_har(self, domain: str, har_data: dict) -> Path:
         """Save HAR network trace for a domain."""
         domain_dir = self.get_domain_dir(domain)
         path = domain_dir / "network.har"
-        path.write_text(json.dumps(har_data, indent=2), encoding="utf-8")
+        har_json = json.dumps(har_data, indent=2)
+        await asyncio.to_thread(path.write_text, har_json, encoding="utf-8")
         return path
 
     async def save_analysis(self, domain: str, analysis_data: dict) -> Path:
@@ -59,14 +61,16 @@ class EvidenceStore:
         # Add timestamp
         analysis_data["saved_at"] = datetime.utcnow().isoformat()
 
-        path.write_text(json.dumps(analysis_data, indent=2), encoding="utf-8")
+        analysis_json = json.dumps(analysis_data, indent=2)
+        await asyncio.to_thread(path.write_text, analysis_json, encoding="utf-8")
         return path
 
     async def save_console_logs(self, domain: str, logs: list[str]) -> Path:
         """Save browser console logs for a domain."""
         domain_dir = self.get_domain_dir(domain)
         path = domain_dir / "console.log"
-        path.write_text("\n".join(logs), encoding="utf-8")
+        content = "\n".join(logs)
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         return path
 
     def get_evidence_path(self, domain: str) -> Path:

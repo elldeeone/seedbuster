@@ -3,10 +3,11 @@
 
 import asyncio
 import json
+import os
 import httpx
 
 WHALE_BACKEND = "https://whale-app-poxe2.ondigitalocean.app"
-WHALE_API_KEY = "e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b"
+WHALE_API_KEY = os.getenv("WHALE_API_KEY", "")
 
 
 async def probe_whale_post_routes():
@@ -14,6 +15,10 @@ async def probe_whale_post_routes():
     print("=" * 60)
     print("WHALE BACKEND - POST ROUTE DISCOVERY")
     print("=" * 60)
+
+    if not WHALE_API_KEY:
+        print("WHALE_API_KEY not set; skipping.")
+        return
 
     headers = {
         "x-api-key": WHALE_API_KEY,
@@ -61,6 +66,10 @@ async def probe_common_api_patterns():
     print("COMMON API PATTERN DISCOVERY")
     print("=" * 60)
 
+    if not WHALE_API_KEY:
+        print("WHALE_API_KEY not set; skipping.")
+        return
+
     headers = {
         "x-api-key": WHALE_API_KEY,
         "Content-Type": "application/json",
@@ -98,7 +107,7 @@ async def probe_common_api_patterns():
                     print(f"  Status: {resp.status_code} *** INTERESTING ***")
                     print(f"  Response: {resp.text[:300] if resp.text else '(empty)'}")
                 else:
-                    print(f"  Status: 404")
+                    print("  Status: 404")
 
             except Exception as e:
                 print(f"  ERROR: {e}")
@@ -121,7 +130,7 @@ async def check_cors_config():
                 }
             )
             print(f"Status: {resp.status_code}")
-            print(f"CORS Headers:")
+            print("CORS Headers:")
             for h in ["access-control-allow-origin", "access-control-allow-methods",
                       "access-control-allow-headers", "access-control-allow-credentials"]:
                 if h in resp.headers:
@@ -160,7 +169,7 @@ async def enumerate_with_wordlist():
                     if resp.status_code != 404:
                         found.append((route, resp.status_code, resp.text[:100]))
                         print(f"  FOUND: {route} -> {resp.status_code}")
-                except:
+                except Exception:
                     pass
 
                 try:
@@ -168,7 +177,7 @@ async def enumerate_with_wordlist():
                     if resp.status_code != 404:
                         found.append((f"POST {route}", resp.status_code, resp.text[:100]))
                         print(f"  FOUND: POST {route} -> {resp.status_code}")
-                except:
+                except Exception:
                     pass
 
     print(f"\nTotal non-404 endpoints found: {len(found)}")

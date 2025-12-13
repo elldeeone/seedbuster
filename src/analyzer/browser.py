@@ -1,11 +1,13 @@
 """Playwright-based browser analysis for phishing detection."""
 
 import asyncio
+import ipaddress
 import logging
 import random
+import socket
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, Browser, Page, Error as PlaywrightError
 
@@ -260,6 +262,7 @@ class BrowserResult:
 
     # Anti-evasion data
     blocked_requests: list[str] = field(default_factory=list)  # Blocked anti-bot requests
+    blocked_internal_requests: list[str] = field(default_factory=list)  # Blocked private/local SSRF targets
     evasion_detected: bool = False  # True if content changed significantly after load
 
     # Click-through exploration results
@@ -312,6 +315,10 @@ class BrowserAnalyzer:
         if not self._browser:
             await self.start()
 
+        raw_target = domain.strip()
+        parsed_target = urlparse(raw_target if "://" in raw_target else f"https://{raw_target}")
+        target_host = parsed_target.hostname or raw_target.split("/")[0]
+
         result = BrowserResult(domain=domain, success=False)
         context = None
         page = None
@@ -345,24 +352,65 @@ class BrowserAnalyzer:
             external_domains = set()
             form_posts = []
             blocked_requests = []
+            blocked_internal_requests = []
+            host_safety_cache: dict[str, bool] = {}
+
+            async def is_global_destination(hostname: str) -> bool:
+                """Best-effort check that hostname resolves to global/public IPs."""
+                host_key = (hostname or "").strip().lower()
+                if not host_key:
+                    return True
+
+                cached = host_safety_cache.get(host_key)
+                if cached is not None:
+                    # Never trust cached-allow for the primary target host (DNS rebinding)
+                    if cached is False or host_key != (target_host or "").lower():
+                        return cached
+
+                try:
+                    ip_obj = ipaddress.ip_address(host_key)
+                    safe = ip_obj.is_global
+                except ValueError:
+                    try:
+                        addrinfos = await asyncio.to_thread(
+                            socket.getaddrinfo, host_key, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+                        )
+                        resolved_ips = {sockaddr[0] for *_rest, sockaddr in addrinfos}
+                        safe = bool(resolved_ips) and all(
+                            ipaddress.ip_address(ip).is_global for ip in resolved_ips
+                        )
+                    except Exception:
+                        # If we can't resolve, let the request proceed (it will likely fail anyway).
+                        safe = True
+
+                # Cache denials always; cache allows only for non-target hosts.
+                if safe is False or host_key != (target_host or "").lower():
+                    host_safety_cache[host_key] = safe
+                return safe
 
             async def handle_route(route):
-                """Block requests to known anti-bot services."""
+                """Block anti-bot services and private/local SSRF targets."""
                 url = route.request.url
+
+                url_lower = url.lower()
+                if any(antibot in url_lower for antibot in ANTIBOT_DOMAINS):
+                    blocked_requests.append(url)
+                    logger.debug(f"Blocked anti-bot request: {url}")
+                    await route.abort()
+                    return
+
                 try:
-                    # Extract domain from URL
-                    url_parts = url.split("/")
-                    if len(url_parts) >= 3:
-                        request_domain = url_parts[2].lower()
-                        # Check if this is an anti-bot service
-                        for antibot in ANTIBOT_DOMAINS:
-                            if antibot in request_domain:
-                                blocked_requests.append(url)
-                                logger.debug(f"Blocked anti-bot request: {url}")
-                                await route.abort()
-                                return
+                    parsed = urlparse(url)
+                    hostname = parsed.hostname
+                    if hostname and parsed.scheme in ("http", "https", "ws", "wss"):
+                        if not await is_global_destination(hostname):
+                            blocked_internal_requests.append(url)
+                            logger.debug(f"Blocked private/local request (SSRF guard): {url}")
+                            await route.abort()
+                            return
                 except Exception:
-                    pass
+                    # If parsing fails, don't block.
+                    ...
                 await route.continue_()
 
             # Enable request interception to block anti-bot services
@@ -372,8 +420,11 @@ class BrowserAnalyzer:
                 try:
                     url = request.url
                     # Track external requests
-                    if domain not in url and not url.startswith("data:"):
-                        external_domains.add(url.split("/")[2] if "/" in url else url)
+                    if not url.startswith("data:"):
+                        parsed = urlparse(url)
+                        request_host = parsed.hostname
+                        if request_host and request_host != target_host:
+                            external_domains.add(request_host)
                     # Track form submissions
                     if request.method == "POST":
                         form_posts.append({
@@ -387,7 +438,7 @@ class BrowserAnalyzer:
             page.on("request", handle_request)
 
             # Navigate to the site - first wait for DOM, then capture early evidence
-            url = f"https://{domain}"
+            url = raw_target if raw_target.startswith(("http://", "https://")) else f"https://{raw_target}"
             try:
                 # First load: wait only for DOM content (before JS redirects)
                 response = await page.goto(
@@ -402,7 +453,7 @@ class BrowserAnalyzer:
                 try:
                     await page.wait_for_selector("body", state="visible", timeout=3000)
                     await asyncio.sleep(1.5)  # Allow more time for initial render
-                except:
+                except Exception:
                     await asyncio.sleep(2.0)  # Fallback wait if selector fails
                 result.screenshot_early = await page.screenshot(full_page=True)
                 result.html_early = await page.content()
@@ -414,7 +465,11 @@ class BrowserAnalyzer:
             except PlaywrightError as e:
                 # Try HTTP if HTTPS fails
                 if "ERR_" in str(e) or "Timeout" in str(e):
-                    url = f"http://{domain}"
+                    url = (
+                        raw_target.replace("https://", "http://", 1)
+                        if raw_target.startswith("https://")
+                        else (raw_target if raw_target.startswith("http://") else f"http://{raw_target}")
+                    )
                     try:
                         response = await page.goto(
                             url,
@@ -427,7 +482,7 @@ class BrowserAnalyzer:
                         try:
                             await page.wait_for_selector("body", state="visible", timeout=3000)
                             await asyncio.sleep(1.5)
-                        except:
+                        except Exception:
                             await asyncio.sleep(2.0)
                         result.screenshot_early = await page.screenshot(full_page=True)
                         result.html_early = await page.content()
@@ -452,6 +507,7 @@ class BrowserAnalyzer:
             result.external_requests = list(external_domains)
             result.form_submissions = form_posts
             result.blocked_requests = blocked_requests
+            result.blocked_internal_requests = blocked_internal_requests
 
             # Detect evasion: check if content changed significantly
             if result.title_early and result.title:
@@ -825,15 +881,17 @@ class BrowserAnalyzer:
             await asyncio.sleep(2.5)  # Extra wait for seed forms to render
             try:
                 # Wait for inputs to appear (seed forms have many inputs)
-                await page.wait_for_selector("input[type='text'], input[type='password'], textarea", timeout=3000)
-            except:
+                await page.wait_for_selector(
+                    "input[type='text'], input[type='password'], textarea", timeout=3000
+                )
+            except Exception:
                 pass
         else:
             await asyncio.sleep(1.5)
 
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
-        except:
+        except Exception:
             pass
 
         step = ExplorationStep(button_text=button_text)

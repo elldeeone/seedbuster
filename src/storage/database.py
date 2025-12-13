@@ -1,7 +1,6 @@
 """SQLite database operations for SeedBuster."""
 
 import asyncio
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -160,17 +159,41 @@ class Database:
     async def update_domain_status(
         self,
         domain_id: int,
-        status: DomainStatus,
+        status: DomainStatus | str | None = None,
+        verdict: Verdict | str | None = None,
     ):
-        """Update domain status."""
+        """Update domain status and/or verdict."""
+        if status is None and verdict is None:
+            return
+
+        status_value = status.value if isinstance(status, Enum) else status
+        verdict_value = verdict.value if isinstance(verdict, Enum) else verdict
+
+        updates = []
+        params = []
+
+        if status_value is not None:
+            updates.append("status = ?")
+            params.append(status_value)
+            if status_value == DomainStatus.ANALYZED.value:
+                updates.append("analyzed_at = COALESCE(analyzed_at, CURRENT_TIMESTAMP)")
+            elif status_value == DomainStatus.REPORTED.value:
+                updates.append("reported_at = COALESCE(reported_at, CURRENT_TIMESTAMP)")
+        if verdict_value is not None:
+            updates.append("verdict = ?")
+            params.append(verdict_value)
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(domain_id)
+
         async with self._lock:
             await self._connection.execute(
-                """
+                f"""
                 UPDATE domains
-                SET status = ?, updated_at = CURRENT_TIMESTAMP
+                SET {', '.join(updates)}
                 WHERE id = ?
                 """,
-                (status.value, domain_id),
+                params,
             )
             await self._connection.commit()
 
@@ -377,35 +400,3 @@ class Database:
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-
-    async def update_domain_status(
-        self,
-        domain_id: int,
-        status: str = None,
-        verdict: str = None,
-    ):
-        """Update domain status and/or verdict."""
-        async with self._lock:
-            updates = []
-            params = []
-
-            if status is not None:
-                updates.append("status = ?")
-                params.append(status)
-            if verdict is not None:
-                updates.append("verdict = ?")
-                params.append(verdict)
-
-            if not updates:
-                return
-
-            params.append(domain_id)
-            await self._connection.execute(
-                f"""
-                UPDATE domains
-                SET {', '.join(updates)}
-                WHERE id = ?
-                """,
-                params,
-            )
-            await self._connection.commit()

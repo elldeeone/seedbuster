@@ -174,7 +174,6 @@ class ThreatIntelUpdater:
                         break
 
                 # Also check if domain uses same backends as other domains with this key
-                existing_assoc = api_key.get("associated_domains", [])
                 if any(backend in matched_backends for backend in ["whale-app", "walrus-app"]):
                     # If using whale/walrus backends, likely uses same API keys
                     if service in ["ipdata.co", "whale_backend"]:

@@ -2,7 +2,6 @@
 
 import logging
 from typing import Optional
-from urllib.parse import urlencode
 
 import httpx
 
@@ -140,7 +139,7 @@ class PhishTankReporter(BaseReporter):
                     else:
                         # Unknown response, assume submitted
                         logger.warning(
-                            f"PhishTank unknown response, assuming submitted"
+                            "PhishTank unknown response, assuming submitted"
                         )
                         return ReportResult(
                             platform=self.platform_name,

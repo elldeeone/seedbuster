@@ -81,12 +81,34 @@ CT Logs → Domain Filter → Scorer → Browser Analysis → Detection → Tele
 
 ## Configuration
 
-See `.env.example` for all options:
+See `.env.example` for all options.
 
+Required:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+Detection:
 - `DOMAIN_SCORE_THRESHOLD` - Minimum domain score to analyze (default: 30)
 - `ANALYSIS_SCORE_THRESHOLD` - Minimum analysis score to alert (default: 70)
 - `MAX_CONCURRENT_ANALYSES` - Parallel browser sessions (default: 3)
 - `ANALYSIS_TIMEOUT` - Browser timeout in seconds (default: 30)
+
+External intelligence (optional):
+- `VIRUSTOTAL_API_KEY`
+- `URLSCAN_API_KEY`
+
+Reporting:
+- `REPORT_PLATFORMS` - Comma-separated list (default: `google,cloudflare,netcraft,resend`)
+- `REPORT_MIN_SCORE` - Minimum score required to report (default: 80)
+- `REPORT_REQUIRE_APPROVAL` - If `false`, auto-submit reports on initial scans when score ≥ `REPORT_MIN_SCORE`
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL` - Email reporting via Resend
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` - Email reporting via SMTP
+- `PHISHTANK_API_KEY` - Optional (PhishTank API access required)
+
+Paths:
+- `DATA_DIR` (default: `./data`)
+- `EVIDENCE_DIR` (default: `./data/evidence`)
+- `CONFIG_DIR` (default: `./config`)
 
 ## File Structure
 

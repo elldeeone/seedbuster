@@ -1,6 +1,5 @@
 """Domain scoring for phishing detection."""
 
-import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Set
@@ -17,13 +16,14 @@ class ScoringResult:
     domain: str
     score: int
     reasons: list[str]
+    min_score_to_analyze: int = 30
     is_allowlisted: bool = False
     is_denylisted: bool = False
 
     @property
     def should_analyze(self) -> bool:
         """Whether this domain should proceed to analysis."""
-        return not self.is_allowlisted and (self.is_denylisted or self.score > 0)
+        return not self.is_allowlisted and (self.is_denylisted or self.score >= self.min_score_to_analyze)
 
 
 class DomainScorer:
@@ -53,11 +53,13 @@ class DomainScorer:
         allowlist: Set[str],
         denylist: Set[str],
         suspicious_tlds: Set[str],
+        min_score_to_analyze: int = 30,
     ):
         self.target_patterns = [p.lower() for p in target_patterns]
         self.allowlist = {d.lower() for d in allowlist}
         self.denylist = {d.lower() for d in denylist}
         self.suspicious_tlds = {t.lower() for t in suspicious_tlds}
+        self.min_score_to_analyze = min_score_to_analyze
 
     def score_domain(self, domain: str) -> ScoringResult:
         """Score a domain for phishing likelihood."""
@@ -76,6 +78,7 @@ class DomainScorer:
                 domain=domain,
                 score=0,
                 reasons=["Allowlisted"],
+                min_score_to_analyze=self.min_score_to_analyze,
                 is_allowlisted=True,
             )
 
@@ -85,6 +88,7 @@ class DomainScorer:
                 domain=domain,
                 score=100,
                 reasons=["Denylisted - known malicious"],
+                min_score_to_analyze=self.min_score_to_analyze,
                 is_denylisted=True,
             )
 
@@ -120,6 +124,7 @@ class DomainScorer:
             domain=domain,
             score=score,
             reasons=reasons,
+            min_score_to_analyze=self.min_score_to_analyze,
         )
 
     def _check_idn_homograph(self, domain: str) -> tuple[int, list[str]]:
@@ -131,7 +136,7 @@ class DomainScorer:
             # Check if domain contains non-ASCII characters
             if not domain.isascii():
                 # Convert to ASCII (punycode)
-                ascii_domain = idna.encode(domain).decode("ascii")
+                idna.encode(domain)
 
                 # Check if it contains homoglyphs
                 normalized = self._normalize_homoglyphs(domain)

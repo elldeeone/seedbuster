@@ -1,9 +1,7 @@
 """Report manager for coordinating abuse reports across platforms."""
 
-import asyncio
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from .base import (
@@ -39,6 +37,7 @@ class ReportManager:
         resend_api_key: Optional[str] = None,
         resend_from_email: Optional[str] = None,
         reporter_email: str = "",
+        enabled_platforms: Optional[list[str]] = None,
     ):
         self.database = database
         self.evidence_store = evidence_store
@@ -47,6 +46,7 @@ class ReportManager:
         self.resend_api_key = resend_api_key
         self.resend_from_email = resend_from_email
         self.reporter_email = reporter_email
+        self.enabled_platforms = set(enabled_platforms) if enabled_platforms is not None else None
 
         self.reporters: dict[str, BaseReporter] = {}
         self._init_reporters()
@@ -112,11 +112,14 @@ class ReportManager:
 
     def get_available_platforms(self) -> list[str]:
         """Get list of available/configured platforms."""
-        return [
+        platforms = [
             name
             for name, reporter in self.reporters.items()
             if reporter.is_configured()
         ]
+        if self.enabled_platforms is not None:
+            platforms = [p for p in platforms if p in self.enabled_platforms]
+        return platforms
 
     async def build_evidence(
         self,
@@ -149,14 +152,10 @@ class ReportManager:
             analysis_json = self.evidence_store.load_analysis(domain) or {}
 
         # Extract detection reasons from analysis
-        detection_reasons = analysis_json.get("reasons", [])
-        if not detection_reasons and domain_data.get("reasons"):
-            # Try to parse from database
-            import json
-            try:
-                detection_reasons = json.loads(domain_data["reasons"])
-            except (json.JSONDecodeError, TypeError):
-                detection_reasons = []
+        detection_reasons = analysis_json.get("reasons") or []
+        if not detection_reasons:
+            verdict_reasons = domain_data.get("verdict_reasons") or ""
+            detection_reasons = [r.strip() for r in verdict_reasons.splitlines() if r.strip()]
 
         # Build evidence
         evidence = ReportEvidence(
@@ -213,6 +212,8 @@ class ReportManager:
         else:
             # Filter to only available platforms
             platforms = [p for p in platforms if p in self.reporters]
+            if self.enabled_platforms is not None:
+                platforms = [p for p in platforms if p in self.enabled_platforms]
 
         if not platforms:
             return {
@@ -284,7 +285,18 @@ class ReportManager:
                     message=f"Unexpected error: {e}",
                 )
 
+        await self._mark_domain_reported_if_needed(domain_id, results)
         return results
+
+    async def _mark_domain_reported_if_needed(
+        self, domain_id: int, results: dict[str, ReportResult]
+    ) -> None:
+        """Update domain status to REPORTED when at least one platform succeeded."""
+        from ..storage.database import DomainStatus
+
+        success_statuses = {ReportStatus.SUBMITTED, ReportStatus.CONFIRMED, ReportStatus.DUPLICATE}
+        if any(r.status in success_statuses for r in results.values()):
+            await self.database.update_domain_status(domain_id, DomainStatus.REPORTED)
 
     async def get_report_status(self, domain_id: int) -> list[dict]:
         """

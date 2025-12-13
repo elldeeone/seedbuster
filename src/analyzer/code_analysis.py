@@ -4,12 +4,10 @@ Analyzes JavaScript and HTML for fingerprinting techniques,
 obfuscation patterns, and phishing kit signatures.
 """
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 

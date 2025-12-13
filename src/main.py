@@ -4,7 +4,6 @@ import asyncio
 import logging
 import signal
 import sys
-from pathlib import Path
 
 from .config import load_config, Config
 from .discovery import DomainScorer, AsyncCertstreamListener
@@ -15,7 +14,7 @@ from .analyzer.clustering import ThreatClusterManager, analyze_for_clustering
 from .analyzer.external_intel import ExternalIntelligence
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
-from .bot import SeedBusterBot, AlertFormatter
+from .bot import SeedBusterBot
 from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
 
@@ -36,6 +35,7 @@ class SeedBusterPipeline:
     def __init__(self, config: Config):
         self.config = config
         self._running = False
+        self._tasks: list[asyncio.Task] = []
 
         # Queues for pipeline stages
         self._discovery_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
@@ -49,6 +49,7 @@ class SeedBusterPipeline:
             allowlist=config.allowlist,
             denylist=config.denylist,
             suspicious_tlds=config.suspicious_tlds,
+            min_score_to_analyze=config.domain_score_threshold,
         )
         self.browser = BrowserAnalyzer(timeout=config.analysis_timeout)
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
@@ -70,9 +71,18 @@ class SeedBusterPipeline:
         self.report_manager = ReportManager(
             database=self.database,
             evidence_store=self.evidence_store,
+            smtp_config={
+                "host": config.smtp_host,
+                "port": config.smtp_port,
+                "username": config.smtp_username,
+                "password": config.smtp_password,
+                "from_email": config.smtp_from_email or config.resend_from_email,
+            },
+            phishtank_api_key=config.phishtank_api_key or None,
             resend_api_key=config.resend_api_key,
             resend_from_email=config.resend_from_email,
-            reporter_email=config.resend_from_email,
+            reporter_email=config.smtp_from_email or config.resend_from_email,
+            enabled_platforms=config.report_platforms,
         )
 
         self.bot = SeedBusterBot(
@@ -82,6 +92,8 @@ class SeedBusterPipeline:
             evidence_store=self.evidence_store,
             submit_callback=self._manual_submit,
             report_manager=self.report_manager,
+            report_require_approval=config.report_require_approval,
+            report_min_score=config.report_min_score,
         )
         self.ct_listener: AsyncCertstreamListener = None
 
@@ -144,7 +156,7 @@ class SeedBusterPipeline:
         logger.info("Temporal tracker initialized")
 
         # Start worker tasks
-        tasks = [
+        self._tasks = [
             asyncio.create_task(self._discovery_worker()),
             asyncio.create_task(self._analysis_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
@@ -156,7 +168,7 @@ class SeedBusterPipeline:
         logger.info("Pipeline running")
 
         try:
-            await asyncio.gather(*tasks)
+            await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
             logger.info("Pipeline tasks cancelled")
 
@@ -169,9 +181,16 @@ class SeedBusterPipeline:
         if self.ct_listener:
             await self.ct_listener.stop()
 
+        # Stop worker tasks (including infinite rescan loop)
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks = []
+
         await self.bot.send_message("*SeedBuster stopping*...")
         await self.bot.stop()
         await self.browser.stop()
+        await self.infrastructure.close()
         await self.database.close()
 
         logger.info("Pipeline stopped")
@@ -254,12 +273,7 @@ class SeedBusterPipeline:
                     # Rescan task: (domain, ScanReason)
                     domain, scan_reason = task
                     # Get domain record from database
-                    domains = await self.database.get_recent_domains(limit=100)
-                    domain_record = None
-                    for d in domains:
-                        if d["domain"] == domain:
-                            domain_record = d
-                            break
+                    domain_record = await self.database.get_domain(domain)
 
                     if domain_record:
                         async with sem:
@@ -277,7 +291,9 @@ class SeedBusterPipeline:
 
     async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
         """Analyze a single domain."""
+        import ipaddress
         import socket
+        from urllib.parse import urlparse
 
         domain_id = task["id"]
         domain = task["domain"]
@@ -287,20 +303,54 @@ class SeedBusterPipeline:
 
         logger.info(f"Analyzing: {domain}")
 
+        browser_result = None
+        infra_result = None
+        external_result = None
+        detection = None
+        cluster_result = None
+
         try:
             # Update status
             await self.database.update_domain_status(domain_id, DomainStatus.ANALYZING)
 
-            # Quick DNS check first (extract hostname only, ignore path)
-            hostname = domain.split("/")[0]
+            # Quick DNS check first (extract hostname only, ignore path/scheme)
+            raw_target = (domain or "").strip()
+            parsed_target = urlparse(raw_target if "://" in raw_target else f"http://{raw_target}")
+            hostname = (parsed_target.hostname or raw_target.split("/")[0]).strip()
+
             dns_resolves = True
+            resolved_ips: set[str] = set()
+            non_global_ips: set[str] = set()
+
             try:
-                socket.gethostbyname(hostname)
+                # IP literal
+                ip_obj = ipaddress.ip_address(hostname)
+                resolved_ips.add(str(ip_obj))
+            except ValueError:
+                try:
+                    addrinfos = await asyncio.to_thread(
+                        socket.getaddrinfo,
+                        hostname,
+                        None,
+                        socket.AF_UNSPEC,
+                        socket.SOCK_STREAM,
+                    )
+                    resolved_ips = {sockaddr[0] for *_rest, sockaddr in addrinfos}
+                except socket.gaierror:
+                    dns_resolves = False
             except socket.gaierror:
                 dns_resolves = False
                 logger.info(f"Domain does not resolve: {hostname}")
 
-            if not dns_resolves:
+            if dns_resolves and resolved_ips:
+                for ip in resolved_ips:
+                    try:
+                        if not ipaddress.ip_address(ip).is_global:
+                            non_global_ips.add(ip)
+                    except ValueError:
+                        continue
+
+            if not dns_resolves or not resolved_ips:
                 # Domain doesn't exist - report based on domain score alone
                 verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
                 analysis_score = domain_score
@@ -314,33 +364,107 @@ class SeedBusterPipeline:
                     "reasons": reasons,
                     "dns_resolves": False,
                 })
+                self.temporal.add_snapshot(
+                    domain=domain,
+                    score=analysis_score,
+                    verdict=verdict.value,
+                    reasons=reasons,
+                    scan_reason=scan_reason,
+                )
+            elif non_global_ips:
+                # SSRF hardening: never browse or connect to private/local targets.
+                verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
+                analysis_score = domain_score
+                reasons = domain_reasons + [
+                    (
+                        "Analysis blocked (SSRF guard): "
+                        f"{hostname} resolves to private/local IP(s): {', '.join(sorted(non_global_ips))}"
+                    )
+                ]
+
+                await self.evidence_store.save_analysis(domain, {
+                    "domain": domain,
+                    "score": analysis_score,
+                    "verdict": verdict.value,
+                    "reasons": reasons,
+                    "dns_resolves": True,
+                    "resolved_ips": sorted(resolved_ips),
+                    "blocked_for_ssrf": True,
+                })
+                self.temporal.add_snapshot(
+                    domain=domain,
+                    score=analysis_score,
+                    verdict=verdict.value,
+                    reasons=reasons,
+                    scan_reason=scan_reason,
+                )
             else:
                 # Run browser, infrastructure, and external intel in PARALLEL
-                browser_task = asyncio.create_task(self.browser.analyze(domain))
-                infra_task = asyncio.create_task(self.infrastructure.analyze(domain))
-                external_task = asyncio.create_task(self.external_intel.query_all(domain))
-
-                browser_result = await browser_task
-                infra_result = await infra_task
-                external_result = await external_task
-
-                logger.info(
-                    f"Infrastructure analysis for {domain}: "
-                    f"score={infra_result.risk_score}, "
-                    f"reasons={len(infra_result.risk_reasons)}"
+                browser_result, infra_result, external_result = await asyncio.gather(
+                    self.browser.analyze(domain),
+                    self.infrastructure.analyze(domain),
+                    self.external_intel.query_all(domain),
+                    return_exceptions=True,
                 )
-                if external_result.score > 0:
+
+                if isinstance(browser_result, Exception):
+                    browser_result = None
+                if isinstance(infra_result, Exception):
+                    logger.warning(f"Infrastructure analysis failed for {domain}: {infra_result}")
+                    infra_result = None
+                if isinstance(external_result, Exception):
+                    logger.warning(f"External intel query failed for {domain}: {external_result}")
+                    external_result = None
+
+                if infra_result:
+                    logger.info(
+                        f"Infrastructure analysis for {domain}: "
+                        f"score={infra_result.risk_score}, "
+                        f"reasons={len(infra_result.risk_reasons)}"
+                    )
+                if external_result and external_result.score > 0:
                     logger.info(
                         f"External intel for {domain}: "
                         f"score={external_result.score}, "
                         f"reasons={len(external_result.reasons)}"
                     )
 
-                if not browser_result.success:
-                    logger.warning(f"Failed to analyze {domain}: {browser_result.error}")
+                if not browser_result or not browser_result.success:
+                    error = getattr(browser_result, "error", None) or "Analysis failed"
+                    logger.warning(f"Failed to analyze {domain}: {error}")
                     verdict = Verdict.LOW
-                    analysis_score = domain_score
-                    reasons = domain_reasons + [browser_result.error or "Analysis failed"]
+                    analysis_score = min(
+                        100,
+                        domain_score + (external_result.score if external_result else 0),
+                    )
+                    reasons = domain_reasons + [error] + (external_result.reasons if external_result else [])
+
+                    await self.evidence_store.save_analysis(domain, {
+                        "domain": domain,
+                        "score": analysis_score,
+                        "verdict": verdict.value,
+                        "reasons": reasons,
+                        "dns_resolves": True,
+                        "resolved_ips": sorted(resolved_ips),
+                        "analysis_error": error,
+                        "external_intel": external_result.to_dict() if external_result else None,
+                    })
+                    self.temporal.add_snapshot(
+                        domain=domain,
+                        html=getattr(browser_result, "html", None),
+                        title=getattr(browser_result, "title", "") or "",
+                        screenshot=getattr(browser_result, "screenshot", None),
+                        score=analysis_score,
+                        verdict=verdict.value,
+                        reasons=reasons,
+                        external_domains=getattr(browser_result, "external_requests", None) or [],
+                        blocked_requests=len(getattr(browser_result, "blocked_requests", []) or []),
+                        tls_age_days=infra_result.tls.age_days if infra_result and infra_result.tls else -1,
+                        hosting_provider=(
+                            infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else ""
+                        ),
+                        scan_reason=scan_reason,
+                    )
                 else:
                     # Save all screenshots for comparison
                     has_early = (
@@ -404,8 +528,10 @@ class SeedBusterPipeline:
                     )
 
                     # Add external intelligence results
-                    analysis_score = min(100, detection.score + external_result.score)
-                    reasons = detection.reasons + external_result.reasons
+                    external_score = external_result.score if external_result else 0
+                    external_reasons = external_result.reasons if external_result else []
+                    analysis_score = min(100, detection.score + external_score)
+                    reasons = detection.reasons + external_reasons
 
                     # Save temporal snapshot for future comparisons
                     self.temporal.add_snapshot(
@@ -418,8 +544,10 @@ class SeedBusterPipeline:
                         reasons=reasons,
                         external_domains=browser_result.external_requests,
                         blocked_requests=len(getattr(browser_result, 'blocked_requests', []) or []),
-                        tls_age_days=infra_result.tls.age_days if infra_result.tls else -1,
-                        hosting_provider=infra_result.hosting.hosting_provider if infra_result.hosting else "",
+                        tls_age_days=infra_result.tls.age_days if infra_result and infra_result.tls else -1,
+                        hosting_provider=(
+                            infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else ""
+                        ),
                         scan_reason=scan_reason,
                     )
 
@@ -456,10 +584,22 @@ class SeedBusterPipeline:
                         "infrastructure": {
                             "score": detection.infrastructure_score,
                             "reasons": detection.infrastructure_reasons,
-                            "tls_age_days": infra_result.tls.age_days if infra_result.tls else None,
-                            "domain_age_days": infra_result.domain_info.age_days if infra_result.domain_info else None,
-                            "hosting_provider": infra_result.hosting.hosting_provider if infra_result.hosting else None,
-                            "uses_privacy_dns": infra_result.domain_info.uses_privacy_dns if infra_result.domain_info else False,
+                            "tls_age_days": infra_result.tls.age_days if infra_result and infra_result.tls else None,
+                            "domain_age_days": (
+                                infra_result.domain_info.age_days
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                            "hosting_provider": (
+                                infra_result.hosting.hosting_provider
+                                if infra_result and infra_result.hosting
+                                else None
+                            ),
+                            "uses_privacy_dns": (
+                                infra_result.domain_info.uses_privacy_dns
+                                if infra_result and infra_result.domain_info
+                                else False
+                            ),
                         },
                         "code_analysis": {
                             "score": detection.code_score,
@@ -479,7 +619,7 @@ class SeedBusterPipeline:
                             "related_domains": cluster_result.related_domains,
                             "confidence": cluster_result.confidence,
                         },
-                        "external_intel": external_result.to_dict(),
+                        "external_intel": external_result.to_dict() if external_result else None,
                     })
 
             # Update database
@@ -501,6 +641,8 @@ class SeedBusterPipeline:
                 blocked_requests = getattr(browser_result, 'blocked_requests', []) or []
                 cloaking_suspected = len(blocked_requests) > 0
 
+                temporal_analysis = self.temporal.analyze(domain)
+
                 # Create temporal info for alert
                 # Note: After add_snapshot, snapshots_count is already incremented
                 # So we check > 1 (not <= 1) for initial scan determination
@@ -511,7 +653,7 @@ class SeedBusterPipeline:
                     is_initial_scan=not is_rescan,
                     scan_number=snapshot_count,
                     total_scans=5,  # Initial + 4 rescans
-                    rescans_scheduled=True,
+                    rescans_scheduled=not is_rescan,
                     cloaking_suspected=cloaking_suspected,
                     cloaking_confirmed=temporal_analysis.cloaking_detected,
                     cloaking_confidence=temporal_analysis.cloaking_confidence,
@@ -523,46 +665,49 @@ class SeedBusterPipeline:
                     temporal_info.previous_score = snapshots[-2].score
 
                 # Create cluster info for alert
-                cluster_info = ClusterInfo(
-                    cluster_id=cluster_result.cluster_id,
-                    cluster_name=cluster_result.cluster_name,
-                    is_new_cluster=cluster_result.is_new_cluster,
-                    related_domains=cluster_result.related_domains,
-                    confidence=cluster_result.confidence,
-                )
+                cluster_info = None
+                if cluster_result:
+                    cluster_info = ClusterInfo(
+                        cluster_id=cluster_result.cluster_id,
+                        cluster_name=cluster_result.cluster_name,
+                        is_new_cluster=cluster_result.is_new_cluster,
+                        related_domains=cluster_result.related_domains,
+                        confidence=cluster_result.confidence,
+                    )
 
                 # Auto-learn BEFORE sending alert (so we can include status in alert)
                 learning_info = None
-                matched_backends = self.threat_intel_updater.extract_matched_backends(
-                    detection.suspicious_endpoints
-                )
-                matched_api_keys = self.threat_intel_updater.extract_matched_api_keys(reasons)
+                if detection and cluster_result:
+                    matched_backends = self.threat_intel_updater.extract_matched_backends(
+                        detection.suspicious_endpoints
+                    )
+                    matched_api_keys = self.threat_intel_updater.extract_matched_api_keys(reasons)
 
-                if self.threat_intel_updater.should_learn(
-                    domain=domain,
-                    analysis_score=analysis_score,
-                    cluster_confidence=cluster_result.confidence,
-                    cluster_name=cluster_result.cluster_name,
-                    matched_backends=matched_backends,
-                    matched_api_keys=matched_api_keys,
-                ):
-                    learning_result = self.threat_intel_updater.learn(
+                    if self.threat_intel_updater.should_learn(
                         domain=domain,
                         analysis_score=analysis_score,
                         cluster_confidence=cluster_result.confidence,
                         cluster_name=cluster_result.cluster_name,
                         matched_backends=matched_backends,
                         matched_api_keys=matched_api_keys,
-                    )
-                    if learning_result.updated:
-                        logger.info(f"Threat intel auto-updated: {learning_result.message}")
-                        self.detector.reload_threat_intel()
-                        learning_info = LearningInfo(
-                            learned=True,
-                            version=learning_result.version,
-                            added_to_frontends=learning_result.added_to_frontends,
-                            added_to_api_keys=learning_result.added_to_api_keys,
+                    ):
+                        learning_result = self.threat_intel_updater.learn(
+                            domain=domain,
+                            analysis_score=analysis_score,
+                            cluster_confidence=cluster_result.confidence,
+                            cluster_name=cluster_result.cluster_name,
+                            matched_backends=matched_backends,
+                            matched_api_keys=matched_api_keys,
                         )
+                        if learning_result.updated:
+                            logger.info(f"Threat intel auto-updated: {learning_result.message}")
+                            self.detector.reload_threat_intel()
+                            learning_info = LearningInfo(
+                                learned=True,
+                                version=learning_result.version,
+                                added_to_frontends=learning_result.added_to_frontends,
+                                added_to_api_keys=learning_result.added_to_api_keys,
+                            )
 
                 await self.bot.send_alert(AlertData(
                     domain=domain,
@@ -575,9 +720,22 @@ class SeedBusterPipeline:
                     evidence_path=evidence_path,
                     temporal=temporal_info,
                     cluster=cluster_info,
-                    seed_form_found=detection.seed_form_detected,
+                    seed_form_found=detection.seed_form_detected if detection else False,
                     learning=learning_info,
                 ))
+
+            # Optional: auto-report when approval is disabled.
+            if (
+                not self.config.report_require_approval
+                and scan_reason == ScanReason.INITIAL
+                and analysis_score >= self.config.report_min_score
+                and browser_result
+                and getattr(browser_result, "success", False)
+                and self.report_manager.get_available_platforms()
+            ):
+                results = await self.report_manager.report_domain(domain_id=domain_id, domain=domain)
+                summary = self.report_manager.format_results_summary(results)
+                await self.bot.send_message(f"Auto-report results for `{domain}`:\n\n{summary}")
 
             logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")
 
@@ -601,7 +759,7 @@ async def run_pipeline():
     pipeline = SeedBusterPipeline(config)
 
     # Handle shutdown signals
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(pipeline.stop()))
 

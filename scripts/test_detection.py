@@ -32,7 +32,7 @@ async def main():
         result = await browser.analyze(domain)
 
         if result.success:
-            print(f"\nBrowser analysis:")
+            print("\nBrowser analysis:")
             print(f"  Final URL: {result.final_url}")
             print(f"  Title: {result.title}")
             print(f"  Forms: {len(result.forms)}")
@@ -43,17 +43,17 @@ async def main():
             detection = detector.detect(result, domain_score=95)  # High domain score for kaspa-wallet.co
 
             print(f"\n{'='*60}")
-            print(f"DETECTION RESULTS")
+            print("DETECTION RESULTS")
             print(f"{'='*60}")
             print(f"Verdict: {detection.verdict.upper()}")
             print(f"Score: {detection.score}/100")
             print(f"Confidence: {detection.confidence:.0%}")
-            print(f"\nReasons:")
+            print("\nReasons:")
             for reason in detection.reasons:
                 print(f"  - {reason}")
 
             if detection.suspicious_endpoints:
-                print(f"\nSuspicious endpoints:")
+                print("\nSuspicious endpoints:")
                 for ep in detection.suspicious_endpoints:
                     print(f"  - {ep}")
 

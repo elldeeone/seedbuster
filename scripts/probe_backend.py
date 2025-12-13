@@ -2,13 +2,13 @@
 """Probe scammer backend infrastructure for threat intelligence."""
 
 import asyncio
-import json
+import os
 import httpx
 
 # Known endpoints from kaspa-wallet.co analysis
 WHALE_BACKEND = "https://whale-app-poxe2.ondigitalocean.app"
 WALRUS_BACKEND = "https://walrus-app-o5hvw.ondigitalocean.app"
-WHALE_API_KEY = "e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b"
+WHALE_API_KEY = os.getenv("WHALE_API_KEY", "")
 
 
 async def probe_whale():
@@ -33,7 +33,7 @@ async def probe_whale():
             "/status",
         ]
 
-        headers_with_key = {"x-api-key": WHALE_API_KEY}
+        headers_with_key = {"x-api-key": WHALE_API_KEY} if WHALE_API_KEY else None
         headers_without_key = {}
 
         for endpoint in endpoints:
@@ -48,23 +48,29 @@ async def probe_whale():
                 print(f"  No key: ERROR - {e}")
 
             # Try with API key
-            try:
-                resp = await client.get(url, headers=headers_with_key)
-                print(f"  With key: {resp.status_code} - {resp.text[:200] if resp.text else '(empty)'}")
-            except Exception as e:
-                print(f"  With key: ERROR - {e}")
+            if headers_with_key is None:
+                print("  With key: SKIPPED (set WHALE_API_KEY to enable)")
+            else:
+                try:
+                    resp = await client.get(url, headers=headers_with_key)
+                    print(f"  With key: {resp.status_code} - {resp.text[:200] if resp.text else '(empty)'}")
+                except Exception as e:
+                    print(f"  With key: ERROR - {e}")
 
         # Try POST to form endpoint (empty body, just to see response)
-        print(f"\n[POST] /api/form/ (empty body)")
-        try:
-            resp = await client.post(
-                f"{WHALE_BACKEND}/api/form/",
-                headers=headers_with_key,
-                json={}
-            )
-            print(f"  {resp.status_code} - {resp.text[:500] if resp.text else '(empty)'}")
-        except Exception as e:
-            print(f"  ERROR - {e}")
+        print("\n[POST] /api/form/ (empty body)")
+        if headers_with_key is None:
+            print("  SKIPPED (set WHALE_API_KEY to enable)")
+        else:
+            try:
+                resp = await client.post(
+                    f"{WHALE_BACKEND}/api/form/",
+                    headers=headers_with_key,
+                    json={},
+                )
+                print(f"  {resp.status_code} - {resp.text[:500] if resp.text else '(empty)'}")
+            except Exception as e:
+                print(f"  ERROR - {e}")
 
 
 async def probe_walrus():
@@ -96,7 +102,7 @@ async def probe_walrus():
                 print(f"  ERROR - {e}")
 
         # Try POST to log-ip
-        print(f"\n[POST] /log-ip")
+        print("\n[POST] /log-ip")
         try:
             resp = await client.post(f"{WALRUS_BACKEND}/log-ip", json={"test": True})
             print(f"  {resp.status_code} - {resp.text[:200] if resp.text else '(empty)'}")
@@ -110,7 +116,10 @@ async def check_ipdata_key():
     print("CHECKING IPDATA.CO API KEY")
     print("=" * 60)
 
-    IPDATA_KEY = "520a83d66268292f5b97ca64c496ef3b9cfb1bb1f85f2615b103f66f"
+    IPDATA_KEY = os.getenv("IPDATA_API_KEY", "")
+    if not IPDATA_KEY:
+        print("IPDATA_API_KEY not set; skipping.")
+        return
 
     async with httpx.AsyncClient(timeout=10) as client:
         try:
@@ -118,8 +127,8 @@ async def check_ipdata_key():
             resp = await client.get(f"https://api.ipdata.co/?api-key={IPDATA_KEY}")
             print(f"Status: {resp.status_code}")
             if resp.status_code == 200:
-                data = resp.json()
-                print(f"Key is ACTIVE")
+                resp.json()
+                print("Key is ACTIVE")
                 print(f"  Remaining requests: {resp.headers.get('x-ratelimit-remaining', 'unknown')}")
                 # Don't print our actual IP data
             else:

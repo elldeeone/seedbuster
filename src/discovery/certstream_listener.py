@@ -1,9 +1,7 @@
 """Certificate Transparency log listener using certstream."""
 
 import asyncio
-import json
 import logging
-import ssl
 from typing import Callable, Optional
 
 import certstream
@@ -115,18 +113,28 @@ class AsyncCertstreamListener:
         self.quick_filter = quick_filter or (lambda d: True)
         self._listener: Optional[CertstreamListener] = None
         self._thread = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
-    def _on_domain(self, domain: str):
-        """Queue domain for async processing."""
+    def _enqueue_domain(self, domain: str) -> None:
+        """Enqueue domain on the event loop thread."""
         try:
             self.queue.put_nowait(domain)
         except asyncio.QueueFull:
             logger.warning(f"Queue full, dropping domain: {domain}")
 
+    def _on_domain(self, domain: str):
+        """Queue domain for async processing (thread-safe)."""
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._enqueue_domain, domain)
+        else:
+            # Best-effort fallback (e.g., unit tests) if loop isn't available.
+            self._enqueue_domain(domain)
+
     async def start(self):
         """Start listener in background thread."""
         import threading
 
+        self._loop = asyncio.get_running_loop()
         self._listener = CertstreamListener(
             on_domain=self._on_domain,
             quick_filter=self.quick_filter,
@@ -142,4 +150,5 @@ class AsyncCertstreamListener:
             self._listener.stop()
         if self._thread:
             self._thread.join(timeout=5)
+        self._loop = None
         logger.info("Async certstream listener stopped")

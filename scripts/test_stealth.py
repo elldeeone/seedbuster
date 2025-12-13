@@ -26,7 +26,7 @@ async def main():
         result = await browser.analyze(domain)
 
         if result.success:
-            print(f"\nSuccess!")
+            print("\nSuccess!")
             print(f"Final URL: {result.final_url}")
             print(f"Title: {result.title}")
             print(f"Status: {result.status_code}")

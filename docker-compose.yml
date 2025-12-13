@@ -38,7 +38,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "python", "-c", "import src; print('ok')"]
+      test: ["CMD", "python", "-c", "import src.main; print('ok')"]
       interval: 30s
       timeout: 10s
       retries: 3

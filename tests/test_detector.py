@@ -1,8 +1,6 @@
 """Tests for phishing detection."""
 
 import pytest
-from pathlib import Path
-from dataclasses import dataclass, field
 from src.analyzer.detector import PhishingDetector
 from src.analyzer.browser import BrowserResult
 
