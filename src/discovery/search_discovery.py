@@ -289,9 +289,17 @@ class SearchDiscovery:
 
     async def run_once(self) -> None:
         """Execute one search pass and enqueue new targets."""
+        total_enqueued = 0
         for query in self.queries:
+            total_results = 0
+            excluded = 0
+            duplicates = 0
+            invalid = 0
+            enqueued = 0
+
             try:
                 results = await self.provider.search(query, self.results_per_query)
+                total_results = len(results)
             except Exception as e:
                 logger.warning("Search discovery query failed (%s): %s", query, e)
                 continue
@@ -299,15 +307,18 @@ class SearchDiscovery:
             for result in results:
                 normalized = normalize_search_target(result.url)
                 if not normalized:
+                    invalid += 1
                     continue
                 hostname, target = normalized
 
                 # Drop obvious false positives (forums/social/video/docs).
                 registered = _registered_domain(hostname)
                 if registered in self.exclude_domains or hostname in self.exclude_domains:
+                    excluded += 1
                     continue
 
                 if target in self._seen_targets:
+                    duplicates += 1
                     continue
 
                 self._seen_targets.add(target)
@@ -326,6 +337,21 @@ class SearchDiscovery:
                             "force": self.force_analyze,
                         }
                     )
+                    enqueued += 1
+                    total_enqueued += 1
                 except asyncio.QueueFull:
                     logger.warning("Discovery queue full, dropping search hit: %s", target)
                     return
+
+            logger.info(
+                "Search discovery: %r -> %d results, %d enqueued (%d excluded, %d dup, %d invalid)",
+                query,
+                total_results,
+                enqueued,
+                excluded,
+                duplicates,
+                invalid,
+            )
+
+        if total_enqueued == 0:
+            logger.info("Search discovery: pass complete (no new targets)")
