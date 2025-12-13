@@ -237,9 +237,13 @@ class SeedBusterBot:
                     media=media,
                 )
                 # Send keyboard separately since media_group doesn't support reply_markup
+                # Include a brief summary to make the message less orphaned
+                action_text = f"`{data.domain}` • {data.score}/100"
+                if data.seed_form_found:
+                    action_text += " • Seed form found"
                 await self._app.bot.send_message(
                     chat_id=self.chat_id,
-                    text="⬆️ *Actions for this alert:*",
+                    text=action_text,
                     reply_markup=keyboard,
                     parse_mode=ParseMode.MARKDOWN,
                 )

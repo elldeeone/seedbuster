@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import load_config, Config
 from .discovery import DomainScorer, AsyncCertstreamListener
-from .analyzer import BrowserAnalyzer, PhishingDetector
+from .analyzer import BrowserAnalyzer, PhishingDetector, ThreatIntelUpdater
 from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
 from .analyzer.clustering import ThreatClusterManager, analyze_for_clustering
@@ -16,7 +16,7 @@ from .analyzer.external_intel import ExternalIntelligence
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot, AlertFormatter
-from .bot.formatters import AlertData, TemporalInfo, ClusterInfo
+from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
 
 # Configure logging
@@ -64,6 +64,7 @@ class SeedBusterPipeline:
             keywords=config.keywords,
             analysis_threshold=config.analysis_score_threshold,
         )
+        self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
 
         # Initialize report manager
         self.report_manager = ReportManager(
@@ -530,6 +531,39 @@ class SeedBusterPipeline:
                     confidence=cluster_result.confidence,
                 )
 
+                # Auto-learn BEFORE sending alert (so we can include status in alert)
+                learning_info = None
+                matched_backends = self.threat_intel_updater.extract_matched_backends(
+                    detection.suspicious_endpoints
+                )
+                matched_api_keys = self.threat_intel_updater.extract_matched_api_keys(reasons)
+
+                if self.threat_intel_updater.should_learn(
+                    domain=domain,
+                    analysis_score=analysis_score,
+                    cluster_confidence=cluster_result.confidence,
+                    cluster_name=cluster_result.cluster_name,
+                    matched_backends=matched_backends,
+                    matched_api_keys=matched_api_keys,
+                ):
+                    learning_result = self.threat_intel_updater.learn(
+                        domain=domain,
+                        analysis_score=analysis_score,
+                        cluster_confidence=cluster_result.confidence,
+                        cluster_name=cluster_result.cluster_name,
+                        matched_backends=matched_backends,
+                        matched_api_keys=matched_api_keys,
+                    )
+                    if learning_result.updated:
+                        logger.info(f"Threat intel auto-updated: {learning_result.message}")
+                        self.detector.reload_threat_intel()
+                        learning_info = LearningInfo(
+                            learned=True,
+                            version=learning_result.version,
+                            added_to_frontends=learning_result.added_to_frontends,
+                            added_to_api_keys=learning_result.added_to_api_keys,
+                        )
+
                 await self.bot.send_alert(AlertData(
                     domain=domain,
                     domain_id=self.evidence_store.get_domain_id(domain),
@@ -542,6 +576,7 @@ class SeedBusterPipeline:
                     temporal=temporal_info,
                     cluster=cluster_info,
                     seed_form_found=detection.seed_form_detected,
+                    learning=learning_info,
                 ))
 
             logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")

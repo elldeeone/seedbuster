@@ -42,6 +42,21 @@ class ClusterInfo:
 
 
 @dataclass
+class LearningInfo:
+    """Auto-learning information for alerts."""
+    learned: bool = False
+    version: str = ""
+    added_to_frontends: list[str] = None
+    added_to_api_keys: list[str] = None
+
+    def __post_init__(self):
+        if self.added_to_frontends is None:
+            self.added_to_frontends = []
+        if self.added_to_api_keys is None:
+            self.added_to_api_keys = []
+
+
+@dataclass
 class AlertData:
     """Data for a phishing alert."""
 
@@ -56,6 +71,7 @@ class AlertData:
     temporal: Optional[TemporalInfo] = None  # Temporal analysis info
     cluster: Optional[ClusterInfo] = None  # Threat cluster info
     seed_form_found: bool = False  # True if seed phrase entry form was discovered
+    learning: Optional[LearningInfo] = None  # Auto-learning info
 
 
 class AlertFormatter:
@@ -134,11 +150,32 @@ class AlertFormatter:
                 related_list += f" (+{len(cluster.related_domains) - 3} more)"
             lines.append(f"Related: {related_list}")
 
+        # De-duplicate reasons (keep first occurrence, normalize for comparison)
+        seen_normalized = set()
+        unique_reasons = []
+        for r in data.reasons:
+            # Normalize for dedup: lowercase, remove common variations
+            normalized = r.lower().replace("known malicious domain:", "known malicious:").replace("_", " ")
+            # Extract core identifier (domain name) for matching
+            if "walrus-app" in normalized or "whale-app" in normalized or "kaspa-backend" in normalized:
+                # For backend domains, use domain as key
+                for pattern in ["walrus-app", "whale-app", "kaspa-backend"]:
+                    if pattern in normalized:
+                        key = f"{pattern}_malicious"
+                        if key not in seen_normalized:
+                            seen_normalized.add(key)
+                            unique_reasons.append(r)
+                        break
+            else:
+                if normalized not in seen_normalized:
+                    seen_normalized.add(normalized)
+                    unique_reasons.append(r)
+
         # Categorize reasons by type
-        infra_reasons = [r for r in data.reasons if r.startswith("INFRA:")]
-        code_reasons = [r for r in data.reasons if r.startswith("CODE:")]
-        temporal_reasons = [r for r in data.reasons if r.startswith("TEMPORAL:")]
-        external_reasons = [r for r in data.reasons if r.startswith("EXTERNAL:")]
+        infra_reasons = [r for r in unique_reasons if r.startswith("INFRA:")]
+        code_reasons = [r for r in unique_reasons if r.startswith("CODE:")]
+        temporal_reasons = [r for r in unique_reasons if r.startswith("TEMPORAL:")]
+        external_reasons = [r for r in unique_reasons if r.startswith("EXTERNAL:")]
 
         # Categorize other reasons
         threat_intel = []
@@ -146,7 +183,7 @@ class AlertFormatter:
         domain_signals = []
         other = []
 
-        for r in data.reasons:
+        for r in unique_reasons:
             if r.startswith(("INFRA:", "CODE:", "TEMPORAL:", "EXTERNAL:")):
                 continue
             elif "KNOWN MALICIOUS" in r or "Malicious URL" in r:
@@ -222,7 +259,10 @@ class AlertFormatter:
                 safe_reason = r.replace('_', ' ').replace('*', '')
                 lines.append(f"  • {safe_reason}")
 
-        # No text-based actions - buttons handle this now
+        # Auto-learning indicator (if learned)
+        if data.learning and data.learning.learned:
+            lines.append("")
+            lines.append(f"\U0001F9E0 Auto-learned (v{data.learning.version})")
 
         return "\n".join(lines)
 

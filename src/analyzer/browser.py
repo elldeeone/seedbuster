@@ -54,6 +54,11 @@ EXPLORATION_TARGETS = [
     {"text": "continue on legacy", "priority": 1},
     {"text": "recover from seed", "priority": 1},
 
+    # Kaspa-NG style landing page buttons
+    {"text": "kaspa ng", "priority": 1},
+    {"text": "go to", "priority": 2},  # "Go to the new Kaspa NG Wallet"
+    {"text": "continue", "priority": 2},  # Generic continue buttons
+
     # Wallet-related (highest priority - often contains seed form)
     {"text": "wallet", "priority": 1},
     {"text": "open wallet", "priority": 1},
@@ -463,7 +468,7 @@ class BrowserAnalyzer:
                 try:
                     await self._explore_navigation(page, result)
                 except Exception as e:
-                    logger.debug(f"Exploration failed (non-fatal): {e}")
+                    logger.warning(f"Exploration failed (non-fatal): {e}")
 
             result.success = True
             if blocked_requests:
@@ -655,6 +660,17 @@ class BrowserAnalyzer:
         After each click, it re-scans for high-priority targets (like mnemonic options)
         that may have appeared on the new page.
         """
+        logger.info(f"Starting click-through exploration for {result.domain}")
+
+        # First, log what buttons we can see
+        visible_buttons = await self._find_visible_buttons(page)
+        if visible_buttons:
+            button_texts = [b["text"][:30] for b in visible_buttons[:8]]
+            logger.info(f"Found {len(visible_buttons)} buttons: {button_texts}")
+        else:
+            logger.info("No visible buttons found on page")
+            return
+
         explored_texts = set()
         clicks_made = 0
 
