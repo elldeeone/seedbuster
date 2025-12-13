@@ -31,6 +31,33 @@ class Config:
     urlscan_submit_enabled: bool = False  # Requires URLSCAN_API_KEY and explicit opt-in
     urlscan_submit_visibility: str = "unlisted"  # public | unlisted | private (depends on plan)
 
+    # Optional: search-engine discovery (uses official APIs; avoids scraping SERPs)
+    search_discovery_enabled: bool = False
+    search_discovery_provider: str = "google"  # google | bing
+    search_discovery_queries: list[str] = field(
+        default_factory=lambda: [
+            "kaspa wallet",
+            "kaspa recover wallet",
+            "kaspa seed phrase",
+            "kaspanet wallet",
+            "kaspawallet",
+        ]
+    )
+    search_discovery_interval_minutes: int = 60
+    search_discovery_results_per_query: int = 20
+    search_discovery_force_analyze: bool = False  # bypass DOMAIN_SCORE_THRESHOLD for search hits
+
+    # Google Programmable Search Engine (Custom Search JSON API)
+    google_cse_api_key: str = ""
+    google_cse_id: str = ""  # cx
+    google_cse_gl: str = ""  # country code, e.g. AU (optional)
+    google_cse_hl: str = "en"  # UI language (optional)
+
+    # Bing Web Search API (Azure Cognitive Services)
+    bing_search_api_key: str = ""
+    bing_search_endpoint: str = "https://api.bing.microsoft.com/v7.0/search"
+    bing_search_market: str = "en-US"
+
     # SMTP configuration for email reports (alternative to Resend)
     smtp_host: str = ""
     smtp_port: int = 587
@@ -134,6 +161,11 @@ def load_config() -> Config:
     report_platforms_str = os.getenv("REPORT_PLATFORMS", "google,cloudflare,netcraft,resend")
     report_platforms = [p.strip() for p in report_platforms_str.split(",") if p.strip()]
 
+    queries_str = os.getenv("SEARCH_DISCOVERY_QUERIES", "")
+    search_kwargs: dict[str, object] = {}
+    if queries_str.strip():
+        search_kwargs["search_discovery_queries"] = [q.strip() for q in queries_str.split(";") if q.strip()]
+
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -146,6 +178,19 @@ def load_config() -> Config:
         urlscan_api_key=os.getenv("URLSCAN_API_KEY", ""),
         urlscan_submit_enabled=os.getenv("URLSCAN_SUBMIT_ENABLED", "false").lower() == "true",
         urlscan_submit_visibility=os.getenv("URLSCAN_SUBMIT_VISIBILITY", "unlisted"),
+        search_discovery_enabled=os.getenv("SEARCH_DISCOVERY_ENABLED", "false").lower() == "true",
+        search_discovery_provider=os.getenv("SEARCH_DISCOVERY_PROVIDER", "google").strip().lower() or "google",
+        search_discovery_interval_minutes=int(os.getenv("SEARCH_DISCOVERY_INTERVAL_MINUTES", "60")),
+        search_discovery_results_per_query=int(os.getenv("SEARCH_DISCOVERY_RESULTS_PER_QUERY", "20")),
+        search_discovery_force_analyze=os.getenv("SEARCH_DISCOVERY_FORCE_ANALYZE", "false").lower() == "true",
+        google_cse_api_key=os.getenv("GOOGLE_CSE_API_KEY", ""),
+        google_cse_id=os.getenv("GOOGLE_CSE_ID", ""),
+        google_cse_gl=os.getenv("GOOGLE_CSE_GL", ""),
+        google_cse_hl=os.getenv("GOOGLE_CSE_HL", "en"),
+        bing_search_api_key=os.getenv("BING_SEARCH_API_KEY", ""),
+        bing_search_endpoint=os.getenv("BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/search"),
+        bing_search_market=os.getenv("BING_SEARCH_MARKET", "en-US"),
+        **search_kwargs,
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),

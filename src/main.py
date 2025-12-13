@@ -6,7 +6,13 @@ import signal
 import sys
 
 from .config import load_config, Config
-from .discovery import DomainScorer, AsyncCertstreamListener
+from .discovery import (
+    DomainScorer,
+    AsyncCertstreamListener,
+    SearchDiscovery,
+    GoogleCSEProvider,
+    BingWebSearchProvider,
+)
 from .analyzer import BrowserAnalyzer, PhishingDetector, ThreatIntelUpdater
 from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
@@ -100,6 +106,7 @@ class SeedBusterPipeline:
             report_min_score=config.report_min_score,
         )
         self.ct_listener: AsyncCertstreamListener = None
+        self.search_discovery: SearchDiscovery | None = None
 
     def _manual_submit(self, domain: str):
         """Handle manual domain submission from Telegram."""
@@ -160,6 +167,45 @@ class SeedBusterPipeline:
         await self.ct_listener.start()
         logger.info("CT stream listener started")
 
+        # Optional: search-engine discovery via official APIs (Google CSE / Bing).
+        if self.config.search_discovery_enabled:
+            provider = None
+            match (self.config.search_discovery_provider or "").lower():
+                case "google":
+                    if not (self.config.google_cse_api_key and self.config.google_cse_id):
+                        logger.error(
+                            "Search discovery enabled but GOOGLE_CSE_API_KEY/GOOGLE_CSE_ID not set; skipping"
+                        )
+                    else:
+                        provider = GoogleCSEProvider(
+                            api_key=self.config.google_cse_api_key,
+                            cse_id=self.config.google_cse_id,
+                            gl=self.config.google_cse_gl,
+                            hl=self.config.google_cse_hl,
+                        )
+                case "bing":
+                    if not self.config.bing_search_api_key:
+                        logger.error("Search discovery enabled but BING_SEARCH_API_KEY not set; skipping")
+                    else:
+                        provider = BingWebSearchProvider(
+                            api_key=self.config.bing_search_api_key,
+                            endpoint=self.config.bing_search_endpoint,
+                            market=self.config.bing_search_market,
+                        )
+                case other:
+                    logger.error("Unknown SEARCH_DISCOVERY_PROVIDER=%r; expected 'google' or 'bing'", other)
+
+            if provider:
+                self.search_discovery = SearchDiscovery(
+                    queue=self._discovery_queue,
+                    provider=provider,
+                    queries=self.config.search_discovery_queries,
+                    interval_seconds=self.config.search_discovery_interval_minutes * 60,
+                    results_per_query=self.config.search_discovery_results_per_query,
+                    force_analyze=self.config.search_discovery_force_analyze,
+                )
+                logger.info("Search discovery enabled")
+
         # Set up temporal rescan callback and start rescan loop
         self.temporal.set_rescan_callback(self._handle_rescan)
         logger.info("Temporal tracker initialized")
@@ -170,9 +216,14 @@ class SeedBusterPipeline:
             asyncio.create_task(self._analysis_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
         ]
+        if self.search_discovery:
+            self._tasks.append(asyncio.create_task(self.search_discovery.run_loop()))
 
         # Send startup notification
-        await self.bot.send_message("*SeedBuster started*\nMonitoring CT logs for suspicious domains...")
+        startup_note = "Monitoring CT logs for suspicious domains..."
+        if self.search_discovery:
+            startup_note = "Monitoring CT logs and search results for suspicious domains..."
+        await self.bot.send_message(f"*SeedBuster started*\n{startup_note}")
 
         logger.info("Pipeline running")
 
@@ -204,6 +255,7 @@ class SeedBusterPipeline:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+        self.search_discovery = None
 
         await self.bot.send_message("*SeedBuster stopping*...")
         await self.bot.stop()

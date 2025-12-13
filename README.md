@@ -5,6 +5,7 @@ Automated detection pipeline for Kaspa wallet phishing sites that steal seed phr
 ## Features
 
 - **Real-time monitoring** of Certificate Transparency logs for suspicious domains
+- **Optional search discovery** via official APIs (Google CSE / Bing) to find already-issued/older kits
 - **Smart detection** using fuzzy matching, IDN/homograph detection, and visual fingerprinting
 - **Headless browser analysis** with Playwright for evidence collection
 - **Telegram bot** for alerts, manual submissions, and control
@@ -68,12 +69,12 @@ python -m src.main
 ## How It Works
 
 ```
-CT Logs → Domain Filter → Scorer → Browser Analysis → Detection → Telegram Alert
+CT Logs + Search APIs → Domain Filter → Scorer → Browser Analysis → Detection → Telegram Alert
                                         ↓
                               Evidence Storage (SQLite + files)
 ```
 
-1. **Discovery**: Monitors Certificate Transparency logs for new Kaspa-related domains
+1. **Discovery**: Monitors Certificate Transparency logs (and optionally search APIs) for Kaspa-related sites
 2. **Scoring**: Fuzzy matching, IDN detection, suspicious TLD/keyword scoring
 3. **Analysis**: Playwright visits suspicious sites, collects screenshots/HTML
 4. **Detection**: Checks for seed phrase forms, visual similarity to wallet.kaspanet.io
@@ -96,6 +97,15 @@ Detection:
 External intelligence (optional):
 - `VIRUSTOTAL_API_KEY`
 - `URLSCAN_API_KEY`
+
+Search discovery (optional):
+- `SEARCH_DISCOVERY_ENABLED` - If `true`, periodically queries search APIs for phishing results
+- `SEARCH_DISCOVERY_PROVIDER` - `google` or `bing`
+- `SEARCH_DISCOVERY_QUERIES` - `;`-separated list of search queries
+- `SEARCH_DISCOVERY_INTERVAL_MINUTES`, `SEARCH_DISCOVERY_RESULTS_PER_QUERY`
+- `SEARCH_DISCOVERY_FORCE_ANALYZE` - If `true`, bypasses `DOMAIN_SCORE_THRESHOLD` for search hits
+- `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` - For provider `google`
+- `BING_SEARCH_API_KEY` - For provider `bing`
 
 Reporting:
 - `REPORT_PLATFORMS` - Comma-separated list (default: `google,cloudflare,netcraft,resend`)
