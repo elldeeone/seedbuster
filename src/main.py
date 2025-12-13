@@ -40,7 +40,9 @@ class SeedBusterPipeline:
         self._stop_task: asyncio.Task | None = None
 
         # Queues for pipeline stages
-        self._discovery_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+        # Discovery queue items can be a domain string or a dict with metadata:
+        # { "domain": "...", "source": "...", "force": bool }
+        self._discovery_queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1000)
         self._analysis_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=100)
 
         # Components
@@ -102,8 +104,13 @@ class SeedBusterPipeline:
     def _manual_submit(self, domain: str):
         """Handle manual domain submission from Telegram."""
         try:
-            self._discovery_queue.put_nowait(domain)
-            logger.info(f"Manual submission queued: {domain}")
+            # Force analysis even if the domain scorer would normally drop it.
+            self._discovery_queue.put_nowait({
+                "domain": domain,
+                "source": "manual",
+                "force": True,
+            })
+            logger.info(f"Manual submission queued: {domain} (forced)")
         except asyncio.QueueFull:
             logger.warning(f"Queue full, could not submit: {domain}")
 
@@ -139,7 +146,7 @@ class SeedBusterPipeline:
         logger.info("Browser started")
 
         # Start Telegram bot
-        self.bot.set_queue_size_callback(lambda: self._discovery_queue.qsize())
+        self.bot.set_queue_size_callback(lambda: self._discovery_queue.qsize() + self._analysis_queue.qsize())
         self.bot.set_rescan_callback(self._manual_rescan)
         self.bot.set_reload_callback(self.detector.reload_threat_intel)
         await self.bot.start()
@@ -214,11 +221,23 @@ class SeedBusterPipeline:
             try:
                 # Get domain from queue with timeout
                 try:
-                    domain = await asyncio.wait_for(
+                    item = await asyncio.wait_for(
                         self._discovery_queue.get(),
                         timeout=1.0,
                     )
                 except asyncio.TimeoutError:
+                    continue
+
+                source = "certstream"
+                force = False
+                if isinstance(item, dict):
+                    domain = (item.get("domain") or "").strip()
+                    source = (item.get("source") or source).strip() or source
+                    force = bool(item.get("force", False))
+                else:
+                    domain = str(item).strip()
+
+                if not domain:
                     continue
 
                 # Check if already seen
@@ -233,14 +252,14 @@ class SeedBusterPipeline:
                     logger.debug(f"Allowlisted: {domain}")
                     continue
 
-                if not score_result.should_analyze:
+                if not force and not score_result.should_analyze:
                     logger.debug(f"Below threshold: {domain} (score={score_result.score})")
                     continue
 
                 # Add to database
                 domain_id = await self.database.add_domain(
                     domain=domain,
-                    source="certstream",
+                    source=source,
                     domain_score=score_result.score,
                 )
 
@@ -319,6 +338,7 @@ class SeedBusterPipeline:
         external_result = None
         detection = None
         cluster_result = None
+        urlscan_result_url: str | None = None
 
         try:
             # Update status
@@ -439,6 +459,8 @@ class SeedBusterPipeline:
                         f"score={external_result.score}, "
                         f"reasons={len(external_result.reasons)}"
                     )
+                if external_result and external_result.urlscan and external_result.urlscan.result_url:
+                    urlscan_result_url = external_result.urlscan.result_url
 
                 if not browser_result or not browser_result.success:
                     error = getattr(browser_result, "error", None) or "Analysis failed"
@@ -497,6 +519,11 @@ class SeedBusterPipeline:
                         # Save final screenshot
                         await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
 
+                    # Clear stale exploration screenshots from previous scans (directory is reused).
+                    removed = self.evidence_store.clear_exploration_screenshots(domain)
+                    if removed:
+                        logger.info(f"Cleared {removed} old exploration screenshots for {domain}")
+
                     # Save exploration screenshots (especially ones with suspicious content)
                     # Note: Check exploration_steps directly, not 'explored' flag
                     # Steps are captured incrementally, but 'explored' is only set at the end
@@ -543,6 +570,42 @@ class SeedBusterPipeline:
                     external_reasons = external_result.reasons if external_result else []
                     analysis_score = min(100, detection.score + external_score)
                     reasons = detection.reasons + external_reasons
+
+                    # Optional: submit a fresh urlscan.io scan when cloaking is suspected/confirmed.
+                    # This provides a different scanner vantage point, which can help validate
+                    # what content is being served when our own IP/browser fingerprint is burned.
+                    urlscan_submission = None
+                    blocked_requests = getattr(browser_result, "blocked_requests", []) or []
+                    cloaking_suspected = len(blocked_requests) > 0
+                    if (
+                        self.config.urlscan_submit_enabled
+                        and self.config.urlscan_api_key
+                        and analysis_score >= self.config.analysis_score_threshold
+                        and (cloaking_suspected or temporal_analysis.cloaking_detected)
+                    ):
+                        target_url = domain if "://" in domain else f"https://{domain}"
+                        urlscan_submission = await self.external_intel.submit_urlscan_scan(
+                            target_url,
+                            visibility=self.config.urlscan_submit_visibility,
+                            tags=["seedbuster", "cloaking"],
+                        )
+                        if urlscan_submission.submitted and urlscan_submission.result_url:
+                            reasons.append(
+                                f"EXTERNAL: urlscan.io active scan submitted: {urlscan_submission.result_url}"
+                            )
+                            urlscan_result_url = urlscan_submission.result_url
+
+                    # If urlscan also saw a decoy, an older scan may have captured the wallet UI.
+                    # Prefer the best historical scan that contains wallet/seed UI text.
+                    if analysis_score >= self.config.analysis_score_threshold and (
+                        cloaking_suspected or temporal_analysis.cloaking_detected
+                    ):
+                        best = await self.external_intel.query_urlscan_best(domain)
+                        if best.found and best.result_url and best.result_url != urlscan_result_url:
+                            reasons.append(
+                                f"EXTERNAL: urlscan.io historical scan with wallet/seed UI: {best.result_url}"
+                            )
+                            urlscan_result_url = best.result_url
 
                     # Save temporal snapshot for future comparisons
                     self.temporal.add_snapshot(
@@ -631,6 +694,15 @@ class SeedBusterPipeline:
                             "confidence": cluster_result.confidence,
                         },
                         "external_intel": external_result.to_dict() if external_result else None,
+                        "urlscan_submission": (
+                            {
+                                "scan_id": urlscan_submission.scan_id,
+                                "result_url": urlscan_submission.result_url,
+                                "visibility": self.config.urlscan_submit_visibility,
+                            }
+                            if urlscan_submission and urlscan_submission.submitted
+                            else None
+                        ),
                     })
 
             # Update database
@@ -729,6 +801,7 @@ class SeedBusterPipeline:
                     screenshot_path=str(screenshot_path) if screenshot_path else None,
                     screenshot_paths=[str(p) for p in screenshot_paths] if screenshot_paths else None,
                     evidence_path=evidence_path,
+                    urlscan_result_url=urlscan_result_url,
                     temporal=temporal_info,
                     cluster=cluster_info,
                     seed_form_found=detection.seed_form_detected if detection else False,

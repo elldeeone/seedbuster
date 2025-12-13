@@ -67,6 +67,7 @@ class AlertData:
     screenshot_path: Optional[str] = None
     screenshot_paths: Optional[list[str]] = None  # Multiple screenshots (early, final)
     evidence_path: Optional[str] = None
+    urlscan_result_url: Optional[str] = None
     temporal: Optional[TemporalInfo] = None  # Temporal analysis info
     cluster: Optional[ClusterInfo] = None  # Threat cluster info
     seed_form_found: bool = False  # True if seed phrase entry form was discovered
@@ -347,6 +348,7 @@ class AlertFormatter:
 
 *Domain Management:*
 `/submit <url>` - Submit domain for analysis
+`/bulk <domains...>` - Submit many domains (paste list)
 `/ack <id>` - Acknowledge alert
 `/fp <id>` - Mark as false positive
 `/defer <id>` - Wait for rescans (suspected cloaking)

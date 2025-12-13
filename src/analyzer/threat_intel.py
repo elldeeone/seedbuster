@@ -118,9 +118,17 @@ class ThreatIntelLoader:
             )
 
             # Load malicious domains
+            seen_malicious_domains: set[str] = set()
             for item in data.get("malicious_domains", []):
+                domain_value = (item.get("domain") or "").strip()
+                if not domain_value:
+                    continue
+                domain_key = domain_value.lower()
+                if domain_key in seen_malicious_domains:
+                    continue
+                seen_malicious_domains.add(domain_key)
                 intel.malicious_domains.append(ThreatIndicator(
-                    value=item["domain"],
+                    value=domain_value,
                     type=item.get("type", "malicious"),
                     confidence=item.get("confidence", "medium"),
                     first_seen=item.get("first_seen"),
@@ -129,36 +137,65 @@ class ThreatIntelLoader:
                 ))
 
             # Load malicious patterns
+            seen_patterns: set[str] = set()
             for item in data.get("malicious_patterns", []):
+                pattern_value = (item.get("pattern") or "").strip()
+                if not pattern_value:
+                    continue
+                if pattern_value in seen_patterns:
+                    continue
+                seen_patterns.add(pattern_value)
                 intel.malicious_patterns.append(ThreatIndicator(
-                    value=item["pattern"],
+                    value=pattern_value,
                     type=item.get("type", "pattern"),
                     confidence=item.get("confidence", "medium"),
                     notes=item.get("notes"),
                 ))
 
             # Load API keys
+            seen_api_keys: set[str] = set()
             for item in data.get("api_keys", []):
+                key_value = (item.get("key") or "").strip()
+                if not key_value:
+                    continue
+                if key_value in seen_api_keys:
+                    continue
+                seen_api_keys.add(key_value)
                 intel.api_keys.append(ThreatIndicator(
-                    value=item["key"],
+                    value=key_value,
                     type=item.get("service", "api_key"),
                     first_seen=item.get("first_seen"),
-                    notes=item.get("associated_domain"),
+                    notes=item.get("notes") or item.get("associated_domain"),
                 ))
 
             # Load suspicious hosting patterns
+            seen_hosting: set[str] = set()
             for item in data.get("suspicious_hosting", []):
+                pattern_value = (item.get("pattern") or "").strip()
+                if not pattern_value:
+                    continue
+                if pattern_value in seen_hosting:
+                    continue
+                seen_hosting.add(pattern_value)
                 intel.suspicious_hosting.append(ThreatIndicator(
-                    value=item["pattern"],
+                    value=pattern_value,
                     type="hosting",
                     score_modifier=item.get("score_modifier", 10),
                     notes=item.get("notes"),
                 ))
 
             # Load anti-bot services
+            seen_antibot: set[str] = set()
             for item in data.get("antibot_services", []):
+                domain_value = (item.get("domain") or "").strip()
+                if not domain_value:
+                    continue
+                domain_key = domain_value.lower()
+                if domain_key in seen_antibot:
+                    continue
+                seen_antibot.add(domain_key)
                 intel.antibot_services.append(ThreatIndicator(
-                    value=item["domain"],
+                    value=domain_value,
                     type="antibot",
                     score_modifier=item.get("score_modifier", 15),
                 ))

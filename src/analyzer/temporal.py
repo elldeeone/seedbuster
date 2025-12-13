@@ -129,7 +129,16 @@ class TemporalAnalysis:
 
         if self.cloaking_detected:
             score += 25
-            reasons.append(f"TEMPORAL: Cloaking detected ({self.cloaking_confidence:.0%})")
+            pattern_label = {
+                "score_drop_after_detection": "score dropped after detection",
+                "dynamic_content_same_title": "dynamic content with stable title",
+                "verdict_flip": "verdict flips between scans",
+                "inconsistent_antibot": "anti-bot behavior inconsistent",
+                "seed_form_toggle": "seed form appears/disappears",
+            }.get(self.cloaking_pattern, self.cloaking_pattern or "unknown")
+            reasons.append(
+                f"TEMPORAL: Cloaking detected ({self.cloaking_confidence:.0%}): {pattern_label}"
+            )
 
         if self.intermittent_malicious:
             score += 20
@@ -399,6 +408,23 @@ class TemporalTracker:
 
         if len(snapshots) < 2:
             return False, 0.0, ""
+
+        # Pattern 0: Seed form appears/disappears between scans (UI cloaking)
+        # This is strong evidence of intentional evasion even if the overall score stays high.
+        def has_seed_form(snapshot: DomainSnapshot) -> bool:
+            for r in snapshot.reasons or []:
+                rl = (r or "").lower()
+                if "seed phrase form found" in rl:
+                    return True
+                if rl.startswith("explore:") and "seed form found" in rl:
+                    return True
+                if "seed form found" in rl:
+                    return True
+            return False
+
+        seed_flags = [has_seed_form(s) for s in snapshots]
+        if any(seed_flags) and not all(seed_flags):
+            return True, 0.85, "seed_form_toggle"
 
         # Pattern 1: High score initially, then low (site detected scanner)
         if snapshots[0].score >= 70 and snapshots[-1].score < 40:

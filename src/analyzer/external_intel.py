@@ -7,6 +7,11 @@ Queries external threat intelligence services:
 - abuse.ch URLhaus: Known malware/phishing URLs
 
 All services have free tiers sufficient for moderate volume.
+
+Optionally, SeedBuster can submit a fresh urlscan.io scan to collect evidence
+from a different scanner vantage point (useful when a site cloaks content based
+on client IP/UA). This is disabled unless configured with an API key and an
+explicit opt-in.
 """
 
 import asyncio
@@ -14,21 +19,43 @@ import hashlib
 import json
 import logging
 import time
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+URLSCAN_UI_KEYWORDS = [
+    # Known wallet landing UI (buttons/flows)
+    "continue on legacy wallet",
+    "go to the new kaspa ng wallet",
+    "recover from seed",
+    "recover wallet",
+    "restore wallet",
+    "import wallet",
+]
+
+URLSCAN_SEED_KEYWORDS = [
+    "seed phrase",
+    "recovery phrase",
+    "mnemonic",
+    "12-word",
+    "24-word",
+    "12 words",
+    "24 words",
+]
 
 
 @dataclass
 class URLScanResult:
     """Result from urlscan.io."""
     found: bool = False
+    submitted: bool = False  # True if we submitted a fresh scan
     scan_id: Optional[str] = None
     verdict: Optional[str] = None  # malicious, suspicious, benign
     score: int = 0
@@ -36,6 +63,8 @@ class URLScanResult:
     brands_targeted: List[str] = field(default_factory=list)
     scan_date: Optional[datetime] = None
     screenshot_url: Optional[str] = None
+    result_url: Optional[str] = None
+    api_url: Optional[str] = None
 
 
 @dataclass
@@ -77,8 +106,11 @@ class ExternalIntelResult:
             "reasons": self.reasons,
             "urlscan": {
                 "found": self.urlscan.found if self.urlscan else False,
+                "scan_id": self.urlscan.scan_id if self.urlscan else None,
                 "verdict": self.urlscan.verdict if self.urlscan else None,
                 "score": self.urlscan.score if self.urlscan else 0,
+                "result_url": self.urlscan.result_url if self.urlscan else None,
+                "screenshot_url": self.urlscan.screenshot_url if self.urlscan else None,
             } if self.urlscan else None,
             "virustotal": {
                 "found": self.virustotal.found if self.virustotal else False,
@@ -101,7 +133,9 @@ class ExternalIntelligence:
     - VirusTotal: 4 req/min, 500 req/day
     - abuse.ch: No strict limits, be respectful
 
-    All queries are search-only (no new scans submitted).
+    Queries are search-only by default (no new scans submitted) unless
+    urlscan submission is explicitly enabled by providing an API key and
+    calling `submit_urlscan_scan()`.
     """
 
     def __init__(
@@ -119,6 +153,10 @@ class ExternalIntelligence:
         # Rate limiting
         self._last_vt_request = 0.0
         self._vt_min_interval = 15.0  # 4 req/min = 15s between requests
+
+        # Avoid burning urlscan quota on repeat submissions for the same target.
+        self._urlscan_submit_min_interval = 60 * 60  # 1 hour
+        self._urlscan_submit_cache: Dict[str, tuple[URLScanResult, float]] = {}
 
         # In-memory cache for session
         self._cache: Dict[str, tuple] = {}  # key -> (result, timestamp)
@@ -207,6 +245,8 @@ class ExternalIntelligence:
 
                             result.scan_id = scan.get("_id")
                             result.screenshot_url = scan.get("screenshot")
+                            if result.scan_id:
+                                result.result_url = f"https://urlscan.io/result/{result.scan_id}/"
 
                             # Get verdict from verdicts object
                             verdicts = scan.get("verdicts", {})
@@ -238,6 +278,7 @@ class ExternalIntelligence:
             # Cache result
             self._set_cached("urlscan", domain, {
                 "found": result.found,
+                "submitted": False,
                 "scan_id": result.scan_id,
                 "verdict": result.verdict,
                 "score": result.score,
@@ -245,12 +286,246 @@ class ExternalIntelligence:
                 "brands_targeted": result.brands_targeted,
                 "scan_date": result.scan_date.isoformat() if result.scan_date else None,
                 "screenshot_url": result.screenshot_url,
+                "result_url": result.result_url,
             })
 
         except asyncio.TimeoutError:
             logger.debug(f"urlscan.io timeout for {domain}")
         except Exception as e:
             logger.debug(f"urlscan.io error for {domain}: {e}")
+
+        return result
+
+    async def query_urlscan_best(
+        self,
+        domain: str,
+        *,
+        max_results: int = 10,
+        max_dom_checks: int = 8,
+    ) -> URLScanResult:
+        """Find the most useful existing urlscan.io scan for a domain.
+
+        Some phishing kits serve decoy content to scanner IP ranges (including urlscan).
+        In that case, the *latest* scan can be the decoy even if an older scan captured
+        the wallet/seed UI. This method searches multiple historical scans and prefers
+        scans whose saved DOM includes wallet/seed UI keywords.
+
+        Note: This is still a passive lookup (no new scan submission).
+        """
+        result = URLScanResult()
+
+        # Check cache
+        cached = self._get_cached("urlscan_best", domain)
+        if cached:
+            return URLScanResult(**cached)
+
+        domains_to_search = []
+        domain_clean = (domain or "").strip().lower()
+        if domain_clean:
+            domains_to_search.append(domain_clean)
+            if domain_clean.startswith("www."):
+                domains_to_search.append(domain_clean[4:])
+            else:
+                domains_to_search.append(f"www.{domain_clean}")
+
+        scans: list[dict] = []
+        seen_ids: set[str] = set()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1) Search multiple domain variants
+                for d in domains_to_search:
+                    url = f"https://urlscan.io/api/v1/search/?q=domain:{quote(d)}&size={max_results}"
+                    headers = {}
+                    if self.urlscan_api_key:
+                        headers["API-Key"] = self.urlscan_api_key
+
+                    async with session.get(url, headers=headers, timeout=10) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                        for scan in data.get("results", []) or []:
+                            scan_id = scan.get("_id")
+                            if not scan_id or scan_id in seen_ids:
+                                continue
+                            seen_ids.add(scan_id)
+                            scans.append(scan)
+
+                if not scans:
+                    self._set_cached("urlscan_best", domain, {
+                        "found": False,
+                        "submitted": False,
+                        "scan_id": None,
+                        "verdict": None,
+                        "score": 0,
+                        "categories": [],
+                        "brands_targeted": [],
+                        "scan_date": None,
+                        "screenshot_url": None,
+                        "result_url": None,
+                        "api_url": None,
+                    })
+                    return result
+
+                # Sort by scan time (newest first) as a reasonable default.
+                def scan_time(s: dict) -> str:
+                    return (s.get("task", {}) or {}).get("time", "") or ""
+
+                scans.sort(key=scan_time, reverse=True)
+
+                best: URLScanResult | None = None
+                best_score = -1
+
+                # 2) Evaluate candidates, preferring those with wallet/seed UI text in DOM.
+                for i, scan in enumerate(scans[: max_results * 2]):  # guard against duplicates from variants
+                    scan_id = scan.get("_id")
+                    if not scan_id:
+                        continue
+
+                    candidate = URLScanResult(found=True)
+                    candidate.scan_id = scan_id
+                    candidate.screenshot_url = scan.get("screenshot")
+                    candidate.result_url = f"https://urlscan.io/result/{scan_id}/"
+
+                    verdicts = scan.get("verdicts", {}) or {}
+                    overall = verdicts.get("overall", {}) or {}
+                    candidate.score = int(overall.get("score", 0) or 0)
+                    if overall.get("malicious"):
+                        candidate.verdict = "malicious"
+                    elif candidate.score > 0:
+                        candidate.verdict = "suspicious"
+                    else:
+                        candidate.verdict = "benign"
+                    candidate.categories = list(overall.get("categories", []) or [])
+                    candidate.brands_targeted = list(overall.get("brands", []) or [])
+
+                    # Base selection score
+                    selection_score = 0
+                    if candidate.verdict == "malicious":
+                        selection_score += 200
+                    selection_score += candidate.score
+
+                    # Only fetch DOM for a limited number of candidates to keep this lightweight.
+                    if i < max_dom_checks:
+                        dom_url = f"https://urlscan.io/dom/{scan_id}/"
+                        try:
+                            async with session.get(dom_url, timeout=10) as dom_resp:
+                                if dom_resp.status == 200:
+                                    dom_html = (await dom_resp.text()) or ""
+                                else:
+                                    dom_html = ""
+                        except Exception:
+                            dom_html = ""
+
+                        if dom_html:
+                            dom_lower = dom_html.lower()
+                            seed_hits = sum(1 for kw in URLSCAN_SEED_KEYWORDS if kw in dom_lower)
+                            ui_hits = sum(1 for kw in URLSCAN_UI_KEYWORDS if kw in dom_lower)
+                            inputs_count = len(re.findall(r"<input\\b", dom_lower))
+
+                            # Seed/mnemonic keywords are strong evidence.
+                            selection_score += seed_hits * 50
+                            selection_score += ui_hits * 20
+
+                            # 12/24 input grids are common for mnemonic capture.
+                            if inputs_count in (12, 24):
+                                selection_score += 80
+                            elif inputs_count >= 8:
+                                selection_score += 20
+
+                    if selection_score > best_score:
+                        best_score = selection_score
+                        best = candidate
+
+                if best:
+                    result = best
+
+        except asyncio.TimeoutError:
+            logger.debug(f"urlscan.io best-scan timeout for {domain}")
+        except Exception as e:
+            logger.debug(f"urlscan.io best-scan error for {domain}: {e}")
+
+        # Cache result
+        self._set_cached("urlscan_best", domain, {
+            "found": result.found,
+            "submitted": result.submitted,
+            "scan_id": result.scan_id,
+            "verdict": result.verdict,
+            "score": result.score,
+            "categories": result.categories,
+            "brands_targeted": result.brands_targeted,
+            "scan_date": result.scan_date.isoformat() if isinstance(result.scan_date, datetime) else None,
+            "screenshot_url": result.screenshot_url,
+            "result_url": result.result_url,
+            "api_url": result.api_url,
+        })
+
+        return result
+
+    async def submit_urlscan_scan(
+        self,
+        target_url: str,
+        *,
+        visibility: str = "unlisted",
+        tags: Optional[list[str]] = None,
+    ) -> URLScanResult:
+        """Submit a fresh urlscan.io scan and return the submission metadata.
+
+        This does not block waiting for the scan to finish; callers can use the
+        returned `result_url` to view the scan when ready.
+
+        Requires `urlscan_api_key`.
+        """
+        result = URLScanResult()
+
+        if not self.urlscan_api_key:
+            return result
+
+        host = (urlparse(target_url).hostname or target_url).lower()
+        now = time.time()
+        cached = self._urlscan_submit_cache.get(host)
+        if cached and (now - cached[1]) < self._urlscan_submit_min_interval:
+            return cached[0]
+
+        url = "https://urlscan.io/api/v1/scan/"
+        headers = {
+            "API-Key": self.urlscan_api_key,
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "url": target_url,
+            "visibility": visibility,
+        }
+        if tags:
+            payload["tags"] = tags
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=20) as resp:
+                    if resp.status in (200, 201):
+                        data = await resp.json()
+                        scan_id = data.get("uuid") or data.get("_id") or data.get("scan_id")
+                        result_url = data.get("result")
+                        api_url = data.get("api")
+
+                        result.found = True
+                        result.submitted = True
+                        result.scan_id = scan_id
+                        result.result_url = result_url or (f"https://urlscan.io/result/{scan_id}/" if scan_id else None)
+                        result.api_url = api_url or (f"https://urlscan.io/api/v1/result/{scan_id}/" if scan_id else None)
+                        result.screenshot_url = (
+                            f"https://urlscan.io/screenshots/{scan_id}.png" if scan_id else None
+                        )
+                    else:
+                        logger.debug(f"urlscan.io submit failed ({resp.status}) for {target_url}")
+
+        except asyncio.TimeoutError:
+            logger.debug(f"urlscan.io submit timeout for {target_url}")
+        except Exception as e:
+            logger.debug(f"urlscan.io submit error for {target_url}: {e}")
+
+        if result.submitted and host:
+            self._urlscan_submit_cache[host] = (result, now)
 
         return result
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -68,6 +69,9 @@ class SeedBusterBot:
         """Start the Telegram bot."""
         self._app = Application.builder().token(self.token).build()
 
+        # Avoid "No error handlers are registered" and keep transient network errors from looking like crashes.
+        self._app.add_error_handler(self._handle_error)
+
         # Register handlers
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
@@ -75,6 +79,7 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("recent", self._cmd_recent))
         self._app.add_handler(CommandHandler("stats", self._cmd_stats))
         self._app.add_handler(CommandHandler("submit", self._cmd_submit))
+        self._app.add_handler(CommandHandler("bulk", self._cmd_bulk))
         self._app.add_handler(CommandHandler("ack", self._cmd_ack))
         self._app.add_handler(CommandHandler("defer", self._cmd_defer))
         self._app.add_handler(CommandHandler("rescan", self._cmd_rescan))
@@ -100,6 +105,18 @@ class SeedBusterBot:
         await self._app.updater.start_polling(drop_pending_updates=True)
 
         logger.info("Telegram bot started")
+
+    async def _handle_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
+        """Handle unexpected exceptions from Telegram handlers."""
+        err = getattr(context, "error", None)
+        update_id = getattr(update, "update_id", None)
+
+        # Network hiccups to Telegram are expected; log as warning without scary stack traces.
+        if isinstance(err, NetworkError):
+            logger.warning(f"Telegram network error (update_id={update_id}): {err}")
+            return
+
+        logger.exception(f"Unhandled Telegram handler error (update_id={update_id})", exc_info=err)
 
     async def stop(self):
         """Stop the Telegram bot."""
@@ -216,6 +233,16 @@ class SeedBusterBot:
                             ),
                         ],
                     ])
+
+            # Optional external link buttons (work even when report buttons are hidden).
+            if data.urlscan_result_url:
+                urlscan_row = [InlineKeyboardButton("🔎 urlscan.io", url=data.urlscan_result_url)]
+                if keyboard:
+                    rows = [list(r) for r in keyboard.inline_keyboard]
+                    rows.append(urlscan_row)
+                    keyboard = InlineKeyboardMarkup(rows)
+                else:
+                    keyboard = InlineKeyboardMarkup([urlscan_row])
 
             # Send screenshots if available
             screenshots_to_send = []
@@ -477,6 +504,98 @@ class SeedBusterBot:
             )
         else:
             await update.message.reply_text("Submission not available.")
+
+    async def _cmd_bulk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /bulk command for submitting many domains at once."""
+        if not self._is_authorized(update):
+            return
+        if not update.message or not update.message.text:
+            return
+
+        # Extract raw text after the command (supports newlines/pasted tables).
+        raw = update.message.text
+        # Remove leading "/bulk" or "/bulk@botname"
+        raw = raw.split(maxsplit=1)[1] if len(raw.split(maxsplit=1)) > 1 else ""
+        if not raw.strip():
+            await update.message.reply_text(
+                "Usage: `/bulk <domains...>`\n"
+                "Paste a list of domains/URLs (whitespace/newline separated).",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        # Parse first token per line for table pastes, plus any whitespace-separated tokens.
+        candidates: list[str] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Skip obvious headers
+            if line.lower().startswith(("url", "age", "size", "ips", "asns")):
+                continue
+            # Take first column to support urlscan "similar pages" tables.
+            first = line.split()[0]
+            candidates.append(first)
+
+        if not candidates:
+            candidates = raw.split()
+
+        def normalize(token: str) -> str | None:
+            t = (token or "").strip().strip("`'\"(),;")
+            if not t:
+                return None
+            t = t.replace("https://", "").replace("http://", "")
+            t = t.strip().strip("`'\"(),;")
+            if not t or "." not in t:
+                return None
+            return t.lower()
+
+        normalized: list[str] = []
+        seen = set()
+        invalid = 0
+        for token in candidates:
+            norm = normalize(token)
+            if not norm:
+                invalid += 1
+                continue
+            if norm in seen:
+                continue
+            seen.add(norm)
+            normalized.append(norm)
+
+        if not normalized:
+            await update.message.reply_text(
+                "No valid domains found. Paste domains/URLs separated by spaces/newlines.",
+            )
+            return
+
+        if not self.submit_callback:
+            await update.message.reply_text("Submission not available.")
+            return
+
+        queued = 0
+        skipped_existing = 0
+        # Avoid huge spam submissions in one go; Telegram message limits will usually cap this anyway.
+        max_batch = 200
+        if len(normalized) > max_batch:
+            normalized = normalized[:max_batch]
+
+        for domain in normalized:
+            try:
+                if await self.database.domain_exists(domain):
+                    skipped_existing += 1
+                    continue
+                self.submit_callback(domain)
+                queued += 1
+            except Exception:
+                # Best-effort: continue bulk submission even if one entry errors.
+                continue
+
+        await update.message.reply_text(
+            f"Queued {queued} domains for analysis.\n"
+            f"Skipped existing: {skipped_existing}\n"
+            f"Ignored invalid/empty: {invalid}",
+        )
 
     async def _cmd_ack(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /ack command."""

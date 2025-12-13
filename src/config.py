@@ -28,6 +28,8 @@ class Config:
     # External intelligence API keys (optional, improves detection)
     virustotal_api_key: str = ""  # Free tier: 4 req/min, 500/day
     urlscan_api_key: str = ""  # Free tier: 50 scans/day (optional for search)
+    urlscan_submit_enabled: bool = False  # Requires URLSCAN_API_KEY and explicit opt-in
+    urlscan_submit_visibility: str = "unlisted"  # public | unlisted | private (depends on plan)
 
     # SMTP configuration for email reports (alternative to Resend)
     smtp_host: str = ""
@@ -142,6 +144,8 @@ def load_config() -> Config:
         resend_from_email=os.getenv("RESEND_FROM_EMAIL", "SeedBuster <onboarding@resend.dev>"),
         virustotal_api_key=os.getenv("VIRUSTOTAL_API_KEY", ""),
         urlscan_api_key=os.getenv("URLSCAN_API_KEY", ""),
+        urlscan_submit_enabled=os.getenv("URLSCAN_SUBMIT_ENABLED", "false").lower() == "true",
+        urlscan_submit_visibility=os.getenv("URLSCAN_SUBMIT_VISIBILITY", "unlisted"),
         smtp_host=os.getenv("SMTP_HOST", ""),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),

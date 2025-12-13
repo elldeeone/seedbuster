@@ -1,5 +1,5 @@
-version: '1.5'
-last_updated: '2025-12-13'
+version: '1.17'
+last_updated: '2025-12-14'
 malicious_domains:
 - domain: walrus-app-o5hvw.ondigitalocean.app
   type: exfiltration
@@ -51,6 +51,72 @@ malicious_domains:
   first_seen: '2025-12-13'
   source: seedbuster_auto
   notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: kaspa-wallet.co
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.kaspa-wallet.co
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: kaspawallet.org
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: walletkaspanet.com
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.walletkaspanet.com
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: walletkaspanet.io
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.kaspawallet.org
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: wallet-kaspa.net
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.wallet-kaspa.net
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.wallet-kaspanet.com
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.kaspawallet.net
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-14'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 malicious_patterns:
 - pattern: /log-ip
   type: ip_logging
@@ -63,15 +129,11 @@ malicious_patterns:
 - pattern: /api/form/text
   type: exfiltration
   confidence: high
-  notes: Text data exfiltration
+  notes: Text data exfiltration (used by both whale backend and vercel backend)
 - pattern: /api/notification
   type: c2_notification
   confidence: high
   notes: Real-time attacker notification endpoint
-- pattern: /api/form/text
-  type: exfiltration
-  confidence: high
-  notes: Text exfiltration - used by both whale backend and vercel backend
 - pattern: \?view=recover
   type: phishing_form
   confidence: high
@@ -89,6 +151,17 @@ api_keys:
   - kaspanet.app
   - wallet-kaspanet.com
   - kaspawallet.net
+  - app-kaspa-ng.org
+  - www.kaspa-wallet.co
+  - kaspawallet.org
+  - walletkaspanet.com
+  - www.walletkaspanet.com
+  - walletkaspanet.io
+  - www.kaspawallet.org
+  - wallet-kaspa.net
+  - www.wallet-kaspa.net
+  - www.wallet-kaspanet.com
+  - www.kaspawallet.net
   notes: Used for VPN/proxy/datacenter/Tor detection
 - key: e7a25d99-66d4-4a1b-a6e0-3f2e93f25f1b
   service: whale_backend
@@ -98,6 +171,17 @@ api_keys:
   - kaspanet.app
   - wallet-kaspanet.com
   - kaspawallet.net
+  - app-kaspa-ng.org
+  - www.kaspa-wallet.co
+  - kaspawallet.org
+  - walletkaspanet.com
+  - www.walletkaspanet.com
+  - walletkaspanet.io
+  - www.kaspawallet.org
+  - wallet-kaspa.net
+  - www.wallet-kaspa.net
+  - www.wallet-kaspanet.com
+  - www.kaspawallet.net
   notes: x-api-key header for whale-app-poxe2 exfiltration endpoint
 suspicious_hosting:
 - pattern: ondigitalocean.app
@@ -139,6 +223,16 @@ scammer_signatures:
   - kaspanet.one
   - app-kaspa-ng.org
   - kaspawallet.net
+  - www.kaspa-wallet.co
+  - kaspawallet.org
+  - walletkaspanet.com
+  - www.walletkaspanet.com
+  - walletkaspanet.io
+  - www.kaspawallet.org
+  - wallet-kaspa.net
+  - www.wallet-kaspa.net
+  - www.wallet-kaspanet.com
+  - www.kaspawallet.net
   cloaking_method: IP-based via walrus backend + ipdata.co bot detection
   attack_flow: landing -> redirect -> 12-word seed form -> whale exfil + vercel notification
 kit_fingerprints:

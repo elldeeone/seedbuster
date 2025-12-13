@@ -12,3 +12,5 @@ restore wallet
 import wallet
 recover wallet
 enter mnemonic
+continue on legacy account
+go to the new kaspa ng account

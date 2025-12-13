@@ -4,10 +4,11 @@ import asyncio
 import ipaddress
 import logging
 import random
+import re
 import socket
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright, Browser, Page, Error as PlaywrightError
 
@@ -724,8 +725,7 @@ class BrowserAnalyzer:
             button_texts = [b["text"][:30] for b in visible_buttons[:8]]
             logger.info(f"Found {len(visible_buttons)} buttons: {button_texts}")
         else:
-            logger.info("No visible buttons found on page")
-            return
+            logger.info("No visible buttons found on page (will still try known targets)")
 
         explored_texts = set()
         clicks_made = 0
@@ -749,7 +749,8 @@ class BrowserAnalyzer:
 
             # First pass: check for high-priority mnemonic targets
             for target_text in HIGH_PRIORITY_TARGETS:
-                if target_text.lower() in explored_texts:
+                target_key = target_text.lower()
+                if target_key in explored_texts:
                     continue
 
                 element = await self._find_clickable_element(page, target_text)
@@ -759,9 +760,15 @@ class BrowserAnalyzer:
 
                     logger.info(f"Exploration: clicking HIGH PRIORITY '{actual_text}' on {result.domain}")
 
-                    await element.click()
+                    clicked = await self._click_element_resilient(page, element, label=actual_text)
+                    explored_texts.add(target_key)
+                    if not clicked:
+                        logger.info(
+                            f"Exploration: failed to click HIGH PRIORITY '{actual_text}' on {result.domain}"
+                        )
+                        continue
+
                     clicks_made += 1
-                    explored_texts.add(target_text.lower())
 
                     # Wait and capture - returns True if seed form found
                     seed_found = await self._wait_and_capture_step(page, result, actual_text)
@@ -792,9 +799,13 @@ class BrowserAnalyzer:
 
                     logger.info(f"Exploration: clicking '{actual_text}' on {result.domain}")
 
-                    await element.click()
-                    clicks_made += 1
+                    clicked = await self._click_element_resilient(page, element, label=actual_text)
                     explored_texts.add(target_text)
+                    if not clicked:
+                        logger.info(f"Exploration: failed to click '{actual_text}' on {result.domain}")
+                        continue
+
+                    clicks_made += 1
 
                     # Wait and capture - returns True if seed form found
                     seed_found = await self._wait_and_capture_step(page, result, actual_text)
@@ -818,19 +829,98 @@ class BrowserAnalyzer:
                 f"{len(result.exploration_steps)} steps captured"
             )
 
+    @staticmethod
+    def _extract_navigation_target_from_onclick(onclick: str) -> Optional[str]:
+        """Extract a navigation target URL from an inline onclick handler."""
+        if not onclick:
+            return None
+
+        patterns = [
+            r"location\.href\s*=\s*['\"]([^'\"]+)['\"]",
+            r"location\s*=\s*['\"]([^'\"]+)['\"]",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, onclick, re.I)
+            if match:
+                target = match.group(1).strip()
+                return target or None
+        return None
+
+    async def _get_element_navigation_target(self, page: Page, element) -> Optional[str]:
+        """Try to resolve an element's href/onclick navigation target."""
+        try:
+            href = await element.get_attribute("href")
+            if href:
+                return urljoin(page.url, href)
+        except Exception:
+            pass
+
+        try:
+            onclick = await element.get_attribute("onclick")
+            target = self._extract_navigation_target_from_onclick(onclick or "")
+            if target:
+                return urljoin(page.url, target)
+        except Exception:
+            pass
+
+        return None
+
+    async def _click_element_resilient(self, page: Page, element, label: str) -> bool:
+        """Click an element with fallbacks to avoid navigation timeouts/overlays."""
+        last_error: Optional[Exception] = None
+
+        # Attempt 1: normal click but don't wait for navigation (we capture after).
+        try:
+            await element.click(timeout=5000, no_wait_after=True)
+            return True
+        except Exception as e:
+            last_error = e
+
+        # Attempt 2: scroll into view + force click (bypasses actionability issues).
+        try:
+            try:
+                await element.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            await element.click(timeout=5000, force=True, no_wait_after=True)
+            return True
+        except Exception as e:
+            last_error = e
+
+        # Attempt 3: JS click dispatch (bypasses pointer intercept).
+        try:
+            await page.evaluate("(el) => el.click()", element)
+            return True
+        except Exception as e:
+            last_error = e
+
+        # Attempt 4: direct navigation from href/onclick (covers classic templates).
+        try:
+            target = await self._get_element_navigation_target(page, element)
+            if target:
+                await page.goto(target, wait_until="domcontentloaded", timeout=self.timeout)
+                return True
+        except Exception as e:
+            last_error = e
+
+        logger.debug(f"Exploration click failed for '{label}': {str(last_error)[:200]}")
+        return False
+
     async def _find_clickable_element(self, page: Page, target_text: str):
         """Find a clickable element containing the target text."""
         # Use fast JS-based search instead of slow selector waits
         try:
-            element = await page.evaluate_handle(f"""
+            handle = await page.evaluate_handle(f"""
                 () => {{
                     const targetText = '{target_text}'.toLowerCase();
                     // Check buttons first (most likely)
+                    let firstMatch = null;
                     for (const el of document.querySelectorAll('button')) {{
                         const text = (el.textContent || '').toLowerCase();
                         if (text.includes(targetText)) {{
                             const rect = el.getBoundingClientRect();
                             if (rect.width > 10 && rect.height > 10) return el;
+                            if (!firstMatch) firstMatch = el;
                         }}
                     }}
                     // Then links
@@ -839,6 +929,7 @@ class BrowserAnalyzer:
                         if (text.includes(targetText)) {{
                             const rect = el.getBoundingClientRect();
                             if (rect.width > 10 && rect.height > 10) return el;
+                            if (!firstMatch) firstMatch = el;
                         }}
                     }}
                     // Then role=button
@@ -847,6 +938,7 @@ class BrowserAnalyzer:
                         if (text.includes(targetText)) {{
                             const rect = el.getBoundingClientRect();
                             if (rect.width > 10 && rect.height > 10) return el;
+                            if (!firstMatch) firstMatch = el;
                         }}
                     }}
                     // Finally clickable divs (but NOT paragraphs/spans with lots of text)
@@ -855,16 +947,18 @@ class BrowserAnalyzer:
                         if (text.includes(targetText) && text.length < 100) {{
                             const rect = el.getBoundingClientRect();
                             if (rect.width > 10 && rect.height > 10) return el;
+                            if (!firstMatch) firstMatch = el;
                         }}
                     }}
-                    return null;
+                    // Fallback: return first matching element even if hidden (UI cloaking often sets display:none).
+                    return firstMatch;
                 }}
             """)
-            # Check if we got a valid element (not null)
-            if element:
-                props = await element.get_properties()
-                if props:
-                    return element.as_element()
+            element = handle.as_element()
+            if element is None:
+                await handle.dispose()
+                return None
+            return element
         except Exception as e:
             logger.debug(f"Fast element search failed for '{target_text}': {e}")
         return None
@@ -877,7 +971,7 @@ class BrowserAnalyzer:
         button_lower = button_text.lower()
 
         # Longer wait for seed/recovery buttons - they typically load a form
-        if any(kw in button_lower for kw in ["seed", "recover", "mnemonic", "import", "restore"]):
+        if any(kw in button_lower for kw in ["seed", "recover", "mnemonic", "import", "restore", "legacy"]):
             await asyncio.sleep(2.5)  # Extra wait for seed forms to render
             try:
                 # Wait for inputs to appear (seed forms have many inputs)

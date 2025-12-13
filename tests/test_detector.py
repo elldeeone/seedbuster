@@ -2,7 +2,7 @@
 
 import pytest
 from src.analyzer.detector import PhishingDetector
-from src.analyzer.browser import BrowserResult
+from src.analyzer.browser import BrowserResult, ExplorationStep
 
 
 @pytest.fixture
@@ -60,6 +60,19 @@ class TestPhishingDetector:
         detection = detector.detect(result)
         assert detection.seed_form_detected
         assert detection.score >= 30
+
+    def test_seed_form_from_exploration_without_explored_flag(self, detector):
+        """Exploration steps should be analyzed even if 'explored' wasn't set."""
+        step_inputs = [{"type": "text", "name": f"word{i}", "placeholder": "", "id": ""} for i in range(12)]
+        step = ExplorationStep(button_text="Continue on Legacy Wallet", success=True, input_fields=step_inputs)
+        result = make_browser_result()
+        result.explored = False
+        result.exploration_steps = [step]
+
+        detection = detector.detect(result)
+        assert detection.seed_form_detected
+        assert any("via exploration" in r.lower() for r in detection.reasons)
+        assert any(r.startswith("EXPLORE:") for r in detection.reasons)
 
     def test_seed_keywords_in_html(self, detector):
         """Seed-related keywords should be detected."""

@@ -73,6 +73,25 @@ class EvidenceStore:
         await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         return path
 
+    def clear_exploration_screenshots(self, domain: str) -> int:
+        """Remove old exploration screenshots for a domain.
+
+        Evidence directories are reused across rescans, so stale exploration screenshots
+        can otherwise leak into later alerts (e.g., showing a seed form that wasn't found
+        in the current scan).
+        """
+        domain_dir = self.get_domain_dir(domain)
+        removed = 0
+        for path in domain_dir.glob("screenshot_exploration*.png"):
+            try:
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return removed
+
     def get_evidence_path(self, domain: str) -> Path:
         """Get the evidence directory path for a domain."""
         return self.get_domain_dir(domain)

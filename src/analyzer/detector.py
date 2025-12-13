@@ -221,7 +221,8 @@ class PhishingDetector:
             result.reasons.extend(temporal.temporal_reasons)
 
         # 11. Exploration results (click-through discovered forms)
-        if browser_result.explored and browser_result.exploration_steps:
+        # Note: steps may exist even if exploration didn't complete and `explored` wasn't set.
+        if browser_result.exploration_steps:
             explore_score, explore_reasons = self._analyze_exploration(browser_result)
             result.score += explore_score
             result.reasons.extend(explore_reasons)
@@ -281,6 +282,18 @@ class PhishingDetector:
                     score += 50  # High score - definitive evidence
                     reasons.append(f"Seed phrase form found via exploration: '{step.button_text}'")
                     return score, reasons  # This is definitive, no need to check further
+                # Fallback: 12/24 input pattern discovered via exploration (common in classic wallet templates)
+                text_input_count = sum(
+                    1
+                    for inp in step.input_fields
+                    if (inp.get("type", "") or "").lower() in ("text", "password", "")
+                )
+                if text_input_count in (12, 24):
+                    score += 50
+                    reasons.append(
+                        f"Seed phrase form found via exploration: '{step.button_text}' ({text_input_count} inputs)"
+                    )
+                    return score, reasons
 
         # Count text inputs that could be for seed words
         seed_like_inputs = 0
