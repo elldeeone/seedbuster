@@ -102,3 +102,12 @@ class TestIDNHomograph:
         # Testing the normalization logic
         normalized = scorer._normalize_homoglyphs("kаspа")  # Cyrillic а
         assert normalized == "kaspa"
+
+    def test_punycode_idn_homograph(self, scorer):
+        """Punycode IDNs (xn--) should also be detected as homographs."""
+        # Punycode for 'kаspa.com' (Cyrillic 'а' U+0430)
+        result = scorer.score_domain("xn--kspa-53d.com")
+        assert any("IDN homograph attack detected" in r for r in result.reasons)
+
+        # Quick filter should also catch it at CT ingestion time
+        assert scorer.quick_filter("xn--kspa-53d.com")

@@ -132,14 +132,25 @@ class DomainScorer:
         score = 0
         reasons = []
 
+        # CT feeds and browsers often represent IDNs as ASCII punycode (xn--...).
+        # Decode to Unicode when possible so homoglyph checks work in practice.
+        candidate = domain
+        try:
+            if "xn--" in domain:
+                decoded = idna.decode(domain)
+                if decoded and decoded != domain:
+                    candidate = decoded
+        except Exception:
+            candidate = domain
+
         try:
             # Check if domain contains non-ASCII characters
-            if not domain.isascii():
-                # Convert to ASCII (punycode)
-                idna.encode(domain)
+            if not candidate.isascii():
+                # Validate that it is IDNA-encodable
+                idna.encode(candidate)
 
                 # Check if it contains homoglyphs
-                normalized = self._normalize_homoglyphs(domain)
+                normalized = self._normalize_homoglyphs(candidate)
                 for pattern in self.target_patterns:
                     if pattern in normalized.lower():
                         score += 40
@@ -256,18 +267,38 @@ class DomainScorer:
         """Quick check if domain might be interesting (before full scoring)."""
         domain_lower = domain.lower()
 
+        # Best-effort punycode decode to make IDNs filterable at discovery-time.
+        candidate = domain_lower
+        try:
+            if "xn--" in domain_lower:
+                decoded = idna.decode(domain_lower)
+                if decoded and decoded != domain_lower:
+                    candidate = decoded.lower()
+        except Exception:
+            candidate = domain_lower
+
         # Check allowlist first
         extracted = tldextract.extract(domain_lower)
         registered = f"{extracted.domain}.{extracted.suffix}"
         if registered in self.allowlist or domain_lower in self.allowlist:
             return False
 
+        # If decoded IDN contains homoglyphs, normalize to improve matching.
+        normalized_candidate = candidate
+        if not normalized_candidate.isascii():
+            normalized_candidate = self._normalize_homoglyphs(normalized_candidate).lower()
+
+        extracted_candidate = tldextract.extract(normalized_candidate)
+
         # Check if any target pattern is roughly present
         for pattern in self.target_patterns:
-            if pattern in domain_lower:
+            if pattern in domain_lower or pattern in normalized_candidate:
                 return True
             # Quick Levenshtein check
-            if fuzz.partial_ratio(pattern, extracted.domain) >= 70:
+            if (
+                fuzz.partial_ratio(pattern, extracted.domain) >= 70
+                or fuzz.partial_ratio(pattern, extracted_candidate.domain) >= 70
+            ):
                 return True
 
         return False

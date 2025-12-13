@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections import deque
 from typing import Callable, Optional
 
 import certstream
@@ -34,6 +35,7 @@ class CertstreamListener:
         self.quick_filter = quick_filter or (lambda d: True)
         self._running = False
         self._seen_domains: set[str] = set()  # Dedup within session
+        self._seen_order: deque[str] = deque()
         self._max_seen = 100000  # Max domains to track for dedup
 
     def _handle_message(self, message: dict, context):
@@ -63,9 +65,12 @@ class CertstreamListener:
 
                 # Track and emit
                 self._seen_domains.add(domain)
+                self._seen_order.append(domain)
                 if len(self._seen_domains) > self._max_seen:
-                    # Clear half when full
-                    self._seen_domains = set(list(self._seen_domains)[self._max_seen // 2 :])
+                    # Evict oldest when full (stable memory and avoids random re-emits).
+                    while len(self._seen_order) > self._max_seen:
+                        oldest = self._seen_order.popleft()
+                        self._seen_domains.discard(oldest)
 
                 # Call the callback
                 try:
