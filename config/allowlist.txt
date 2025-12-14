@@ -5,3 +5,4 @@ kaspa.com
 kaspa.org
 kaspanet.io
 wallet.kaspanet.io
+kaspa-ng.org
