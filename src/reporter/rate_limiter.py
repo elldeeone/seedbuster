@@ -45,34 +45,37 @@ class RateLimiter:
         Returns:
             True if token acquired, False if timed out.
         """
-        start = time.monotonic()
+        deadline = (time.monotonic() + float(timeout)) if timeout is not None else None
 
-        async with self._lock:
-            while True:
+        while True:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            try:
+                if remaining is None:
+                    await self._lock.acquire()
+                else:
+                    await asyncio.wait_for(self._lock.acquire(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return False
+
+            try:
                 self._refill()
 
                 if self._tokens >= 1:
                     self._tokens -= 1
                     return True
 
-                # Calculate wait time for next token
                 tokens_per_second = self.requests_per_minute / 60.0
-                wait_time = (1 - self._tokens) / tokens_per_second
-
-                # Check timeout
-                if timeout is not None:
-                    elapsed = time.monotonic() - start
-                    remaining = timeout - elapsed
-                    if remaining <= 0:
-                        return False
-                    wait_time = min(wait_time, remaining)
-
-                # Release lock while waiting
+                wait_time = float("inf") if tokens_per_second <= 0 else (1 - self._tokens) / tokens_per_second
+            finally:
                 self._lock.release()
-                try:
-                    await asyncio.sleep(wait_time)
-                finally:
-                    await self._lock.acquire()
+
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                wait_time = min(wait_time, remaining)
+
+            await asyncio.sleep(max(0.0, wait_time))
 
     def can_proceed(self) -> bool:
         """Check if a request can proceed immediately without waiting."""
