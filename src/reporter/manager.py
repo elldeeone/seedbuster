@@ -292,6 +292,7 @@ class ReportManager:
         from .netcraft import NetcraftReporter
         from .hosting_provider import HostingProviderReporter
         from .registrar import RegistrarReporter
+        from .apwg import APWGReporter
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -312,6 +313,10 @@ class ReportManager:
             reporter_email=self.resend_from_email or self.reporter_email or ""
         )
         logger.info("Initialized Netcraft reporter")
+
+        # APWG manual helper (opt-in via REPORT_PLATFORMS)
+        self.reporters["apwg"] = APWGReporter()
+        logger.info("Initialized APWG manual reporter")
 
         # Hosting provider manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["hosting_provider"] = HostingProviderReporter(

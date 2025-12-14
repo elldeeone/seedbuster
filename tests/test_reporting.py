@@ -14,6 +14,7 @@ from src.reporter.hosting_provider import HostingProviderReporter
 from src.reporter.registrar import RegistrarReporter
 from src.reporter.resend_reporter import ResendReporter
 from src.reporter.smtp_reporter import SMTPReporter
+from src.reporter.apwg import APWGReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database
 from src.storage.evidence import EvidenceStore
@@ -420,3 +421,19 @@ async def test_smtp_reporter_falls_back_to_registrar_rdap_email(monkeypatch):
     assert "Email sent to abuse@example-registrar.tld" in (result.message or "")
     assert sent["to"] == "abuse@example-registrar.tld"
     assert str(sent["subject"]).startswith("Domain Abuse Report")
+
+
+@pytest.mark.asyncio
+async def test_apwg_reporter_returns_manual_required():
+    reporter = APWGReporter()
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+    )
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.MANUAL_REQUIRED
+    assert "reportphishing@apwg.org" in (result.message or "")
+    assert "https://example.com/path" in (result.message or "")
