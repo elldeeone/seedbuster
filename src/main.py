@@ -23,6 +23,7 @@ from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot
 from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
+from .dashboard.server import DashboardServer, DashboardConfig
 
 # Configure logging
 logging.basicConfig(
@@ -108,6 +109,7 @@ class SeedBusterPipeline:
         )
         self.ct_listener: AsyncCertstreamListener = None
         self.search_discovery: SearchDiscovery | None = None
+        self.dashboard: DashboardServer | None = None
 
     def _manual_submit(self, domain: str):
         """Handle manual domain submission from Telegram."""
@@ -182,6 +184,47 @@ class SeedBusterPipeline:
         # Connect to database
         await self.database.connect()
         logger.info("Database connected")
+
+        # Start dashboard (optional)
+        if self.config.dashboard_enabled:
+            async def _report(domain_id: int, domain: str, platforms: list[str] | None, force: bool):
+                return await self.report_manager.report_domain(
+                    domain_id=domain_id,
+                    domain=domain,
+                    platforms=platforms,
+                    force=force,
+                )
+
+            async def _mark_manual_done(domain_id: int, domain: str, platforms: list[str] | None, note: str):
+                return await self.report_manager.mark_manual_done(
+                    domain_id=domain_id,
+                    domain=domain,
+                    platforms=platforms,
+                    note=note,
+                )
+
+            self.dashboard = DashboardServer(
+                config=DashboardConfig(
+                    enabled=True,
+                    host=self.config.dashboard_host,
+                    port=self.config.dashboard_port,
+                    admin_user=self.config.dashboard_admin_user,
+                    admin_password=self.config.dashboard_admin_password,
+                ),
+                database=self.database,
+                evidence_dir=self.config.evidence_dir,
+                submit_callback=self._manual_submit,
+                rescan_callback=self._manual_rescan,
+                report_callback=_report,
+                mark_manual_done_callback=_mark_manual_done,
+                get_available_platforms=self.report_manager.get_available_platforms,
+            )
+            await self.dashboard.start()
+            logger.info(
+                "Dashboard started on http://%s:%s",
+                self.config.dashboard_host,
+                self.config.dashboard_port,
+            )
 
         # Start browser
         await self.browser.start()
@@ -296,6 +339,10 @@ class SeedBusterPipeline:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         self.search_discovery = None
+
+        if self.dashboard:
+            await self.dashboard.stop()
+            self.dashboard = None
 
         await self.bot.send_message("*SeedBuster stopping*...")
         await self.bot.stop()

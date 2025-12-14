@@ -15,6 +15,10 @@ services:
       - ./data:/app/data
       - ./config:/app/config:ro
 
+    # Dashboard (optional)
+    ports:
+      - "${DASHBOARD_PORT:-8080}:${DASHBOARD_PORT:-8080}"
+
     # Resource limits
     deploy:
       resources:

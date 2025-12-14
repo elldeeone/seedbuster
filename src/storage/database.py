@@ -64,6 +64,7 @@ class Database:
                         analysis_score INTEGER,
                         verdict TEXT,
                         verdict_reasons TEXT,
+                        operator_notes TEXT,
                         status TEXT DEFAULT 'pending',
                         analyzed_at TIMESTAMP,
                         reported_at TIMESTAMP,
@@ -102,6 +103,7 @@ class Database:
 
             # Migrations must run before creating indexes that reference newer columns,
             # otherwise existing DBs on older schemas would fail to start up.
+            await self._migrate_domains_table()
             await self._migrate_reports_table()
             await self._create_indexes()
 
@@ -121,6 +123,24 @@ class Database:
             except Exception:
                 continue
         await self._connection.commit()
+
+    async def _migrate_domains_table(self) -> None:
+        """Add columns to domains table (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(domains)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+
+        migrations: list[str] = []
+        if "operator_notes" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN operator_notes TEXT")
+
+        for stmt in migrations:
+            try:
+                await self._connection.execute(stmt)
+            except Exception:
+                continue
+        if migrations:
+            await self._connection.commit()
 
     async def _migrate_reports_table(self) -> None:
         """Add columns to reports table for retry scheduling (best-effort)."""
@@ -245,6 +265,54 @@ class Database:
             )
             await self._connection.commit()
 
+    async def update_domain_admin_fields(
+        self,
+        domain_id: int,
+        *,
+        status: str | None = None,
+        verdict: str | None = None,
+        operator_notes: str | None = None,
+    ) -> None:
+        """Update admin-controlled fields on a domain."""
+        updates: list[str] = []
+        params: list[object] = []
+
+        status_value = (status or "").strip().lower() if status is not None else None
+        verdict_value = (verdict or "").strip().lower() if verdict is not None else None
+
+        if status_value is not None:
+            updates.append("status = ?")
+            params.append(status_value or None)
+            if status_value == DomainStatus.ANALYZED.value:
+                updates.append("analyzed_at = COALESCE(analyzed_at, CURRENT_TIMESTAMP)")
+            elif status_value == DomainStatus.REPORTED.value:
+                updates.append("reported_at = COALESCE(reported_at, CURRENT_TIMESTAMP)")
+
+        if verdict_value is not None:
+            updates.append("verdict = ?")
+            params.append(verdict_value or None)
+
+        if operator_notes is not None:
+            updates.append("operator_notes = ?")
+            params.append(operator_notes)
+
+        if not updates:
+            return
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(domain_id)
+
+        async with self._lock:
+            await self._connection.execute(
+                f"""
+                UPDATE domains
+                SET {', '.join(updates)}
+                WHERE id = ?
+                """,
+                params,
+            )
+            await self._connection.commit()
+
     async def update_domain_analysis(
         self,
         domain_id: int,
@@ -323,6 +391,43 @@ class Database:
                     """,
                     (limit,),
                 )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def list_domains(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        status: str | None = None,
+        verdict: str | None = None,
+        query: str | None = None,
+    ) -> list[dict]:
+        """List domains with optional filters and pagination."""
+        limit = max(1, min(int(limit), 500))
+        offset = max(0, int(offset))
+
+        where: list[str] = []
+        params: list[object] = []
+
+        if status:
+            where.append("status = ?")
+            params.append(status.strip().lower())
+        if verdict:
+            where.append("verdict = ?")
+            params.append(verdict.strip().lower())
+        if query:
+            where.append("domain LIKE ?")
+            params.append(f"%{query.strip().lower()}%")
+
+        sql = "SELECT * FROM domains"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        async with self._lock:
+            cursor = await self._connection.execute(sql, params)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 

@@ -9,6 +9,7 @@ Automated detection pipeline for Kaspa wallet phishing sites that steal seed phr
 - **Smart detection** using fuzzy matching, IDN/homograph detection, and visual fingerprinting
 - **Headless browser analysis** with Playwright for evidence collection
 - **Telegram bot** for alerts, manual submissions, and control
+- **Web dashboard** (public + admin) for status, evidence, and reporting
 - **Evidence storage** with screenshots, HTML snapshots, and analysis results
 
 ## Quick Start
@@ -128,6 +129,11 @@ Paths:
 - `DATA_DIR` (default: `./data`)
 - `EVIDENCE_DIR` (default: `./data/evidence`)
 - `CONFIG_DIR` (default: `./config`)
+
+Dashboard (optional):
+- `DASHBOARD_ENABLED` - If `true`, starts a small web dashboard server
+- `DASHBOARD_HOST`, `DASHBOARD_PORT`
+- `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD` - Basic auth for `/admin`
 
 ## File Structure
 
