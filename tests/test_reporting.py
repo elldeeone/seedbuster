@@ -386,6 +386,43 @@ async def test_resend_reporter_falls_back_to_registrar_rdap_email(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_resend_reporter_includes_screenshot_attachment(monkeypatch, tmp_path):
+    import base64
+    import httpx
+
+    resend_client = _FakeAsyncClient(post_json={"id": "email_123"})
+
+    def fake_async_client(*args, **kwargs):  # noqa: ANN001, ARG001
+        return resend_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+
+    screenshot = tmp_path / "screenshot.png"
+    screenshot.write_bytes(b"png-bytes")
+
+    reporter = ResendReporter(api_key="test_key", from_email="analyst@example.com")
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+        hosting_provider="namecheap",
+        screenshot_path=screenshot,
+    )
+
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.SUBMITTED
+    assert resend_client.post_calls == [reporter.API_URL]
+
+    payload = resend_client.post_payloads[0]["kwargs"]["json"]
+    attachments = payload.get("attachments") or []
+    assert len(attachments) == 1
+    assert attachments[0]["filename"] == "screenshot.png"
+    assert base64.b64decode(attachments[0]["content"]) == b"png-bytes"
+
+
+@pytest.mark.asyncio
 async def test_smtp_reporter_falls_back_to_registrar_rdap_email(monkeypatch):
     from src.reporter.rdap import RdapLookupResult
 

@@ -1,5 +1,7 @@
 """Resend email reporter for SeedBuster."""
 
+import asyncio
+import base64
 import logging
 from typing import Optional
 
@@ -173,18 +175,34 @@ class ResendReporter(BaseReporter):
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
+                attachments: list[dict[str, str]] = []
+                if evidence.screenshot_path and evidence.screenshot_path.exists():
+                    try:
+                        raw = await asyncio.to_thread(evidence.screenshot_path.read_bytes)
+                        encoded = base64.b64encode(raw).decode("ascii")
+                        attachments.append({
+                            "filename": evidence.screenshot_path.name,
+                            "content": encoded,
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to attach screenshot: {e}")
+
+                payload: dict[str, object] = {
+                    "from": self.from_email,
+                    "to": [to_email],
+                    "subject": report["subject"],
+                    "text": report["body"],
+                }
+                if attachments:
+                    payload["attachments"] = attachments
+
                 resp = await client.post(
                     self.API_URL,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "from": self.from_email,
-                        "to": [to_email],
-                        "subject": report["subject"],
-                        "text": report["body"],
-                    },
+                    json=payload,
                 )
 
                 if resp.status_code in (200, 201):
