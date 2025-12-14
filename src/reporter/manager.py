@@ -29,6 +29,21 @@ class ReportManager:
     in database, and provides evidence packaging.
     """
 
+    # Guardrails for repeated rate limiting to avoid endless churn.
+    MAX_RATE_LIMIT_ATTEMPTS: int = 6
+    MAX_RATE_LIMIT_BACKOFF_SECONDS: int = 6 * 60 * 60  # 6 hours
+
+    @classmethod
+    def _compute_rate_limit_backoff(cls, base_seconds: int, attempts: int) -> int:
+        """
+        Compute an exponential backoff (capped) for rate-limited retries.
+
+        attempts should be the *next* attempts count after the status update.
+        """
+        base = max(30, int(base_seconds or 60))
+        exponent = min(max(0, int(attempts) - 1), 6)
+        return min(base * (2**exponent), cls.MAX_RATE_LIMIT_BACKOFF_SECONDS)
+
     @staticmethod
     def _ensure_url(target: str) -> str:
         """Ensure a scheme is present so urlparse works predictably."""
@@ -195,8 +210,42 @@ class ReportManager:
 
                 limiter = get_rate_limiter(platform, reporter.rate_limit_per_minute)
                 if not await limiter.acquire(timeout=5):
-                    retry_after = max(30, int(limiter.wait_time() or 60))
-                    msg = f"Rate limit exceeded; retry scheduled in {retry_after}s"
+                    current_attempts = int(row.get("attempts") or 0)
+                    next_attempts = current_attempts + 1
+                    base_retry_after = max(30, int(limiter.wait_time() or 60))
+
+                    if next_attempts > self.MAX_RATE_LIMIT_ATTEMPTS:
+                        platform_url = (getattr(reporter, "platform_url", "") or "").strip()
+                        url_line = f"\n\nManual URL: {platform_url}" if platform_url else ""
+                        msg = (
+                            f"Rate limit persisted after {current_attempts} attempts; pausing retries.{url_line}\n\n"
+                            f"URL: {evidence.url}"
+                        )
+                        result = ReportResult(
+                            platform=platform,
+                            status=ReportStatus.MANUAL_REQUIRED,
+                            report_id=str(report_id),
+                            message=msg,
+                            response_data={"domain_id": domain_id, "domain": domain},
+                        )
+                        attempted.append(result)
+                        try:
+                            content = self._build_manual_instructions_text(platform, evidence, result)
+                            await self.evidence_store.save_report_instructions(domain, platform, content)
+                        except Exception as e:
+                            logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
+                        await self.database.update_report(
+                            report_id=report_id,
+                            status=result.status.value,
+                            response=result.message,
+                        )
+                        continue
+
+                    retry_after = self._compute_rate_limit_backoff(base_retry_after, next_attempts)
+                    msg = (
+                        f"Rate limit exceeded; retry scheduled in {retry_after}s "
+                        f"(attempt {next_attempts}/{self.MAX_RATE_LIMIT_ATTEMPTS})"
+                    )
                     result = ReportResult(
                         platform=platform,
                         status=ReportStatus.RATE_LIMITED,
@@ -215,6 +264,34 @@ class ReportManager:
                     continue
 
                 result = await reporter.submit(evidence)
+                if result.status == ReportStatus.RATE_LIMITED:
+                    current_attempts = int(row.get("attempts") or 0)
+                    next_attempts = current_attempts + 1
+                    base_retry_after = int(result.retry_after or 60)
+
+                    if next_attempts > self.MAX_RATE_LIMIT_ATTEMPTS:
+                        platform_url = (getattr(reporter, "platform_url", "") or "").strip()
+                        url_line = f"\n\nManual URL: {platform_url}" if platform_url else ""
+                        msg = (
+                            f"Rate limited by platform after {current_attempts} attempts; pausing retries.{url_line}\n\n"
+                            f"URL: {evidence.url}"
+                        )
+                        result = ReportResult(
+                            platform=platform,
+                            status=ReportStatus.MANUAL_REQUIRED,
+                            report_id=str(report_id),
+                            message=msg,
+                            response_data={"domain_id": domain_id, "domain": domain},
+                        )
+                    else:
+                        retry_after = self._compute_rate_limit_backoff(base_retry_after, next_attempts)
+                        result.retry_after = retry_after
+                        base_msg = (result.message or "Rate limited").strip()
+                        result.message = (
+                            f"{base_msg}; retry scheduled in {retry_after}s "
+                            f"(attempt {next_attempts}/{self.MAX_RATE_LIMIT_ATTEMPTS})"
+                        )
+
                 result.report_id = str(report_id)
                 metadata = {"domain_id": domain_id, "domain": domain}
                 if result.response_data is None:
@@ -627,17 +704,52 @@ class ReportManager:
             )
 
             if not await limiter.acquire(timeout=30):
-                retry_after = max(30, int(limiter.wait_time() or 60))
-                msg = f"Rate limit exceeded; retry scheduled in {retry_after}s"
+                base_retry_after = max(30, int(limiter.wait_time() or 60))
 
                 # Create or reuse a report record so the retry worker can pick it up.
                 report_row_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed", "skipped"} else 0
+                current_attempts = int(latest.get("attempts") or 0) if report_row_id and latest and int(latest["id"]) == report_row_id else 0
                 if not report_row_id:
                     report_row_id = await self.database.add_report(
                         domain_id=domain_id,
                         platform=platform,
                         status=ReportStatus.RATE_LIMITED.value,
                     )
+                    current_attempts = 0
+
+                next_attempts = current_attempts + 1
+                if next_attempts > self.MAX_RATE_LIMIT_ATTEMPTS:
+                    platform_url = (getattr(reporter, "platform_url", "") or "").strip()
+                    url_line = f"\n\nManual URL: {platform_url}" if platform_url else ""
+                    msg = (
+                        f"Rate limit persisted after {current_attempts} attempts; pausing retries.{url_line}\n\n"
+                        f"URL: {evidence.url}"
+                    )
+                    result = ReportResult(
+                        platform=platform,
+                        status=ReportStatus.MANUAL_REQUIRED,
+                        report_id=str(report_row_id),
+                        message=msg,
+                    )
+                    results[platform] = result
+                    try:
+                        content = self._build_manual_instructions_text(platform, evidence, result)
+                        await self.evidence_store.save_report_instructions(domain, platform, content)
+                    except Exception as e:
+                        logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
+                    await self.database.update_report(
+                        report_id=report_row_id,
+                        status=result.status.value,
+                        response=result.message,
+                    )
+                    continue
+
+                retry_after = self._compute_rate_limit_backoff(base_retry_after, next_attempts)
+                msg = (
+                    f"Rate limit exceeded; retry scheduled in {retry_after}s "
+                    f"(attempt {next_attempts}/{self.MAX_RATE_LIMIT_ATTEMPTS})"
+                )
+
                 await self.database.update_report(
                     report_id=report_row_id,
                     status=ReportStatus.RATE_LIMITED.value,
@@ -663,9 +775,37 @@ class ReportManager:
                         platform=platform,
                         status="pending",
                     )
+                    current_attempts = 0
+                else:
+                    current_attempts = int(latest.get("attempts") or 0) if latest and int(latest["id"]) == report_id else 0
 
                 # Submit report
                 result = await reporter.submit(evidence)
+
+                if result.status == ReportStatus.RATE_LIMITED:
+                    next_attempts = current_attempts + 1
+                    base_retry_after = int(result.retry_after or 60)
+                    if next_attempts > self.MAX_RATE_LIMIT_ATTEMPTS:
+                        platform_url = (getattr(reporter, "platform_url", "") or "").strip()
+                        url_line = f"\n\nManual URL: {platform_url}" if platform_url else ""
+                        msg = (
+                            f"Rate limited by platform after {current_attempts} attempts; pausing retries.{url_line}\n\n"
+                            f"URL: {evidence.url}"
+                        )
+                        result = ReportResult(
+                            platform=platform,
+                            status=ReportStatus.MANUAL_REQUIRED,
+                            message=msg,
+                        )
+                    else:
+                        retry_after = self._compute_rate_limit_backoff(base_retry_after, next_attempts)
+                        result.retry_after = retry_after
+                        base_msg = (result.message or "Rate limited").strip()
+                        result.message = (
+                            f"{base_msg}; retry scheduled in {retry_after}s "
+                            f"(attempt {next_attempts}/{self.MAX_RATE_LIMIT_ATTEMPTS})"
+                        )
+
                 result.report_id = str(report_id)
                 results[platform] = result
 

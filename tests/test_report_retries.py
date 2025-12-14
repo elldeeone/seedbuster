@@ -43,6 +43,27 @@ class _FakeReporter(BaseReporter):
         )
 
 
+class _AlwaysRateLimitedReporter(BaseReporter):
+    platform_name = "limited"
+    platform_url = "https://platform.example/report"
+    rate_limit_per_minute = 60
+
+    def __init__(self, *, retry_after: int = 60):
+        super().__init__()
+        self._configured = True
+        self._retry_after = retry_after
+        self.calls: int = 0
+
+    async def submit(self, evidence) -> ReportResult:  # noqa: ANN001
+        self.calls += 1
+        return ReportResult(
+            platform=self.platform_name,
+            status=ReportStatus.RATE_LIMITED,
+            message="429",
+            retry_after=self._retry_after,
+        )
+
+
 @pytest.mark.asyncio
 async def test_database_connect_migrates_old_reports_schema(tmp_path: Path):
     db_path = tmp_path / "seedbuster.db"
@@ -216,4 +237,111 @@ async def test_report_manager_ensure_pending_reports_creates_rows_once(tmp_path:
     rows = await db.get_reports_for_domain(domain_id)
     assert len(rows) == 1
 
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_due_reports_exponential_backoff_increases_retry_after(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    domain = "example.com"
+    domain_id = await db.add_domain(domain=domain, source="manual", domain_score=10)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    reporter = _AlwaysRateLimitedReporter(retry_after=60)
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["limited"])
+    manager.reporters = {"limited": reporter}
+
+    report_id = await db.add_report(
+        domain_id=domain_id,
+        platform="limited",
+        status=ReportStatus.RATE_LIMITED.value,
+    )
+
+    def fake_get_rate_limiter(*args, **kwargs):  # noqa: ANN001, ARG001
+        return _FakeLimiter(can_acquire=True, wait_seconds=1)
+
+    monkeypatch.setattr("src.reporter.manager.get_rate_limiter", fake_get_rate_limiter)
+
+    expected_retry_afters = [60, 120, 240]
+    for attempt_number, expected in enumerate(expected_retry_afters, start=1):
+        retry_results = await manager.retry_due_reports(limit=10)
+        assert len(retry_results) == 1
+        assert retry_results[0].status == ReportStatus.RATE_LIMITED
+        assert retry_results[0].retry_after == expected
+
+        row = await db.get_latest_report(domain_id=domain_id, platform="limited")
+        assert row is not None
+        assert int(row["id"]) == report_id
+        assert int(row.get("attempts") or 0) == attempt_number
+        assert int(row.get("retry_after") or 0) == expected
+
+        # Force the report due again without bumping attempts.
+        async with db._lock:
+            await db._connection.execute(
+                "UPDATE reports SET next_attempt_at = '2000-01-01 00:00:00' WHERE id = ?",
+                (report_id,),
+            )
+            await db._connection.commit()
+
+    assert reporter.calls == len(expected_retry_afters)
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_due_reports_flips_to_manual_required_after_max_attempts(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    domain = "example.com"
+    domain_id = await db.add_domain(domain=domain, source="manual", domain_score=10)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    reporter = _AlwaysRateLimitedReporter(retry_after=60)
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["limited"])
+    manager.reporters = {"limited": reporter}
+
+    report_id = await db.add_report(
+        domain_id=domain_id,
+        platform="limited",
+        status=ReportStatus.RATE_LIMITED.value,
+    )
+
+    def fake_get_rate_limiter(*args, **kwargs):  # noqa: ANN001, ARG001
+        return _FakeLimiter(can_acquire=True, wait_seconds=1)
+
+    monkeypatch.setattr("src.reporter.manager.get_rate_limiter", fake_get_rate_limiter)
+
+    # Retry until the manager gives up and switches to manual_required.
+    for _ in range(ReportManager.MAX_RATE_LIMIT_ATTEMPTS):
+        retry_results = await manager.retry_due_reports(limit=10)
+        assert len(retry_results) == 1
+        assert retry_results[0].status == ReportStatus.RATE_LIMITED
+
+        async with db._lock:
+            await db._connection.execute(
+                "UPDATE reports SET next_attempt_at = '2000-01-01 00:00:00' WHERE id = ?",
+                (report_id,),
+            )
+            await db._connection.commit()
+
+    final_results = await manager.retry_due_reports(limit=10)
+    assert len(final_results) == 1
+    assert final_results[0].status == ReportStatus.MANUAL_REQUIRED
+
+    row = await db.get_latest_report(domain_id=domain_id, platform="limited")
+    assert row is not None
+    assert str(row.get("status") or "").lower() == ReportStatus.MANUAL_REQUIRED.value
+    assert row.get("next_attempt_at") is None
+
+    instruction_path = store.get_report_instructions_path(domain, "limited")
+    assert instruction_path.exists()
+    content = instruction_path.read_text(encoding="utf-8")
+    assert "SeedBuster Manual Report Instructions" in content
+    assert "Manual URL: https://platform.example/report" in content
+
+    assert reporter.calls == ReportManager.MAX_RATE_LIMIT_ATTEMPTS + 1
     await db.close()
