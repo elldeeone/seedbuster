@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from PIL import Image
 import imagehash
@@ -373,28 +374,64 @@ class PhishingDetector:
         """Detect data exfiltration patterns using threat intel."""
         score = 0
         reasons = []
-        suspicious = []
+        suspicious: list[str] = []
+        seen_suspicious: set[str] = set()
         intel = self._threat_intel
+        target_host = ""
+        try:
+            target_url = result.domain if "://" in result.domain else f"https://{result.domain}"
+            target_host = (urlparse(target_url).hostname or "").lower()
+        except Exception:
+            target_host = ""
+
+        def add_suspicious(value: str) -> None:
+            v = (value or "").strip()
+            if not v or v in seen_suspicious:
+                return
+            seen_suspicious.add(v)
+            suspicious.append(v)
 
         # Check form submissions to external domains
         for submission in result.form_submissions:
-            url = submission.get("url", "")
-            if result.domain not in url:
-                # Check against threat intel for known malicious
-                is_known, indicator = intel.is_known_malicious(url)
-                if is_known:
-                    score += 50  # Higher score for known bad actors
-                    reasons.append(f"KNOWN MALICIOUS: {indicator.value[:50]} ({indicator.confidence})")
-                else:
-                    score += 30
-                    reasons.append(f"Form submits to external: {url[:50]}")
-                suspicious.append(url)
+            url = (submission.get("url") or "").strip()
+            if not url:
+                continue
 
-                # Check for malicious URL patterns
-                pattern_matches = intel.check_malicious_patterns(url)
-                for match in pattern_matches:
-                    score += 15
-                    reasons.append(f"Malicious URL pattern: {match.value}")
+            submission_host = ""
+            try:
+                submission_host = (urlparse(url).hostname or "").lower()
+            except Exception:
+                submission_host = ""
+
+            # Always check for malicious URL patterns (even if posting to same host).
+            pattern_matches = intel.check_malicious_patterns(url)
+            for match in pattern_matches:
+                score += 15
+                reasons.append(f"Malicious URL pattern: {match.value}")
+                add_suspicious(url)
+
+            # Only treat as external exfil if hostname differs from the target.
+            is_external = False
+            if submission_host and target_host:
+                is_external = submission_host != target_host
+            elif submission_host and not target_host:
+                is_external = submission_host not in (result.domain.split("/")[0].lower(), "")
+            else:
+                # Fallback for odd URLs: best-effort substring check.
+                is_external = result.domain not in url
+
+            if not is_external:
+                continue
+
+            # Check against threat intel for known malicious
+            is_known, indicator = intel.is_known_malicious(url)
+            if is_known:
+                score += 50  # Higher score for known bad actors
+                reasons.append(f"KNOWN MALICIOUS: {indicator.value[:50]} ({indicator.confidence})")
+            else:
+                score += 30
+                reasons.append(f"Form submits to external: {url[:50]}")
+            add_suspicious(url)
 
         # Check external requests against threat intel
         antibot_matches = intel.check_antibot_services(result.external_requests)
@@ -419,7 +456,7 @@ class PhishingDetector:
             is_known, indicator = intel.is_known_malicious(ext)
             if is_known:
                 score += 40
-                suspicious.append(ext)
+                add_suspicious(ext)
                 reasons.append(f"KNOWN MALICIOUS domain: {indicator.value[:50]}")
                 continue
 
@@ -427,7 +464,7 @@ class PhishingDetector:
             hosting_matches = intel.check_suspicious_hosting(ext)
             for match in hosting_matches:
                 score += match.score_modifier
-                suspicious.append(ext)
+                add_suspicious(ext)
                 reasons.append(f"Suspicious hosting: {ext[:50]}")
                 break  # Only count once per domain
 
@@ -449,7 +486,7 @@ class PhishingDetector:
             for indicator in intel.malicious_domains:
                 if indicator.value in result.html:
                     score += 40
-                    suspicious.append(indicator.value)
+                    add_suspicious(indicator.value)
                     reasons.append(f"Malicious endpoint in code: {indicator.value[:50]}")
 
             # Check for malicious URL patterns in code

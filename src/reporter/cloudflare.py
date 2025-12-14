@@ -34,25 +34,19 @@ class CloudflareReporter(BaseReporter):
         self.reporter_email = reporter_email
         self._configured = True  # Always available
 
-    async def _get_csrf_token(self, client: httpx.AsyncClient) -> Optional[str]:
-        """Fetch CSRF token from the abuse form page."""
-        try:
-            resp = await client.get(self.ABUSE_FORM_URL)
-            if resp.status_code == 200:
-                # Look for CSRF token in response
-                # Pattern varies, try common ones
-                patterns = [
-                    r'name="csrf_token"\s+value="([^"]+)"',
-                    r'name="_csrf"\s+value="([^"]+)"',
-                    r'"csrfToken":\s*"([^"]+)"',
-                    r'data-csrf="([^"]+)"',
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, resp.text)
-                    if match:
-                        return match.group(1)
-        except Exception as e:
-            logger.warning(f"Failed to get CSRF token: {e}")
+    @staticmethod
+    def _extract_csrf_token_from_html(html: str) -> Optional[str]:
+        """Extract CSRF token from Cloudflare abuse form HTML."""
+        patterns = [
+            r'name="csrf_token"\s+value="([^"]+)"',
+            r'name="_csrf"\s+value="([^"]+)"',
+            r'"csrfToken":\s*"([^"]+)"',
+            r'data-csrf="([^"]+)"',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html or "")
+            if match:
+                return match.group(1)
         return None
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
@@ -86,8 +80,24 @@ class CloudflareReporter(BaseReporter):
             },
         ) as client:
             try:
-                # Try to get CSRF token first
-                csrf_token = await self._get_csrf_token(client)
+                # Load the form page and detect challenges/CAPTCHA.
+                form_resp = await client.get(self.ABUSE_FORM_URL)
+                if form_resp.status_code != 200:
+                    return ReportResult(
+                        platform=self.platform_name,
+                        status=ReportStatus.PENDING,
+                        message=f"Manual submission required: {self.ABUSE_FORM_URL}",
+                    )
+
+                page_lower = (form_resp.text or "").lower()
+                if any(token in page_lower for token in ("cf-turnstile", "turnstile", "captcha", "cf-challenge")):
+                    return ReportResult(
+                        platform=self.platform_name,
+                        status=ReportStatus.PENDING,
+                        message=f"Manual submission required (CAPTCHA): {self.ABUSE_FORM_URL}",
+                    )
+
+                csrf_token = self._extract_csrf_token_from_html(form_resp.text)
 
                 # Prepare form data
                 form_data = {
@@ -135,11 +145,11 @@ class CloudflareReporter(BaseReporter):
                             message="Cloudflare returned an error",
                         )
                     else:
-                        # Assume success if we got a 200/302
+                        # Don't assume success if we can't confirm.
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.SUBMITTED,
-                            message="Submitted to Cloudflare (response unclear)",
+                            status=ReportStatus.PENDING,
+                            message=f"Submission not confirmed; manual submission recommended: {self.ABUSE_FORM_URL}",
                         )
 
                 elif resp.status_code == 429:
@@ -171,6 +181,6 @@ class CloudflareReporter(BaseReporter):
                 logger.exception("Cloudflare submission error")
                 return ReportResult(
                     platform=self.platform_name,
-                    status=ReportStatus.FAILED,
-                    message=f"Submission failed: {e}",
+                    status=ReportStatus.PENDING,
+                    message=f"Auto-submit failed: {e}. Manual: {self.ABUSE_FORM_URL}",
                 )

@@ -4,6 +4,7 @@ import asyncio
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timedelta
 
 import aiosqlite
 
@@ -54,49 +55,96 @@ class Database:
         async with self._lock:
             await self._connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS domains (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT UNIQUE NOT NULL,
-                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    source TEXT DEFAULT 'certstream',
-                    domain_score INTEGER DEFAULT 0,
-                    analysis_score INTEGER,
-                    verdict TEXT,
-                    verdict_reasons TEXT,
-                    status TEXT DEFAULT 'pending',
-                    analyzed_at TIMESTAMP,
-                    reported_at TIMESTAMP,
-                    evidence_path TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
+                    CREATE TABLE IF NOT EXISTS domains (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain TEXT UNIQUE NOT NULL,
+                        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        source TEXT DEFAULT 'certstream',
+                        domain_score INTEGER DEFAULT 0,
+                        analysis_score INTEGER,
+                        verdict TEXT,
+                        verdict_reasons TEXT,
+                        status TEXT DEFAULT 'pending',
+                        analyzed_at TIMESTAMP,
+                        reported_at TIMESTAMP,
+                        evidence_path TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
 
-                CREATE TABLE IF NOT EXISTS evidence (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain_id INTEGER NOT NULL,
-                    type TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    hash TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (domain_id) REFERENCES domains(id)
-                );
+                    CREATE TABLE IF NOT EXISTS evidence (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain_id INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        hash TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (domain_id) REFERENCES domains(id)
+                    );
 
-                CREATE TABLE IF NOT EXISTS reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain_id INTEGER NOT NULL,
-                    platform TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    submitted_at TIMESTAMP,
-                    response TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (domain_id) REFERENCES domains(id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);
-                CREATE INDEX IF NOT EXISTS idx_domains_verdict ON domains(verdict);
-                CREATE INDEX IF NOT EXISTS idx_domains_domain ON domains(domain);
-            """
+                    CREATE TABLE IF NOT EXISTS reports (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain_id INTEGER NOT NULL,
+                        platform TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        attempted_at TIMESTAMP,
+                        submitted_at TIMESTAMP,
+                        response TEXT,
+                        attempts INTEGER DEFAULT 0,
+                        retry_after INTEGER,
+                        next_attempt_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (domain_id) REFERENCES domains(id)
+                    );
+                """
             )
+            await self._connection.commit()
+
+            # Migrations must run before creating indexes that reference newer columns,
+            # otherwise existing DBs on older schemas would fail to start up.
+            await self._migrate_reports_table()
+            await self._create_indexes()
+
+    async def _create_indexes(self) -> None:
+        """Create indexes (best-effort, safe for older DBs)."""
+        statements = [
+            "CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status)",
+            "CREATE INDEX IF NOT EXISTS idx_domains_verdict ON domains(verdict)",
+            "CREATE INDEX IF NOT EXISTS idx_domains_domain ON domains(domain)",
+            "CREATE INDEX IF NOT EXISTS idx_reports_domain_platform ON reports(domain_id, platform)",
+            "CREATE INDEX IF NOT EXISTS idx_reports_status_next_attempt ON reports(status, next_attempt_at)",
+        ]
+
+        for stmt in statements:
+            try:
+                await self._connection.execute(stmt)
+            except Exception:
+                continue
+        await self._connection.commit()
+
+    async def _migrate_reports_table(self) -> None:
+        """Add columns to reports table for retry scheduling (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(reports)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+
+        migrations: list[str] = []
+        if "attempted_at" not in existing:
+            migrations.append("ALTER TABLE reports ADD COLUMN attempted_at TIMESTAMP")
+        if "attempts" not in existing:
+            migrations.append("ALTER TABLE reports ADD COLUMN attempts INTEGER DEFAULT 0")
+        if "retry_after" not in existing:
+            migrations.append("ALTER TABLE reports ADD COLUMN retry_after INTEGER")
+        if "next_attempt_at" not in existing:
+            migrations.append("ALTER TABLE reports ADD COLUMN next_attempt_at TIMESTAMP")
+
+        for stmt in migrations:
+            try:
+                await self._connection.execute(stmt)
+            except Exception:
+                # If multiple processes raced or SQLite rejects the statement, continue.
+                continue
+        if migrations:
             await self._connection.commit()
 
     async def add_domain(
@@ -357,18 +405,57 @@ class Database:
         report_id: int,
         status: str,
         response: str = None,
+        retry_after: int | None = None,
+        next_attempt_at: str | None = None,
     ):
         """Update report status."""
+        status_lower = (status or "").strip().lower()
+
+        success_statuses = {"submitted", "confirmed", "duplicate"}
+        set_submitted_at = status_lower in success_statuses
+
+        if status_lower == "rate_limited":
+            if retry_after is None:
+                retry_after = 60
+            if next_attempt_at is None:
+                # Store in a SQLite-friendly format so comparisons with CURRENT_TIMESTAMP
+                # behave as expected ("YYYY-MM-DD HH:MM:SS").
+                next_attempt_at = (datetime.utcnow() + timedelta(seconds=int(retry_after))).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
         async with self._lock:
             await self._connection.execute(
                 """
                 UPDATE reports
                 SET status = ?,
                     response = ?,
-                    submitted_at = CURRENT_TIMESTAMP
+                    attempted_at = CURRENT_TIMESTAMP,
+                    submitted_at = CASE
+                        WHEN ? THEN CURRENT_TIMESTAMP
+                        ELSE submitted_at
+                    END,
+                    attempts = COALESCE(attempts, 0) + 1,
+                    retry_after = CASE
+                        WHEN ? THEN ?
+                        ELSE NULL
+                    END,
+                    next_attempt_at = CASE
+                        WHEN ? THEN ?
+                        ELSE NULL
+                    END
                 WHERE id = ?
                 """,
-                (status, response, report_id),
+                (
+                    status,
+                    response,
+                    1 if set_submitted_at else 0,
+                    1 if status_lower == "rate_limited" else 0,
+                    int(retry_after) if retry_after is not None else None,
+                    1 if status_lower == "rate_limited" else 0,
+                    next_attempt_at,
+                    report_id,
+                ),
             )
             await self._connection.commit()
 
@@ -379,9 +466,46 @@ class Database:
                 """
                 SELECT * FROM reports
                 WHERE domain_id = ?
-                ORDER BY submitted_at DESC
+                ORDER BY COALESCE(attempted_at, submitted_at, created_at) DESC
                 """,
                 (domain_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_latest_report(self, domain_id: int, platform: str) -> Optional[dict]:
+        """Get most recent report row for (domain_id, platform)."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT * FROM reports
+                WHERE domain_id = ? AND platform = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (domain_id, platform),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_due_retry_reports(self, limit: int = 20) -> list[dict]:
+        """Get rate-limited reports that are due for retry."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT r.*, d.domain as domain
+                FROM reports r
+                JOIN domains d ON r.domain_id = d.id
+                WHERE r.status = 'rate_limited'
+                  AND (
+                        r.next_attempt_at IS NULL
+                        OR datetime(r.next_attempt_at) <= CURRENT_TIMESTAMP
+                        OR datetime(r.next_attempt_at) IS NULL
+                      )
+                ORDER BY COALESCE(datetime(r.next_attempt_at), r.attempted_at, r.created_at) ASC
+                LIMIT ?
+                """,
+                (limit,),
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

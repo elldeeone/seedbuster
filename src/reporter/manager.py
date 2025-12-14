@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import urlparse
 
 from .base import (
     BaseReporter,
@@ -27,6 +28,184 @@ class ReportManager:
     Coordinates reporters, handles rate limiting, tracks report status
     in database, and provides evidence packaging.
     """
+
+    @staticmethod
+    def _ensure_url(target: str) -> str:
+        """Ensure a scheme is present so urlparse works predictably."""
+        value = (target or "").strip()
+        if not value:
+            return ""
+        if value.startswith(("http://", "https://")):
+            return value
+        return f"https://{value}"
+
+    @classmethod
+    def _extract_hostname(cls, target: str) -> str:
+        """Extract hostname from a target that may include path/query/fragment."""
+        parsed = urlparse(cls._ensure_url(target))
+        return (parsed.hostname or "").strip().lower()
+
+    @classmethod
+    def _extract_hostnames_from_endpoints(cls, endpoints: list[object]) -> list[str]:
+        """Extract unique hostnames from a list of URL-ish strings."""
+        seen: set[str] = set()
+        hosts: list[str] = []
+        for item in endpoints or []:
+            if not isinstance(item, str):
+                continue
+            raw = item.strip()
+            if not raw:
+                continue
+            host = cls._extract_hostname(raw)
+            if not host:
+                continue
+            if host in seen:
+                continue
+            seen.add(host)
+            hosts.append(host)
+        return hosts
+
+    @staticmethod
+    def _extract_api_key_indicators(reasons: list[object]) -> list[str]:
+        """Extract API-key related indicators from reasons for reporting context."""
+        found: list[str] = []
+        seen: set[str] = set()
+        for reason in reasons or []:
+            if not isinstance(reason, str):
+                continue
+            lower = reason.lower()
+            if "api key" not in lower and "apikey" not in lower:
+                continue
+            entry = reason.strip()
+            if not entry or entry in seen:
+                continue
+            seen.add(entry)
+            found.append(entry)
+        return found
+
+    @staticmethod
+    def _is_timestamp_due(timestamp: str | None) -> bool:
+        """Return True if a timestamp is missing or not in the future."""
+        if not timestamp:
+            return True
+        value = timestamp.strip()
+        if not value:
+            return True
+        try:
+            # SQLite may store either "YYYY-MM-DD HH:MM:SS" or ISO strings.
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return True
+        # Compare naive timestamps in UTC-ish space (best-effort).
+        if dt.tzinfo is None:
+            return dt <= datetime.utcnow()
+        return dt <= datetime.now(dt.tzinfo)
+
+    async def retry_due_reports(self, *, limit: int = 20) -> list[ReportResult]:
+        """
+        Retry rate-limited reports that are due.
+
+        This only retries reports in `rate_limited` status whose `next_attempt_at`
+        is due (or missing). Manual-required (`pending`) reports are not retried.
+        """
+        due = await self.database.get_due_retry_reports(limit=limit)
+        if not due:
+            return []
+
+        attempted: list[ReportResult] = []
+
+        for row in due:
+            try:
+                report_id = int(row["id"])
+                domain_id = int(row["domain_id"])
+                platform = str(row.get("platform") or "").strip().lower()
+                domain = str(row.get("domain") or "").strip()
+
+                reporter = self.reporters.get(platform)
+                if not reporter or not reporter.is_configured():
+                    result = ReportResult(
+                        platform=platform or "unknown",
+                        status=ReportStatus.FAILED,
+                        report_id=str(report_id),
+                        message="Reporter not configured",
+                    )
+                    attempted.append(result)
+                    await self.database.update_report(
+                        report_id=report_id,
+                        status=result.status.value,
+                        response=result.message,
+                    )
+                    continue
+
+                # Respect enabled_platforms selection.
+                if self.enabled_platforms is not None and platform not in self.enabled_platforms:
+                    continue
+
+                evidence = await self.build_evidence(domain_id=domain_id, domain=domain)
+                if not evidence:
+                    result = ReportResult(
+                        platform=platform,
+                        status=ReportStatus.FAILED,
+                        report_id=str(report_id),
+                        message="Could not build evidence",
+                    )
+                    attempted.append(result)
+                    await self.database.update_report(
+                        report_id=report_id,
+                        status=result.status.value,
+                        response=result.message,
+                    )
+                    continue
+
+                limiter = get_rate_limiter(platform, reporter.rate_limit_per_minute)
+                if not await limiter.acquire(timeout=5):
+                    retry_after = max(30, int(limiter.wait_time() or 60))
+                    msg = f"Rate limit exceeded; retry scheduled in {retry_after}s"
+                    result = ReportResult(
+                        platform=platform,
+                        status=ReportStatus.RATE_LIMITED,
+                        report_id=str(report_id),
+                        message=msg,
+                        retry_after=retry_after,
+                    )
+                    attempted.append(result)
+                    await self.database.update_report(
+                        report_id=report_id,
+                        status=result.status.value,
+                        response=result.message,
+                        retry_after=retry_after,
+                    )
+                    continue
+
+                result = await reporter.submit(evidence)
+                result.report_id = str(report_id)
+                attempted.append(result)
+
+                await self.database.update_report(
+                    report_id=report_id,
+                    status=result.status.value,
+                    response=result.message,
+                    retry_after=result.retry_after,
+                )
+
+                await self._mark_domain_reported_if_needed(domain_id, {platform: result})
+
+            except Exception as e:
+                logger.exception("Retry reporting failed")
+                # Best-effort: keep report in rate_limited so it can be retried.
+                try:
+                    report_id = int(row.get("id") or 0)
+                    if report_id:
+                        await self.database.update_report(
+                            report_id=report_id,
+                            status=ReportStatus.RATE_LIMITED.value,
+                            response=f"Retry worker error: {e}",
+                            retry_after=300,
+                        )
+                except Exception:
+                    pass
+
+        return attempted
 
     def __init__(
         self,
@@ -158,22 +337,53 @@ class ReportManager:
             detection_reasons = [r.strip() for r in verdict_reasons.splitlines() if r.strip()]
 
         # Build evidence
+        target = (domain or "").strip()
+        hostname = self._extract_hostname(target) or target.lower()
+
+        # Prefer the final URL from analysis if available (may include redirects to kit path).
+        final_url = (analysis_json.get("final_url") or "").strip()
+        report_url = final_url or self._ensure_url(target)
+
+        suspicious_endpoints = analysis_json.get("suspicious_endpoints", []) or []
+
+        backend_domains = analysis_json.get("backend_domains")
+        if not backend_domains:
+            backend_domains = self._extract_hostnames_from_endpoints(suspicious_endpoints)
+
+        api_keys_found = analysis_json.get("api_keys_found")
+        if not api_keys_found:
+            api_keys_found = self._extract_api_key_indicators(detection_reasons)
+
+        hosting_provider = analysis_json.get("hosting_provider")
+        if not hosting_provider:
+            hosting_provider = (analysis_json.get("infrastructure") or {}).get("hosting_provider")
+
+        # Choose the best available screenshot for reports (seed form > suspicious exploration > early > main).
+        screenshot_path = None
+        try:
+            shots = self.evidence_store.get_all_screenshot_paths(domain)
+            screenshot_path = shots[0] if shots else None
+        except Exception:
+            screenshot_path = None
+        if not screenshot_path:
+            screenshot_path = self.evidence_store.get_screenshot_path(domain)
+
         evidence = ReportEvidence(
-            domain=domain,
-            url=f"https://{domain}",
+            domain=hostname,
+            url=report_url,
             detected_at=datetime.fromisoformat(
                 domain_data.get("first_seen", datetime.now().isoformat())
             ),
             confidence_score=domain_data.get("analysis_score", 0),
             detection_reasons=detection_reasons,
-            suspicious_endpoints=analysis_json.get("suspicious_endpoints", []),
-            screenshot_path=self.evidence_store.get_screenshot_path(domain),
+            suspicious_endpoints=suspicious_endpoints,
+            screenshot_path=screenshot_path,
             html_path=evidence_dir / "page.html" if evidence_dir else None,
             analysis_path=analysis_path,
             analysis_json=analysis_json,
-            backend_domains=analysis_json.get("backend_domains", []),
-            api_keys_found=analysis_json.get("api_keys_found", []),
-            hosting_provider=analysis_json.get("hosting_provider"),
+            backend_domains=backend_domains,
+            api_keys_found=api_keys_found,
+            hosting_provider=hosting_provider,
         )
 
         return evidence
@@ -230,6 +440,40 @@ class ReportManager:
         for platform in platforms:
             reporter = self.reporters[platform]
 
+            # Skip if not configured (should not happen if get_available_platforms is used).
+            if not reporter.is_configured():
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.FAILED,
+                    message="Reporter not configured",
+                )
+                continue
+
+            latest = await self.database.get_latest_report(domain_id=domain_id, platform=platform)
+            latest_status = (latest.get("status") if latest else "") or ""
+            latest_status_lower = str(latest_status).strip().lower()
+            next_attempt_at = (latest.get("next_attempt_at") if latest else None)
+
+            # Dedupe: don't re-submit if we already have a successful record.
+            if latest_status_lower in {"submitted", "confirmed", "duplicate"}:
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.DUPLICATE,
+                    report_id=str(latest.get("id")) if latest else None,
+                    message=f"Already reported ({latest_status_lower})",
+                )
+                continue
+
+            # Respect retry schedule for rate-limited reports.
+            if latest_status_lower == "rate_limited" and not self._is_timestamp_due(next_attempt_at):
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.RATE_LIMITED,
+                    report_id=str(latest.get("id")) if latest else None,
+                    message=f"Retry scheduled at {next_attempt_at}",
+                )
+                continue
+
             # Check rate limit
             limiter = get_rate_limiter(
                 platform,
@@ -237,21 +481,42 @@ class ReportManager:
             )
 
             if not await limiter.acquire(timeout=30):
+                retry_after = max(30, int(limiter.wait_time() or 60))
+                msg = f"Rate limit exceeded; retry scheduled in {retry_after}s"
+
+                # Create or reuse a report record so the retry worker can pick it up.
+                report_row_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed"} else 0
+                if not report_row_id:
+                    report_row_id = await self.database.add_report(
+                        domain_id=domain_id,
+                        platform=platform,
+                        status=ReportStatus.RATE_LIMITED.value,
+                    )
+                await self.database.update_report(
+                    report_id=report_row_id,
+                    status=ReportStatus.RATE_LIMITED.value,
+                    response=msg,
+                    retry_after=retry_after,
+                )
+
                 results[platform] = ReportResult(
                     platform=platform,
                     status=ReportStatus.RATE_LIMITED,
-                    message="Rate limit exceeded",
-                    retry_after=int(limiter.wait_time()),
+                    report_id=str(report_row_id),
+                    message=msg,
+                    retry_after=retry_after,
                 )
                 continue
 
             try:
-                # Create pending report in database
-                report_id = await self.database.add_report(
-                    domain_id=domain_id,
-                    platform=platform,
-                    status="pending",
-                )
+                # Create or reuse a report row for this platform.
+                report_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed"} else 0
+                if not report_id:
+                    report_id = await self.database.add_report(
+                        domain_id=domain_id,
+                        platform=platform,
+                        status="pending",
+                    )
 
                 # Submit report
                 result = await reporter.submit(evidence)
@@ -263,6 +528,7 @@ class ReportManager:
                     report_id=report_id,
                     status=result.status.value,
                     response=result.message,
+                    retry_after=result.retry_after,
                 )
 
                 logger.info(
@@ -348,7 +614,12 @@ class ReportManager:
 
             line = f"  {status_emoji} {platform}: {result.status.value}"
             if result.message:
-                line += f" - {result.message[:50]}"
+                msg = result.message.strip()
+                # Prefer to show manual URLs/instructions when automation is blocked.
+                max_len = 180 if (result.status == ReportStatus.PENDING or "http" in msg) else 80
+                if len(msg) > max_len:
+                    msg = msg[: max_len - 1] + "…"
+                line += f" - {msg}"
             lines.append(line)
 
         return "\n".join(lines)

@@ -218,6 +218,7 @@ class SeedBusterPipeline:
             asyncio.create_task(self._discovery_worker()),
             asyncio.create_task(self._analysis_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
+            asyncio.create_task(self._report_retry_worker()),
         ]
         if self.search_discovery:
             self._tasks.append(asyncio.create_task(self.search_discovery.run_loop()))
@@ -373,6 +374,34 @@ class SeedBusterPipeline:
             except Exception as e:
                 logger.error(f"Analysis worker error: {e}")
                 await asyncio.sleep(1)
+
+    async def _report_retry_worker(self):
+        """Retry rate-limited reports in the background."""
+        logger.info("Report retry worker started")
+
+        # Poll interval (seconds). Keep this conservative to avoid hammering web forms/APIs.
+        interval_seconds = 300
+
+        while self._running:
+            try:
+                # Best-effort retry; this only touches `rate_limited` reports that are due.
+                results = await self.report_manager.retry_due_reports(limit=20)
+                if results:
+                    # Log summary only; user can check `/report <id> status` for details.
+                    by_status: dict[str, int] = {}
+                    for r in results:
+                        by_status[r.status.value] = by_status.get(r.status.value, 0) + 1
+                    logger.info(f"Report retry pass: {by_status}")
+
+                await asyncio.sleep(interval_seconds)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Report retry worker error: {e}")
+                await asyncio.sleep(60)
+
+        logger.info("Report retry worker stopped")
 
     async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
         """Analyze a single domain."""
@@ -701,9 +730,40 @@ class SeedBusterPipeline:
                     # Convert verdict string to enum
                     verdict = Verdict(detection.verdict)
 
+                    # Derive reporting-friendly fields (also used by ReportManager fallbacks).
+                    hosting_provider = (
+                        infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else None
+                    )
+
+                    backend_domains: list[str] = []
+                    seen_backend_hosts: set[str] = set()
+                    for endpoint in detection.suspicious_endpoints or []:
+                        if not isinstance(endpoint, str):
+                            continue
+                        raw = endpoint.strip()
+                        if not raw:
+                            continue
+                        try:
+                            parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+                            host = (parsed.hostname or "").strip().lower()
+                        except Exception:
+                            host = ""
+                        if not host or host in seen_backend_hosts:
+                            continue
+                        seen_backend_hosts.add(host)
+                        backend_domains.append(host)
+
+                    api_keys_found = [
+                        r for r in (reasons or []) if isinstance(r, str) and ("api key" in r.lower() or "apikey" in r.lower())
+                    ]
+
                     # Save analysis results
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
+                        "final_url": getattr(browser_result, "final_url", None),
+                        "hosting_provider": hosting_provider,
+                        "backend_domains": backend_domains,
+                        "api_keys_found": api_keys_found,
                         "score": analysis_score,
                         "verdict": verdict.value,
                         "reasons": reasons,

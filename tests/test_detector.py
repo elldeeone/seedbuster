@@ -99,6 +99,17 @@ class TestPhishingDetector:
         assert detection.score >= 30
         assert len(detection.suspicious_endpoints) > 0
 
+    def test_internal_form_submission_pattern_is_detected(self, detector):
+        """Malicious submission paths should be detected even on the same host."""
+        result = make_browser_result(
+            domain="phish.example/wallet",
+            form_submissions=[{"url": "https://phish.example/api/form/submit", "method": "POST", "post_data": None}],
+        )
+        detection = detector.detect(result)
+        assert any("malicious url pattern" in r.lower() for r in detection.reasons)
+        assert not any("form submits to external" in r.lower() for r in detection.reasons)
+        assert any("/api/form/submit" in ep for ep in detection.suspicious_endpoints)
+
     def test_suspicious_title(self, detector):
         """Suspicious page titles should add to score."""
         result = make_browser_result(title="Kaspa Wallet Recovery")

@@ -71,6 +71,18 @@ class GoogleFormReporter(BaseReporter):
                         message=f"Could not load report form: {form_resp.status_code}",
                     )
 
+                # If the form requires CAPTCHA (common), fall back to manual submission.
+                page_lower = (form_resp.text or "").lower()
+                if any(token in page_lower for token in ("recaptcha", "g-recaptcha", "captcha", "turnstile")):
+                    return ReportResult(
+                        platform=self.platform_name,
+                        status=ReportStatus.PENDING,
+                        message=(
+                            "Manual submission required (CAPTCHA): "
+                            f"{self.REPORT_URL}\n\nCopy/paste details:\n{additional_info}"
+                        ),
+                    )
+
                 # Look for form action URL and any hidden fields
                 form_action = self.REPORT_URL
                 hidden_fields = {}
@@ -131,11 +143,14 @@ class GoogleFormReporter(BaseReporter):
                             message="Google returned an error",
                         )
                     else:
-                        # Assume success if we got a 200/302
+                        # Don't assume success if we can't confirm.
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.SUBMITTED,
-                            message="Submitted to Google (response unclear)",
+                            status=ReportStatus.PENDING,
+                            message=(
+                                "Submission not confirmed; manual submission recommended: "
+                                f"{self.REPORT_URL}"
+                            ),
                         )
 
                 elif resp.status_code == 429:

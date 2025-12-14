@@ -1,6 +1,7 @@
 """Telegram bot for SeedBuster interaction."""
 
 import logging
+import re
 from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..reporter.manager import ReportManager
+
+
+_URL_RE = re.compile(r"https?://\S+")
 
 
 class SeedBusterBot:
@@ -52,6 +56,62 @@ class SeedBusterBot:
         self._rescan_callback: Optional[Callable[[str], None]] = None
         self._reload_callback: Optional[Callable[[], str]] = None
         self._is_running = True
+
+    @staticmethod
+    def _extract_first_url(text: str) -> Optional[str]:
+        """Extract first URL from a block of text (best-effort)."""
+        if not text:
+            return None
+        match = _URL_RE.search(text)
+        if not match:
+            return None
+        return match.group(0).rstrip(").,]}>\"'")
+
+    def _format_report_status_message(self, domain: str, reports: list[dict]) -> str:
+        """Format report status lines with helpful retry/manual context."""
+        status_lines = [f"*Report Status for* `{domain}`:"]
+        for r in reports:
+            status = str(r.get("status") or "unknown").strip().lower()
+            platform = str(r.get("platform") or "unknown").strip()
+            status_emoji = {
+                "submitted": "✅",
+                "confirmed": "✅",
+                "pending": "⏳",
+                "failed": "❌",
+                "rate_limited": "⏱️",
+                "duplicate": "🔄",
+                "rejected": "🚫",
+            }.get(status, "❓")
+
+            report_id = r.get("id")
+            line = f"{status_emoji} {platform}: {status}"
+            if report_id:
+                line += f" (id {report_id})"
+
+            if status == "rate_limited":
+                next_attempt_at = (r.get("next_attempt_at") or "").strip()
+                if next_attempt_at:
+                    line += f" (next attempt: {next_attempt_at})"
+                else:
+                    retry_after = r.get("retry_after")
+                    if retry_after:
+                        line += f" (retry after: {retry_after}s)"
+
+            if status == "pending":
+                response = str(r.get("response") or "")
+                manual_url = self._extract_first_url(response)
+                if manual_url:
+                    line += f" (manual: {manual_url})"
+
+            if status in {"failed"} and r.get("response"):
+                response = str(r.get("response") or "").strip().replace("\n", " ")
+                if response:
+                    if len(response) > 120:
+                        response = response[:119] + "…"
+                    line += f" - {response}"
+
+            status_lines.append(line)
+        return "\n".join(status_lines)
 
     def set_queue_size_callback(self, callback: Callable[[], int]):
         """Set callback to get current queue size."""
@@ -801,22 +861,8 @@ class SeedBusterBot:
                     parse_mode=ParseMode.MARKDOWN,
                 )
             else:
-                status_lines = [f"*Report Status for* `{domain}`:\n"]
-                for r in reports:
-                    status_emoji = {
-                        "submitted": "✅",
-                        "confirmed": "✅",
-                        "pending": "⏳",
-                        "failed": "❌",
-                        "rate_limited": "⏱️",
-                        "duplicate": "🔄",
-                        "rejected": "🚫",
-                    }.get(r.get("status", ""), "❓")
-                    status_lines.append(
-                        f"{status_emoji} {r.get('platform', 'unknown')}: {r.get('status', 'unknown')}"
-                    )
                 await update.message.reply_text(
-                    "\n".join(status_lines),
+                    self._format_report_status_message(domain, reports),
                     parse_mode=ParseMode.MARKDOWN,
                 )
         else:
@@ -1011,21 +1057,8 @@ class SeedBusterBot:
                 parse_mode=ParseMode.MARKDOWN,
             )
         else:
-            status_lines = ["*Report Status:*\n"]
-            for r in reports:
-                status_emoji = {
-                    "submitted": "✅",
-                    "confirmed": "✅",
-                    "pending": "⏳",
-                    "failed": "❌",
-                    "rate_limited": "⏱️",
-                    "duplicate": "🔄",
-                }.get(r.get("status", ""), "❓")
-                status_lines.append(
-                    f"{status_emoji} {r.get('platform', 'unknown')}: {r.get('status', 'unknown')}"
-                )
             await query.message.reply_text(
-                "\n".join(status_lines),
+                self._format_report_status_message(target["domain"], reports),
                 parse_mode=ParseMode.MARKDOWN,
             )
 
