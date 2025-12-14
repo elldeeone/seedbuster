@@ -11,6 +11,7 @@ from typing import Optional
 import aiosmtplib
 
 from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus, ConfigurationError
+from .rdap import lookup_registrar_via_rdap
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,17 @@ class SMTPReporter(BaseReporter):
 
         return None
 
+    @staticmethod
+    def _match_known_abuse_email(registrar_name: Optional[str]) -> Optional[str]:
+        """Map a registrar name to a known abuse email (best-effort substring match)."""
+        key = (registrar_name or "").strip().lower()
+        if not key:
+            return None
+        for needle, email in ABUSE_CONTACTS.items():
+            if needle in key:
+                return email
+        return None
+
     async def send_email(
         self,
         to_email: str,
@@ -174,17 +186,31 @@ class SMTPReporter(BaseReporter):
             )
 
         # Determine abuse contact
+        registrar_name: Optional[str] = None
+        use_registrar_template = False
         abuse_email = self.get_abuse_contact(evidence)
         if not abuse_email:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message="Could not determine abuse contact email. "
-                "Please report manually.",
-            )
+            lookup = await lookup_registrar_via_rdap(evidence.domain)
+            registrar_name = lookup.registrar_name
+            abuse_email = lookup.abuse_email or self._match_known_abuse_email(registrar_name)
+            if abuse_email:
+                use_registrar_template = True
+            else:
+                detail = f"{lookup.error}: {lookup.rdap_url}" if lookup.error else f"RDAP: {lookup.rdap_url}"
+                return ReportResult(
+                    platform=self.platform_name,
+                    status=ReportStatus.SKIPPED,
+                    message=f"Could not determine abuse contact email for this domain ({detail})",
+                )
 
         # Generate appropriate report based on provider
-        if "digitalocean" in abuse_email:
+        if use_registrar_template:
+            report = ReportTemplates.registrar(
+                evidence,
+                reporter_email=self.from_email,
+                registrar_name=registrar_name,
+            )
+        elif "digitalocean" in abuse_email:
             report = ReportTemplates.digitalocean(evidence, self.from_email)
         else:
             report = ReportTemplates.generic_email(evidence, self.from_email)

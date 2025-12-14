@@ -12,6 +12,8 @@ from src.reporter.cloudflare import CloudflareReporter
 from src.reporter.google_form import GoogleFormReporter
 from src.reporter.hosting_provider import HostingProviderReporter
 from src.reporter.registrar import RegistrarReporter
+from src.reporter.resend_reporter import ResendReporter
+from src.reporter.smtp_reporter import SMTPReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database
 from src.storage.evidence import EvidenceStore
@@ -132,12 +134,25 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
-    def __init__(self, *, get_text: str = "", get_json: object = None, get_status_code: int = 200):
+    def __init__(
+        self,
+        *,
+        get_text: str = "",
+        get_json: object = None,
+        get_status_code: int = 200,
+        post_text: str = "",
+        post_json: object = None,
+        post_status_code: int = 200,
+    ):
         self._get_text = get_text
         self._get_json = get_json
         self._get_status_code = get_status_code
+        self._post_text = post_text
+        self._post_json = post_json
+        self._post_status_code = post_status_code
         self.get_calls: list[str] = []
         self.post_calls: list[str] = []
+        self.post_payloads: list[dict] = []
 
     async def __aenter__(self):
         return self
@@ -151,7 +166,12 @@ class _FakeAsyncClient:
 
     async def post(self, url: str, *args, **kwargs):
         self.post_calls.append(url)
-        return _FakeResponse(status_code=200, text="")
+        self.post_payloads.append({
+            "url": url,
+            "args": args,
+            "kwargs": kwargs,
+        })
+        return _FakeResponse(status_code=self._post_status_code, text=self._post_text, json_data=self._post_json)
 
 
 @pytest.mark.asyncio
@@ -312,3 +332,91 @@ async def test_registrar_reporter_returns_manual_required_from_rdap(monkeypatch)
     assert "Registrar detected: Example Registrar" in message
     assert "Manual submission (email): abuse@example-registrar.tld" in message
     assert "Subject:" in message
+
+
+@pytest.mark.asyncio
+async def test_resend_reporter_falls_back_to_registrar_rdap_email(monkeypatch):
+    import httpx
+
+    rdap_json = {
+        "entities": [
+            {
+                "roles": ["registrar"],
+                "vcardArray": [
+                    "vcard",
+                    [
+                        ["fn", {}, "text", "Example Registrar"],
+                        ["email", {}, "text", "mailto:abuse@example-registrar.tld"],
+                    ],
+                ],
+            }
+        ]
+    }
+
+    rdap_client = _FakeAsyncClient(get_json=rdap_json)
+    resend_client = _FakeAsyncClient(post_json={"id": "email_123"})
+
+    def fake_async_client(*args, **kwargs):  # noqa: ANN001, ARG001
+        if kwargs.get("follow_redirects"):
+            return rdap_client
+        return resend_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+
+    reporter = ResendReporter(api_key="test_key", from_email="analyst@example.com")
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+    )
+
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.SUBMITTED
+    assert result.report_id == "email_123"
+    assert "Sent to abuse@example-registrar.tld" in (result.message or "")
+
+    assert resend_client.post_calls == [reporter.API_URL]
+    payload = resend_client.post_payloads[0]["kwargs"]["json"]
+    assert payload["to"] == ["abuse@example-registrar.tld"]
+    assert payload["subject"].startswith("Domain Abuse Report")
+
+
+@pytest.mark.asyncio
+async def test_smtp_reporter_falls_back_to_registrar_rdap_email(monkeypatch):
+    from src.reporter.rdap import RdapLookupResult
+
+    async def fake_lookup(domain: str, *, timeout: float = 30.0) -> RdapLookupResult:  # noqa: ARG001
+        return RdapLookupResult(
+            registrar_name="Example Registrar",
+            abuse_email="abuse@example-registrar.tld",
+            rdap_url="https://rdap.org/domain/example.com",
+        )
+
+    monkeypatch.setattr("src.reporter.smtp_reporter.lookup_registrar_via_rdap", fake_lookup)
+
+    sent: dict[str, object] = {}
+
+    async def fake_send_email(self, to_email: str, subject: str, body: str, attachments=None):  # noqa: ANN001
+        sent["to"] = to_email
+        sent["subject"] = subject
+        sent["body"] = body
+        return True
+
+    monkeypatch.setattr(SMTPReporter, "send_email", fake_send_email)
+
+    reporter = SMTPReporter(host="smtp.example", from_email="analyst@example.com")
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+    )
+
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.SUBMITTED
+    assert "Email sent to abuse@example-registrar.tld" in (result.message or "")
+    assert sent["to"] == "abuse@example-registrar.tld"
+    assert str(sent["subject"]).startswith("Domain Abuse Report")
