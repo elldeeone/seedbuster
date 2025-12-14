@@ -17,6 +17,8 @@ dist/
 
 # Data (keep structure, ignore content)
 data/seedbuster.db
+data/seedbuster.db-wal
+data/seedbuster.db-shm
 data/evidence/*
 !data/evidence/.gitkeep
 data/fingerprints/*
