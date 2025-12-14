@@ -1,6 +1,7 @@
 # Allowed domains (one per line)
 # These will never trigger alerts
-kaspanet.io
-kaspa.org
+kas.fyi
 kaspa.com
+kaspa.org
+kaspanet.io
 wallet.kaspanet.io
