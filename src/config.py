@@ -76,6 +76,7 @@ class Config:
     search_discovery_interval_minutes: int = 60
     search_discovery_results_per_query: int = 20
     search_discovery_force_analyze: bool = False  # bypass DOMAIN_SCORE_THRESHOLD for search hits
+    search_discovery_rotate_pages: bool = True
     search_discovery_exclude_domains: Set[str] = field(
         default_factory=lambda: set(DEFAULT_SEARCH_EXCLUDE_DOMAINS)
     )
@@ -221,6 +222,7 @@ def load_config() -> Config:
         search_discovery_interval_minutes=int(os.getenv("SEARCH_DISCOVERY_INTERVAL_MINUTES", "60")),
         search_discovery_results_per_query=int(os.getenv("SEARCH_DISCOVERY_RESULTS_PER_QUERY", "20")),
         search_discovery_force_analyze=os.getenv("SEARCH_DISCOVERY_FORCE_ANALYZE", "false").lower() == "true",
+        search_discovery_rotate_pages=os.getenv("SEARCH_DISCOVERY_ROTATE_PAGES", "true").lower() == "true",
         google_cse_api_key=os.getenv("GOOGLE_CSE_API_KEY", ""),
         google_cse_id=os.getenv("GOOGLE_CSE_ID", ""),
         google_cse_gl=os.getenv("GOOGLE_CSE_GL", ""),

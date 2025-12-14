@@ -204,6 +204,8 @@ class SeedBusterPipeline:
                     results_per_query=self.config.search_discovery_results_per_query,
                     force_analyze=self.config.search_discovery_force_analyze,
                     exclude_domains=self.config.search_discovery_exclude_domains,
+                    rotate_pages=self.config.search_discovery_rotate_pages,
+                    state_path=self.config.data_dir / "search_discovery_state.json",
                 )
                 logger.info("Search discovery enabled")
 

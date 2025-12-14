@@ -103,6 +103,7 @@ Search discovery (optional):
 - `SEARCH_DISCOVERY_PROVIDER` - `google` or `bing`
 - `SEARCH_DISCOVERY_QUERIES` - `;`-separated list of search queries
 - `SEARCH_DISCOVERY_INTERVAL_MINUTES`, `SEARCH_DISCOVERY_RESULTS_PER_QUERY`
+- `SEARCH_DISCOVERY_ROTATE_PAGES` - If `true`, rotates through result pages to discover new results over time
 - `SEARCH_DISCOVERY_FORCE_ANALYZE` - If `true`, bypasses `DOMAIN_SCORE_THRESHOLD` for search hits
 - `SEARCH_DISCOVERY_EXCLUDE_DOMAINS` - Comma-separated domains to ignore (e.g. `reddit.com,youtube.com`)
 - `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` - For provider `google`

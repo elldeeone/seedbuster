@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, Set
 from urllib.parse import urlparse
 
@@ -27,7 +29,7 @@ class SearchResult:
 class SearchProvider(Protocol):
     """Search provider interface."""
 
-    async def search(self, query: str, max_results: int) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int, *, start: int = 1) -> list[SearchResult]:
         raise NotImplementedError
 
     async def close(self) -> None:
@@ -44,7 +46,7 @@ class GoogleCSEProvider:
         self._hl = hl
         self._session: aiohttp.ClientSession | None = None
 
-    async def search(self, query: str, max_results: int) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int, *, start: int = 1) -> list[SearchResult]:
         # API limits: num <= 10, start is 1-indexed, max 100 results.
         max_results = max(0, min(int(max_results), 100))
         if max_results == 0:
@@ -52,10 +54,15 @@ class GoogleCSEProvider:
 
         session = await self._get_session()
         results: list[SearchResult] = []
-        start = 1
+        start = max(1, min(int(start), 100))
 
         while len(results) < max_results:
-            num = min(10, max_results - len(results))
+            max_num_by_start = 100 - start + 1
+            if max_num_by_start <= 0:
+                break
+            num = min(10, max_results - len(results), max_num_by_start)
+            if num <= 0:
+                break
             params: dict[str, str | int] = {
                 "key": self._api_key,
                 "cx": self._cse_id,
@@ -97,6 +104,8 @@ class GoogleCSEProvider:
             if len(items) < num:
                 break
             start += num
+            if start > 100:
+                break
 
         return results
 
@@ -119,7 +128,7 @@ class BingWebSearchProvider:
         self._market = market
         self._session: aiohttp.ClientSession | None = None
 
-    async def search(self, query: str, max_results: int) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int, *, start: int = 1) -> list[SearchResult]:
         # API allows count up to 50 per request.
         max_results = max(0, int(max_results))
         if max_results == 0:
@@ -127,7 +136,7 @@ class BingWebSearchProvider:
 
         session = await self._get_session()
         results: list[SearchResult] = []
-        offset = 0
+        offset = max(0, int(start) - 1)
 
         while len(results) < max_results:
             count = min(50, max_results - len(results))
@@ -250,6 +259,9 @@ class SearchDiscovery:
         results_per_query: int,
         force_analyze: bool = False,
         exclude_domains: Set[str] | None = None,
+        rotate_pages: bool = True,
+        state_path: Path | None = None,
+        max_start_index: int = 100,
     ):
         self.queue = queue
         self.provider = provider
@@ -258,10 +270,40 @@ class SearchDiscovery:
         self.results_per_query = max(1, int(results_per_query))
         self.force_analyze = bool(force_analyze)
         self.exclude_domains = {d.lower() for d in (exclude_domains or set())}
+        self.rotate_pages = bool(rotate_pages)
+        self.state_path = state_path
+        self.max_start_index = max(1, int(max_start_index))
+        self._query_starts: dict[str, int] = {}
+        self._load_state()
 
         self._seen_targets: set[str] = set()
         self._seen_order: deque[str] = deque()
         self._max_seen = 20000
+
+    def _load_state(self) -> None:
+        path = self.state_path
+        if not path or not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            starts = data.get("starts", {})
+            if isinstance(starts, dict):
+                for k, v in starts.items():
+                    if isinstance(k, str) and isinstance(v, int) and v >= 1:
+                        self._query_starts[k] = v
+        except Exception as e:
+            logger.warning("Search discovery: failed to load state from %s: %s", path, e)
+
+    def _save_state(self) -> None:
+        path = self.state_path
+        if not path:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"version": 1, "starts": self._query_starts}
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Search discovery: failed to save state to %s: %s", path, e)
 
     async def run_loop(self) -> None:
         """Run discovery forever (until task cancelled)."""
@@ -291,6 +333,12 @@ class SearchDiscovery:
         """Execute one search pass and enqueue new targets."""
         total_enqueued = 0
         for query in self.queries:
+            start = 1
+            if self.rotate_pages:
+                try:
+                    start = max(1, int(self._query_starts.get(query, 1)))
+                except Exception:
+                    start = 1
             total_results = 0
             excluded = 0
             duplicates = 0
@@ -298,7 +346,7 @@ class SearchDiscovery:
             enqueued = 0
 
             try:
-                results = await self.provider.search(query, self.results_per_query)
+                results = await self.provider.search(query, self.results_per_query, start=start)
                 total_results = len(results)
             except Exception as e:
                 logger.warning("Search discovery query failed (%s): %s", query, e)
@@ -344,14 +392,22 @@ class SearchDiscovery:
                     return
 
             logger.info(
-                "Search discovery: %r -> %d results, %d enqueued (%d excluded, %d dup, %d invalid)",
+                "Search discovery: %r (start=%d) -> %d results, %d enqueued (%d excluded, %d dup, %d invalid)",
                 query,
+                start,
                 total_results,
                 enqueued,
                 excluded,
                 duplicates,
                 invalid,
             )
+
+            if self.rotate_pages:
+                next_start = start + self.results_per_query
+                if next_start > self.max_start_index:
+                    next_start = 1
+                self._query_starts[query] = next_start
+                self._save_state()
 
         if total_enqueued == 0:
             logger.info("Search discovery: pass complete (no new targets)")
