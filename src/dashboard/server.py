@@ -102,8 +102,8 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         --border-emphasis: rgba(240, 246, 252, 0.15);
 
         --text-primary: #f0f6fc;
-        --text-secondary: #8b949e;
-        --text-tertiary: #6e7681;
+        --text-secondary: #b1bac4;
+        --text-tertiary: #8b949e;
         --text-link: #58a6ff;
 
         --accent-amber: #d29922;
@@ -120,8 +120,8 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         --accent-cyan-subtle: rgba(57, 197, 207, 0.15);
         --accent-orange: #f0883e;
         --accent-orange-subtle: rgba(240, 136, 62, 0.15);
-        --accent-gray: #6e7681;
-        --accent-gray-subtle: rgba(110, 118, 129, 0.15);
+        --accent-gray: #8b949e;
+        --accent-gray-subtle: rgba(139, 148, 158, 0.15);
 
         --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
         --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -205,6 +205,13 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         display: flex;
         align-items: center;
         gap: 12px;
+        text-decoration: none;
+        color: inherit;
+        transition: opacity var(--transition-fast);
+      }}
+
+      .sb-logo:hover {{
+        opacity: 0.85;
       }}
 
       .sb-logo-icon {{
@@ -916,10 +923,10 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
     <div class="sb-container">
       <header class="sb-header">
         <div class="sb-brand">
-          <div class="sb-logo">
+          <a class="sb-logo" href="{"/admin" if admin else "/"}">
             <div class="sb-logo-icon">SB</div>
             <span class="sb-logo-text">SeedBuster</span>
-          </div>
+          </a>
           <span class="sb-mode {mode_class}">{mode_indicator}</span>
         </div>
         <nav class="sb-nav">{nav}</nav>
