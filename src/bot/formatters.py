@@ -355,7 +355,10 @@ class AlertFormatter:
 `/evidence <id>` - Get evidence files
 
 *Reporting:*
-`/report <id>` - Submit to blocklists
+`/report <id>` - Submit to all enabled platforms
+`/report <id> status` - Show per-platform report status
+`/report <id> <platform>` - Submit to a specific platform
+`/platforms` - Show enabled/available reporting platforms
 
 *Configuration:*
 `/threshold <n>` - Set analysis threshold

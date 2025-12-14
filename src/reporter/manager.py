@@ -294,6 +294,8 @@ class ReportManager:
         from .registrar import RegistrarReporter
         from .apwg import APWGReporter
         from .microsoft import MicrosoftReporter
+        from .resend_reporter import ResendReporter
+        from .digitalocean import DigitalOceanReporter
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -335,35 +337,45 @@ class ReportManager:
         )
         logger.info("Initialized registrar manual reporter")
 
-        # Resend email reporter (if API key configured)
+        # Resend email reporter (configured when API key is present)
+        self.reporters["resend"] = ResendReporter(
+            api_key=self.resend_api_key or "",
+            from_email=self.resend_from_email or self.reporter_email or "SeedBuster <onboarding@resend.dev>",
+        )
         if self.resend_api_key:
-            from .resend_reporter import ResendReporter
-            self.reporters["resend"] = ResendReporter(
-                api_key=self.resend_api_key,
-                from_email=self.resend_from_email or self.reporter_email or "SeedBuster <onboarding@resend.dev>",
-            )
             logger.info(f"Initialized Resend email reporter (from: {self.resend_from_email or self.reporter_email})")
+        else:
+            logger.info("Resend email reporter not configured (missing RESEND_API_KEY)")
 
-        # DigitalOcean form reporter (if we have reporter email for form submission)
-        reporter_email = self.resend_from_email or self.reporter_email
+        # DigitalOcean form reporter (configured when reporter email is present)
+        reporter_email = self.resend_from_email or self.reporter_email or ""
+        self.reporters["digitalocean"] = DigitalOceanReporter(
+            reporter_email=reporter_email.split("<")[-1].rstrip(">") if "<" in reporter_email else reporter_email,
+            reporter_name="Kaspa Security",
+        )
         if reporter_email:
-            from .digitalocean import DigitalOceanReporter
-            self.reporters["digitalocean"] = DigitalOceanReporter(
-                reporter_email=reporter_email.split("<")[-1].rstrip(">") if "<" in reporter_email else reporter_email,
-                reporter_name="Kaspa Security",
-            )
             logger.info("Initialized DigitalOcean form reporter (Playwright)")
+        else:
+            logger.info("DigitalOcean form reporter not configured (missing reporter email)")
 
-        # SMTP reporter (if configured)
+        # SMTP reporter (configured when SMTP host and from_email are present)
+        self.reporters["smtp"] = SMTPReporter(
+            host=self.smtp_config.get("host", ""),
+            port=self.smtp_config.get("port", 587),
+            username=self.smtp_config.get("username", ""),
+            password=self.smtp_config.get("password", ""),
+            from_email=self.smtp_config.get("from_email", self.reporter_email),
+        )
         if self.smtp_config.get("host"):
-            self.reporters["smtp"] = SMTPReporter(
-                host=self.smtp_config["host"],
-                port=self.smtp_config.get("port", 587),
-                username=self.smtp_config.get("username", ""),
-                password=self.smtp_config.get("password", ""),
-                from_email=self.smtp_config.get("from_email", self.reporter_email),
-            )
             logger.info("Initialized SMTP reporter")
+        else:
+            logger.info("SMTP reporter not configured (missing SMTP_HOST)")
+
+        # Warn if enabled_platforms includes unknown/uninitialized reporters.
+        if self.enabled_platforms is not None:
+            unknown = sorted(p for p in self.enabled_platforms if p not in self.reporters)
+            if unknown:
+                logger.warning(f"Unknown report platforms in REPORT_PLATFORMS: {', '.join(unknown)}")
 
     def get_available_platforms(self) -> list[str]:
         """Get list of available/configured platforms."""
