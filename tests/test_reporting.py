@@ -15,6 +15,7 @@ from src.reporter.registrar import RegistrarReporter
 from src.reporter.resend_reporter import ResendReporter
 from src.reporter.smtp_reporter import SMTPReporter
 from src.reporter.apwg import APWGReporter
+from src.reporter.microsoft import MicrosoftReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database
 from src.storage.evidence import EvidenceStore
@@ -436,4 +437,20 @@ async def test_apwg_reporter_returns_manual_required():
     result = await reporter.submit(evidence)
     assert result.status == ReportStatus.MANUAL_REQUIRED
     assert "reportphishing@apwg.org" in (result.message or "")
+    assert "https://example.com/path" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_microsoft_reporter_returns_manual_required():
+    reporter = MicrosoftReporter()
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+    )
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.MANUAL_REQUIRED
+    assert "microsoft.com" in (result.message or "").lower()
     assert "https://example.com/path" in (result.message or "")

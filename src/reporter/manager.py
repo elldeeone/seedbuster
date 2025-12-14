@@ -293,6 +293,7 @@ class ReportManager:
         from .hosting_provider import HostingProviderReporter
         from .registrar import RegistrarReporter
         from .apwg import APWGReporter
+        from .microsoft import MicrosoftReporter
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -317,6 +318,10 @@ class ReportManager:
         # APWG manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["apwg"] = APWGReporter()
         logger.info("Initialized APWG manual reporter")
+
+        # Microsoft manual helper (opt-in via REPORT_PLATFORMS)
+        self.reporters["microsoft"] = MicrosoftReporter()
+        logger.info("Initialized Microsoft manual reporter")
 
         # Hosting provider manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["hosting_provider"] = HostingProviderReporter(
