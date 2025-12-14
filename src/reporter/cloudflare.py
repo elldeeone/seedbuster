@@ -86,7 +86,11 @@ class CloudflareReporter(BaseReporter):
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=f"Manual submission required: {self.ABUSE_FORM_URL}",
+                        message=(
+                            f"Manual submission required: {self.ABUSE_FORM_URL}\n\n"
+                            f"URL: {evidence.url}\n\n"
+                            f"Comments:\n{report['body']}"
+                        ),
                     )
 
                 page_lower = (form_resp.text or "").lower()
@@ -94,7 +98,11 @@ class CloudflareReporter(BaseReporter):
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=f"Manual submission required (CAPTCHA): {self.ABUSE_FORM_URL}",
+                        message=(
+                            f"Manual submission required (CAPTCHA): {self.ABUSE_FORM_URL}\n\n"
+                            f"URL: {evidence.url}\n\n"
+                            f"Comments:\n{report['body']}"
+                        ),
                     )
 
                 csrf_token = self._extract_csrf_token_from_html(form_resp.text)
@@ -149,7 +157,11 @@ class CloudflareReporter(BaseReporter):
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
-                            message=f"Submission not confirmed; manual submission recommended: {self.ABUSE_FORM_URL}",
+                            message=(
+                                f"Submission not confirmed; manual submission recommended: {self.ABUSE_FORM_URL}\n\n"
+                                f"URL: {evidence.url}\n\n"
+                                f"Comments:\n{report['body']}"
+                            ),
                         )
 
                 elif resp.status_code == 429:
@@ -182,5 +194,10 @@ class CloudflareReporter(BaseReporter):
                 return ReportResult(
                     platform=self.platform_name,
                     status=ReportStatus.MANUAL_REQUIRED,
-                    message=f"Auto-submit failed: {e}. Manual: {self.ABUSE_FORM_URL}",
+                    message=(
+                        f"Auto-submit failed: {e}\n\n"
+                        f"Manual submission required: {self.ABUSE_FORM_URL}\n\n"
+                        f"URL: {evidence.url}\n\n"
+                        f"Comments:\n{report['body']}"
+                    ),
                 )

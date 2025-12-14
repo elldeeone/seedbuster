@@ -201,5 +201,12 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
             return ReportResult(
                 platform=self.platform_name,
                 status=ReportStatus.MANUAL_REQUIRED,
-                message=f"Auto-submit failed: {e}. Manual: {self.FORM_URL}",
+                message=(
+                    f"Auto-submit failed: {e}\n\n"
+                    f"Manual submission required: {self.FORM_URL}\n\n"
+                    f"Reporter name: {self.reporter_name}\n"
+                    f"Reporter email: {self.reporter_email}\n"
+                    f"Phishing URL: {evidence.url}\n\n"
+                    f"Copy/paste description:\n{description}"
+                ),
             )

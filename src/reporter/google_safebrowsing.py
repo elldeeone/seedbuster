@@ -72,8 +72,13 @@ class GoogleSafeBrowsingReporter(BaseReporter):
 
         # Google uses reCAPTCHA - can't automate fully
         # Return pending with info for manual submission
+        report_text = self.get_report_text(evidence)
         return ReportResult(
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
-            message=f"Manual submission required (reCAPTCHA): {self.FORM_URL}",
+            message=(
+                f"Manual submission required (reCAPTCHA): {self.FORM_URL}\n\n"
+                f"URL: {evidence.url}\n\n"
+                f"Copy/paste details:\n{report_text}"
+            ),
         )

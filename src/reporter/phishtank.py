@@ -132,19 +132,24 @@ class PhishTankReporter(BaseReporter):
                         # Submission requires login
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.FAILED,
-                            message="PhishTank requires login for submission. "
-                            "Please submit manually at phishtank.org",
+                            status=ReportStatus.MANUAL_REQUIRED,
+                            message=(
+                                f"PhishTank requires login; manual submission required: {self.SUBMIT_URL}\n\n"
+                                f"URL: {evidence.url}\n\n"
+                                f"Copy/paste details:\n{comment}"
+                            ),
                         )
                     else:
-                        # Unknown response, assume submitted
-                        logger.warning(
-                            "PhishTank unknown response, assuming submitted"
-                        )
+                        # Don't assume success if we can't confirm.
+                        logger.warning("PhishTank submission not confirmed; returning manual instructions")
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.SUBMITTED,
-                            message="Submitted (response unclear)",
+                            status=ReportStatus.MANUAL_REQUIRED,
+                            message=(
+                                f"Submission not confirmed; manual submission recommended: {self.SUBMIT_URL}\n\n"
+                                f"URL: {evidence.url}\n\n"
+                                f"Copy/paste details:\n{comment}"
+                            ),
                         )
 
                 else:

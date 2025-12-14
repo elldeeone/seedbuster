@@ -7,8 +7,10 @@ from datetime import datetime
 import pytest
 
 from src.reporter.base import ReportEvidence, ReportStatus
+from src.reporter.base import BaseReporter, ReportResult
 from src.reporter.cloudflare import CloudflareReporter
 from src.reporter.google_form import GoogleFormReporter
+from src.reporter.hosting_provider import HostingProviderReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database
 from src.storage.evidence import EvidenceStore
@@ -59,6 +61,59 @@ async def test_build_evidence_uses_final_url_best_screenshot_and_derives_backend
     ]
     assert any("ipdata" in r.lower() for r in evidence.api_keys_found)
     assert evidence.hosting_provider == "cloudflare"
+
+    await db.close()
+
+
+class _ManualOnlyReporter(BaseReporter):
+    platform_name = "manual"
+
+    def __init__(self, *, message: str):
+        super().__init__()
+        self._configured = True
+        self._message = message
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:  # noqa: ARG002
+        return ReportResult(
+            platform=self.platform_name,
+            status=ReportStatus.MANUAL_REQUIRED,
+            message=self._message,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_manager_saves_manual_instruction_file(tmp_path):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    target = "example.com/path"
+    domain_id = await db.add_domain(domain=target, source="manual", domain_score=90)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    await store.save_analysis(target, {
+        "domain": target,
+        "final_url": "https://example.com/path",
+        "reasons": ["Seed phrase form detected"],
+        "suspicious_endpoints": ["https://backend.example/api/form"],
+    })
+
+    message = "Manual submission required: https://provider.example/report\n\nURL: https://example.com/path"
+    reporter = _ManualOnlyReporter(message=message)
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["manual"])
+    manager.reporters = {"manual": reporter}
+
+    results = await manager.report_domain(domain_id=domain_id, domain=target, platforms=["manual"])
+    assert results["manual"].status == ReportStatus.MANUAL_REQUIRED
+
+    instruction_path = store.get_report_instructions_path(target, "manual")
+    assert instruction_path.exists()
+    content = instruction_path.read_text(encoding="utf-8")
+    assert "SeedBuster Manual Report Instructions" in content
+    assert "Platform: manual" in content
+    assert "Manual submission required:" in content
+    assert "Evidence Summary:" in content
+    assert "URL: https://example.com/path" in content
 
     await db.close()
 
@@ -128,3 +183,33 @@ async def test_cloudflare_reporter_returns_manual_required_when_turnstile_detect
     )
     result = await reporter.submit(evidence)
     assert result.status == ReportStatus.MANUAL_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_hosting_provider_reporter_returns_manual_required_for_form_provider():
+    reporter = HostingProviderReporter()
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        hosting_provider="aws",
+    )
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.MANUAL_REQUIRED
+    assert "support.aws.amazon.com" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_hosting_provider_reporter_returns_manual_required_for_email_provider():
+    reporter = HostingProviderReporter(reporter_email="analyst@example.com")
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        hosting_provider="namecheap",
+    )
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.MANUAL_REQUIRED
+    assert "abuse@namecheap.com" in (result.message or "")

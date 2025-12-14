@@ -73,6 +73,31 @@ class EvidenceStore:
         await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         return path
 
+    @staticmethod
+    def _safe_filename_component(value: str) -> str:
+        """Convert a string into a filesystem-friendly filename component."""
+        raw = (value or "").strip().lower()
+        if not raw:
+            return "unknown"
+        return "".join(c if c.isalnum() or c in "._-" else "_" for c in raw)
+
+    def get_report_instructions_path(self, domain: str, platform: str) -> Path:
+        """Get path for a manual report instruction file for a platform."""
+        domain_dir = self.get_domain_dir(domain)
+        safe_platform = self._safe_filename_component(platform)
+        return domain_dir / f"report_instructions_{safe_platform}.txt"
+
+    def get_report_instruction_paths(self, domain: str) -> list[Path]:
+        """List saved manual report instruction files for a domain."""
+        domain_dir = self.get_domain_dir(domain)
+        return sorted(domain_dir.glob("report_instructions_*.txt"))
+
+    async def save_report_instructions(self, domain: str, platform: str, content: str) -> Path:
+        """Save manual report instructions for a platform."""
+        path = self.get_report_instructions_path(domain, platform)
+        await asyncio.to_thread(path.write_text, content or "", encoding="utf-8")
+        return path
+
     def clear_exploration_screenshots(self, domain: str) -> int:
         """Remove old exploration screenshots for a domain.
 

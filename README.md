@@ -116,6 +116,10 @@ Reporting:
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` - Email reporting via Resend
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` - Email reporting via SMTP
 - `PHISHTANK_API_KEY` - Optional (PhishTank API access required)
+- `hosting_provider` platform - Optional helper that generates provider-specific manual abuse destinations + copy/paste blocks (useful if you don't have Resend/SMTP)
+
+Manual reporting:
+- When a platform returns `manual_required`, SeedBuster writes `report_instructions_<platform>.txt` into the domain evidence folder and `/evidence <id>` will send it.
 
 Paths:
 - `DATA_DIR` (default: `./data`)

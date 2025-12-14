@@ -18,6 +18,7 @@ from telegram.constants import ParseMode
 from .formatters import AlertFormatter, AlertData
 from ..storage.database import Database, DomainStatus
 from ..storage.evidence import EvidenceStore
+from ..reporter.base import ReportStatus
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,42 @@ class SeedBusterBot:
             status_lines.append(line)
         return "\n".join(status_lines)
 
+    @staticmethod
+    def _summarize_report_results_for_button(results: dict) -> str:
+        """Return a short, user-friendly status label for a report attempt."""
+        statuses: list[str] = []
+        for result in (results or {}).values():
+            status = getattr(result, "status", None)
+            value = getattr(status, "value", None) or str(status or "")
+            statuses.append(str(value).strip().lower())
+
+        if not statuses:
+            return "⚠️ No report results"
+
+        manual = any(s == ReportStatus.MANUAL_REQUIRED.value for s in statuses)
+        rate_limited = any(s == ReportStatus.RATE_LIMITED.value for s in statuses)
+        failed = any(s == ReportStatus.FAILED.value for s in statuses)
+        success_statuses = {
+            ReportStatus.SUBMITTED.value,
+            ReportStatus.CONFIRMED.value,
+            ReportStatus.DUPLICATE.value,
+        }
+        successes = sum(1 for s in statuses if s in success_statuses)
+
+        if manual:
+            return "📝 Manual Action Needed"
+        if successes and not failed and not rate_limited:
+            return "✅ Reports Submitted"
+        if rate_limited and successes:
+            return "⏱️ Partial (Retry Scheduled)"
+        if rate_limited and not successes and not failed:
+            return "⏱️ Rate Limited (Retry Scheduled)"
+        if failures := (sum(1 for s in statuses if s == ReportStatus.FAILED.value)):
+            if successes:
+                return "⚠️ Partial Success"
+            return f"❌ Failed ({failures})"
+        return "✅ Report Attempted"
+
     def set_queue_size_callback(self, callback: Callable[[], int]):
         """Set callback to get current queue size."""
         self._queue_size_callback = callback
@@ -171,6 +208,7 @@ class SeedBusterBot:
         self._app.add_handler(CallbackQueryHandler(self._callback_rescan, pattern="^rescan_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_evidence, pattern="^evidence_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_scanpath, pattern="^scanpath_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_noop, pattern="^noop$"))
 
         # Start polling in background
         await self._app.initialize()
@@ -806,9 +844,16 @@ class SeedBusterBot:
         evidence_dir = self.evidence_store.get_domain_dir(target["domain"])
 
         # Send screenshot
-        screenshot = evidence_dir / "screenshot.png"
-        if screenshot.exists():
-            with open(screenshot, "rb") as f:
+        screenshot_path = None
+        try:
+            candidates = self.evidence_store.get_all_screenshot_paths(target["domain"])
+            screenshot_path = candidates[0] if candidates else None
+        except Exception:
+            screenshot_path = None
+        if not screenshot_path:
+            screenshot_path = evidence_dir / "screenshot.png"
+        if screenshot_path and Path(screenshot_path).exists():
+            with open(screenshot_path, "rb") as f:
                 await update.message.reply_photo(
                     photo=InputFile(f),
                     caption=f"Screenshot for `{target['domain']}`",
@@ -832,6 +877,18 @@ class SeedBusterBot:
                     document=InputFile(f, filename="page.html"),
                     caption="HTML snapshot",
                 )
+
+        # Send any manual report instruction files
+        instruction_files = self.evidence_store.get_report_instruction_paths(target["domain"])
+        for path in instruction_files[:5]:
+            try:
+                with open(path, "rb") as f:
+                    await update.message.reply_document(
+                        document=InputFile(f, filename=path.name),
+                        caption="Manual report instructions",
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send report instructions {path}: {e}")
 
     async def _cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /report command."""
@@ -971,9 +1028,14 @@ class SeedBusterBot:
         summary = self.report_manager.format_results_summary(results)
 
         # Update the message with final status
+        final_label = self._summarize_report_results_for_button(results)
         await query.edit_message_reply_markup(
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Reports Submitted", callback_data="noop")]
+                [InlineKeyboardButton(final_label, callback_data="noop")],
+                [
+                    InlineKeyboardButton("📊 Report Status", callback_data=f"status_{domain_short_id}"),
+                    InlineKeyboardButton("📁 Evidence", callback_data=f"evidence_{domain_short_id}"),
+                ],
             ])
         )
         await query.message.reply_text(summary)
@@ -1138,9 +1200,16 @@ class SeedBusterBot:
             return
 
         # Send screenshot
-        screenshot = evidence_dir / "screenshot.png"
-        if screenshot.exists():
-            with open(screenshot, "rb") as f:
+        screenshot_path = None
+        try:
+            candidates = self.evidence_store.get_all_screenshot_paths(target["domain"])
+            screenshot_path = candidates[0] if candidates else None
+        except Exception:
+            screenshot_path = None
+        if not screenshot_path:
+            screenshot_path = evidence_dir / "screenshot.png"
+        if screenshot_path and Path(screenshot_path).exists():
+            with open(screenshot_path, "rb") as f:
                 await query.message.reply_photo(
                     photo=InputFile(f),
                     caption=f"Screenshot for `{target['domain']}`",
@@ -1164,6 +1233,18 @@ class SeedBusterBot:
                     document=InputFile(f, filename="analysis.json"),
                     caption="Raw analysis JSON",
                 )
+
+        # Send any manual report instruction files
+        instruction_files = self.evidence_store.get_report_instruction_paths(target["domain"])
+        for path in instruction_files[:5]:
+            try:
+                with open(path, "rb") as f:
+                    await query.message.reply_document(
+                        document=InputFile(f, filename=path.name),
+                        caption="Manual report instructions",
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send report instructions {path}: {e}")
 
     async def _callback_scanpath(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle scan path button callback - analyze a specific URL path."""
@@ -1196,6 +1277,12 @@ class SeedBusterBot:
             )
         except Exception as e:
             await query.message.reply_text(f"Scan failed: {e}")
+
+    async def _callback_noop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):  # noqa: ARG002
+        """Handle no-op callbacks used for disabled buttons."""
+        query = getattr(update, "callback_query", None)
+        if query:
+            await query.answer()
 
     def _format_analysis_summary(self, data: dict) -> str:
         """Format analysis JSON into readable summary."""

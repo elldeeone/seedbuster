@@ -79,7 +79,7 @@ class GoogleFormReporter(BaseReporter):
                         status=ReportStatus.MANUAL_REQUIRED,
                         message=(
                             "Manual submission required (CAPTCHA): "
-                            f"{self.REPORT_URL}\n\nCopy/paste details:\n{additional_info}"
+                            f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                         ),
                     )
 
@@ -149,7 +149,7 @@ class GoogleFormReporter(BaseReporter):
                             status=ReportStatus.MANUAL_REQUIRED,
                             message=(
                                 "Submission not confirmed; manual submission recommended: "
-                                f"{self.REPORT_URL}\n\nCopy/paste details:\n{additional_info}"
+                                f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                             ),
                         )
 

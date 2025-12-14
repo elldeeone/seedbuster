@@ -101,6 +101,22 @@ class ReportManager:
             return dt <= datetime.utcnow()
         return dt <= datetime.now(dt.tzinfo)
 
+    @staticmethod
+    def _build_manual_instructions_text(
+        platform: str, evidence: ReportEvidence, result: ReportResult
+    ) -> str:
+        """Build a text file containing manual reporting instructions."""
+        message = (result.message or "").strip()
+        lines = [
+            "SeedBuster Manual Report Instructions",
+            f"Platform: {platform}",
+            "",
+        ]
+        if message:
+            lines.extend(["Platform Notes:", message, ""])
+        lines.extend(["Evidence Summary:", evidence.to_summary().strip(), ""])
+        return "\n".join(lines).strip() + "\n"
+
     async def retry_due_reports(self, *, limit: int = 20) -> list[ReportResult]:
         """
         Retry rate-limited reports that are due.
@@ -192,6 +208,13 @@ class ReportManager:
                         result.response_data = metadata
                 attempted.append(result)
 
+                if result.status == ReportStatus.MANUAL_REQUIRED:
+                    try:
+                        content = self._build_manual_instructions_text(platform, evidence, result)
+                        await self.evidence_store.save_report_instructions(domain, platform, content)
+                    except Exception as e:
+                        logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
+
                 await self.database.update_report(
                     report_id=report_id,
                     status=result.status.value,
@@ -249,6 +272,7 @@ class ReportManager:
         from .cloudflare import CloudflareReporter
         from .google_form import GoogleFormReporter
         from .netcraft import NetcraftReporter
+        from .hosting_provider import HostingProviderReporter
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -269,6 +293,12 @@ class ReportManager:
             reporter_email=self.resend_from_email or self.reporter_email or ""
         )
         logger.info("Initialized Netcraft reporter")
+
+        # Hosting provider manual helper (opt-in via REPORT_PLATFORMS)
+        self.reporters["hosting_provider"] = HostingProviderReporter(
+            reporter_email=self.resend_from_email or self.reporter_email or ""
+        )
+        logger.info("Initialized hosting provider manual reporter")
 
         # Resend email reporter (if API key configured)
         if self.resend_api_key:
@@ -568,6 +598,13 @@ class ReportManager:
                 result = await reporter.submit(evidence)
                 result.report_id = str(report_id)
                 results[platform] = result
+
+                if result.status == ReportStatus.MANUAL_REQUIRED:
+                    try:
+                        content = self._build_manual_instructions_text(platform, evidence, result)
+                        await self.evidence_store.save_report_instructions(domain, platform, content)
+                    except Exception as e:
+                        logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
 
                 # Update database
                 await self.database.update_report(

@@ -23,6 +23,7 @@ from .netcraft import NetcraftReporter
 from .resend_reporter import ResendReporter
 from .digitalocean import DigitalOceanReporter
 from .google_safebrowsing import GoogleSafeBrowsingReporter
+from .hosting_provider import HostingProviderReporter
 
 __all__ = [
     # Base classes
@@ -49,4 +50,5 @@ __all__ = [
     "ResendReporter",
     "DigitalOceanReporter",
     "GoogleSafeBrowsingReporter",
+    "HostingProviderReporter",
 ]

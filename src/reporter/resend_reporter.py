@@ -127,7 +127,10 @@ class ResendReporter(BaseReporter):
             return ReportResult(
                 platform=self.platform_name,
                 status=ReportStatus.MANUAL_REQUIRED,
-                message=f"Manual submission required: {form_url}",
+                message=(
+                    f"Manual submission required: {form_url}\n\n"
+                    f"Evidence summary:\n{evidence.to_summary()}"
+                ),
             )
 
         if not to_email:
