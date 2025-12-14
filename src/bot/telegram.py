@@ -163,6 +163,33 @@ class SeedBusterBot:
             return f"❌ Failed ({failures})"
         return "✅ Report Attempted"
 
+    async def _send_manual_report_instructions(self, message: object, domain: str, results: dict) -> int:
+        """Send saved manual report instruction files for any MANUAL_REQUIRED platforms."""
+        if not message or not results:
+            return 0
+
+        instruction_files: list[Path] = []
+        for platform, result in results.items():
+            status = getattr(result, "status", None)
+            if status != ReportStatus.MANUAL_REQUIRED:
+                continue
+            path = self.evidence_store.get_report_instructions_path(domain, platform)
+            if path.exists():
+                instruction_files.append(path)
+
+        sent = 0
+        for path in instruction_files[:5]:
+            try:
+                with open(path, "rb") as f:
+                    await message.reply_document(
+                        document=InputFile(f, filename=path.name),
+                        caption="Manual report instructions",
+                    )
+                sent += 1
+            except Exception as e:
+                logger.warning(f"Failed to send report instructions {path}: {e}")
+        return sent
+
     def set_queue_size_callback(self, callback: Callable[[], int]):
         """Set callback to get current queue size."""
         self._queue_size_callback = callback
@@ -960,6 +987,7 @@ class SeedBusterBot:
 
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
+            await self._send_manual_report_instructions(update.message, domain, results)
 
     async def _find_domain_by_short_id(self, identifier: str) -> Optional[dict]:
         """Find a domain by ID, domain name, or short hash prefix."""
@@ -1039,6 +1067,7 @@ class SeedBusterBot:
             ])
         )
         await query.message.reply_text(summary)
+        await self._send_manual_report_instructions(query.message, target["domain"], results)
 
     async def _callback_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle defer button callback - wait for rescans."""

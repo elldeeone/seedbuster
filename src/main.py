@@ -406,6 +406,11 @@ class SeedBusterPipeline:
                                 manual_url = self.bot._extract_first_url(r.message)
                                 if manual_url:
                                     line += f" (manual: `{manual_url}`)"
+                                try:
+                                    short_id = self.evidence_store.get_domain_id(domain)
+                                    line += f" (instructions: `/evidence {short_id}`)"
+                                except Exception:
+                                    pass
                             lines.append(line)
                         extra = len(notify) - max_items
                         if extra > 0:
