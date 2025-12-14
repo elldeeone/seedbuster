@@ -367,6 +367,7 @@ class AlertFormatter:
 `/threshold <n>` - Set analysis threshold
 `/allowlist` - View allowlist
 `/allowlist add <domain>` - Add to allowlist
+`/allowlist remove <domain>` - Remove from allowlist
 
 *Help:*
 `/help` - Show this message

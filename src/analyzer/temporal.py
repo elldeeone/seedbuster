@@ -316,6 +316,11 @@ class TemporalTracker:
             self._scheduled[domain].append(rescan)
             logger.debug(f"Scheduled {reason.value} for {domain} at {scheduled_time}")
 
+    def cancel_rescans(self, domain: str) -> int:
+        """Cancel all scheduled rescans for a domain."""
+        rescans = self._scheduled.pop(domain, None)
+        return len(rescans) if rescans else 0
+
     def get_due_rescans(self) -> list[ScheduledRescan]:
         """Get all rescans that are due now."""
         now = datetime.now(timezone.utc)

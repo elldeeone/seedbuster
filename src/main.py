@@ -100,6 +100,7 @@ class SeedBusterPipeline:
             chat_id=config.telegram_chat_id,
             database=self.database,
             evidence_store=self.evidence_store,
+            allowlist_path=config.config_dir / "allowlist.txt",
             submit_callback=self._manual_submit,
             report_manager=self.report_manager,
             report_require_approval=config.report_require_approval,
@@ -125,6 +126,21 @@ class SeedBusterPipeline:
         """Handle scheduled rescan - re-analyze domain and send update if changed."""
         logger.info(f"Rescan triggered for {domain} (reason: {reason.value})")
 
+        domain_record = await self.database.get_domain(domain)
+        if domain_record:
+            status = str(domain_record.get("status") or "").strip().lower()
+            benign_statuses = {
+                DomainStatus.FALSE_POSITIVE.value,
+                DomainStatus.ALLOWLISTED.value,
+            }
+            if status in benign_statuses and reason != ScanReason.MANUAL:
+                canceled = self.temporal.cancel_rescans(domain)
+                logger.info(
+                    f"Skipping scheduled rescan for {domain} (status={status}); "
+                    f"canceled {canceled} remaining rescans"
+                )
+                return
+
         # Queue the domain for re-analysis with rescan flag
         # We store the reason in a dict to track rescan context
         await self._analysis_queue.put((domain, reason))
@@ -138,6 +154,25 @@ class SeedBusterPipeline:
             logger.info(f"Manual rescan queued: {domain}")
         except Exception as e:
             logger.error(f"Failed to queue manual rescan for {domain}: {e}")
+
+    def _allowlist_add(self, domain: str) -> None:
+        """Sync Telegram allowlist updates to the in-memory scorer."""
+        value = (domain or "").strip().lower()
+        if not value:
+            return
+        self.scorer.allowlist.add(value)
+        self.config.allowlist.add(value)
+        self.temporal.cancel_rescans(value)
+        logger.info(f"Allowlisted via Telegram: {value}")
+
+    def _allowlist_remove(self, domain: str) -> None:
+        """Sync Telegram allowlist removals to the in-memory scorer."""
+        value = (domain or "").strip().lower()
+        if not value:
+            return
+        self.scorer.allowlist.discard(value)
+        self.config.allowlist.discard(value)
+        logger.info(f"Removed from allowlist via Telegram: {value}")
 
     async def start(self):
         """Start all pipeline components."""
@@ -156,6 +191,7 @@ class SeedBusterPipeline:
         self.bot.set_queue_size_callback(lambda: self._discovery_queue.qsize() + self._analysis_queue.qsize())
         self.bot.set_rescan_callback(self._manual_rescan)
         self.bot.set_reload_callback(self.detector.reload_threat_intel)
+        self.bot.set_allowlist_callbacks(self._allowlist_add, self._allowlist_remove)
         await self.bot.start()
         logger.info("Telegram bot started")
 

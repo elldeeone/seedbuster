@@ -16,7 +16,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from .formatters import AlertFormatter, AlertData
-from ..storage.database import Database, DomainStatus
+from ..storage.database import Database, DomainStatus, Verdict
 from ..storage.evidence import EvidenceStore
 from ..reporter.base import ReportStatus
 
@@ -38,6 +38,7 @@ class SeedBusterBot:
         chat_id: str,
         database: Database,
         evidence_store: EvidenceStore,
+        allowlist_path: Path | None = None,
         submit_callback: Optional[Callable[[str], None]] = None,
         report_manager: Optional["ReportManager"] = None,
         report_require_approval: bool = True,
@@ -47,6 +48,7 @@ class SeedBusterBot:
         self.chat_id = chat_id
         self.database = database
         self.evidence_store = evidence_store
+        self.allowlist_path = allowlist_path or Path("./config/allowlist.txt")
         self.submit_callback = submit_callback
         self.report_manager = report_manager
         self.report_require_approval = report_require_approval
@@ -56,6 +58,8 @@ class SeedBusterBot:
         self._queue_size_callback: Optional[Callable[[], int]] = None
         self._rescan_callback: Optional[Callable[[str], None]] = None
         self._reload_callback: Optional[Callable[[], str]] = None
+        self._allowlist_add_callback: Optional[Callable[[str], None]] = None
+        self._allowlist_remove_callback: Optional[Callable[[str], None]] = None
         self._is_running = True
 
     @staticmethod
@@ -67,6 +71,91 @@ class SeedBusterBot:
         if not match:
             return None
         return match.group(0).rstrip(").,]}>\"'")
+
+    @staticmethod
+    def _extract_hostname(value: str) -> str:
+        """Extract a hostname from a domain/URL input (best-effort)."""
+        from urllib.parse import urlparse
+
+        raw = str(value or "").strip().lower()
+        if not raw:
+            return ""
+
+        candidate = raw if "://" in raw else f"http://{raw}"
+        parsed = urlparse(candidate)
+        hostname = (parsed.hostname or raw.split("/")[0]).strip().lower()
+        return hostname.strip(".")
+
+    def _read_allowlist_entries(self) -> set[str]:
+        """Read allowlist entries from disk."""
+        path = self.allowlist_path
+        if not path.exists():
+            return set()
+
+        entries: set[str] = set()
+        for line in path.read_text().splitlines():
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            entries.add(value.lower())
+        return entries
+
+    def _write_allowlist_entries(self, entries: set[str]) -> None:
+        """Write allowlist entries to disk (sorted, atomic)."""
+        path = self.allowlist_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        header = [
+            "# Allowed domains (one per line)",
+            "# These will never trigger alerts",
+        ]
+        content = "\n".join(header + sorted(entries) + [""])
+
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(content)
+        tmp_path.replace(path)
+
+    def _add_allowlist_entry(self, domain: str) -> bool:
+        """Add a domain to the allowlist file and sync callbacks."""
+        normalized = self._extract_hostname(domain)
+        if not normalized:
+            return False
+
+        entries = self._read_allowlist_entries()
+        if normalized in entries:
+            return False
+
+        entries.add(normalized)
+        self._write_allowlist_entries(entries)
+
+        if self._allowlist_add_callback:
+            try:
+                self._allowlist_add_callback(normalized)
+            except Exception as e:
+                logger.warning(f"Allowlist add callback failed for {normalized}: {e}")
+
+        return True
+
+    def _remove_allowlist_entry(self, domain: str) -> bool:
+        """Remove a domain from the allowlist file and sync callbacks."""
+        normalized = self._extract_hostname(domain)
+        if not normalized:
+            return False
+
+        entries = self._read_allowlist_entries()
+        if normalized not in entries:
+            return False
+
+        entries.remove(normalized)
+        self._write_allowlist_entries(entries)
+
+        if self._allowlist_remove_callback:
+            try:
+                self._allowlist_remove_callback(normalized)
+            except Exception as e:
+                logger.warning(f"Allowlist remove callback failed for {normalized}: {e}")
+
+        return True
 
     def _format_report_status_message(self, domain: str, reports: list[dict]) -> str:
         """Format report status lines with helpful retry/manual context."""
@@ -201,6 +290,15 @@ class SeedBusterBot:
         """Set callback to trigger manual rescan."""
         self._rescan_callback = callback
 
+    def set_allowlist_callbacks(
+        self,
+        add_callback: Callable[[str], None] | None = None,
+        remove_callback: Callable[[str], None] | None = None,
+    ):
+        """Set callbacks to keep the in-memory allowlist in sync."""
+        self._allowlist_add_callback = add_callback
+        self._allowlist_remove_callback = remove_callback
+
     def set_reload_callback(self, callback: Callable[[], str]):
         """Set callback to reload threat intel (returns version string)."""
         self._reload_callback = callback
@@ -235,6 +333,7 @@ class SeedBusterBot:
         # Callback handlers for inline buttons
         self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_reject, pattern="^reject_"))
+        self._app.add_handler(CallbackQueryHandler(self._callback_allowlist, pattern="^allow_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_defer, pattern="^defer_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_report_status, pattern="^status_"))
         self._app.add_handler(CallbackQueryHandler(self._callback_rescan, pattern="^rescan_"))
@@ -280,102 +379,130 @@ class SeedBusterBot:
             # Format message (plain text to avoid markdown parsing issues)
             message = AlertFormatter.format_alert(data)
 
-            # Create inline keyboard for report actions (if high confidence)
-            keyboard = None
-            if include_report_buttons and self.report_manager and data.score >= self.report_min_score:
-                # Context-aware buttons based on detection status
-                # Priority: seed_form_found > cloaking_confirmed > cloaking_suspected > standard
-                available_platforms = self.report_manager.get_available_platforms()
-                show_report_button = self.report_require_approval and bool(available_platforms)
-                temporal = data.temporal
+            # Create inline keyboard for actions (report button gated by min score)
+            available_platforms = (
+                self.report_manager.get_available_platforms()
+                if self.report_manager
+                else []
+            )
+            show_report_button = bool(
+                include_report_buttons
+                and self.report_manager
+                and data.score >= self.report_min_score
+                and self.report_require_approval
+                and available_platforms
+            )
 
-                if data.seed_form_found:
-                    # HIGHEST PRIORITY: Seed form found - definitive phishing confirmation
-                    rows = []
-                    if show_report_button:
-                        rows.append([
-                            InlineKeyboardButton(
-                                "🎯 Report (Seed Form Found)",
-                                callback_data=f"approve_{data.domain_id}",
-                            ),
-                        ])
+            # Context-aware buttons based on detection status.
+            # Priority: seed_form_found > cloaking_confirmed > cloaking_suspected > standard
+            temporal = data.temporal
+            keyboard = None
+
+            if data.seed_form_found:
+                # HIGHEST PRIORITY: Seed form found - definitive phishing confirmation
+                rows = []
+                if show_report_button:
                     rows.append([
                         InlineKeyboardButton(
-                            "❌ False Positive",
-                            callback_data=f"reject_{data.domain_id}",
-                        ),
-                        InlineKeyboardButton(
-                            "📊 Status",
-                            callback_data=f"status_{data.domain_id}",
+                            "🎯 Report (Seed Form Found)",
+                            callback_data=f"approve_{data.domain_id}",
                         ),
                     ])
-                    keyboard = InlineKeyboardMarkup(rows)
-                elif temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
-                    # Initial scan with suspected cloaking - offer defer as primary
-                    rows = [[
+                rows.append([
+                    InlineKeyboardButton(
+                        "✅ Allowlist",
+                        callback_data=f"allow_{data.domain_id}",
+                    ),
+                    InlineKeyboardButton(
+                        "❌ False Positive",
+                        callback_data=f"reject_{data.domain_id}",
+                    ),
+                    InlineKeyboardButton(
+                        "📊 Report Status",
+                        callback_data=f"status_{data.domain_id}",
+                    ),
+                ])
+                keyboard = InlineKeyboardMarkup(rows)
+            elif temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
+                # Initial scan with suspected cloaking - offer defer as primary
+                rows = [[
+                    InlineKeyboardButton(
+                        "🕐 Defer (Wait for Rescans)",
+                        callback_data=f"defer_{data.domain_id}",
+                    ),
+                ]]
+                if show_report_button:
+                    rows.append([
                         InlineKeyboardButton(
-                            "🕐 Defer (Wait for Rescans)",
-                            callback_data=f"defer_{data.domain_id}",
-                        ),
-                    ]]
-                    action_row = []
-                    if show_report_button:
-                        action_row.append(InlineKeyboardButton(
                             "✅ Report Now",
                             callback_data=f"approve_{data.domain_id}",
-                        ))
-                    action_row.append(InlineKeyboardButton(
+                        ),
+                    ])
+                rows.append([
+                    InlineKeyboardButton(
+                        "✅ Allowlist",
+                        callback_data=f"allow_{data.domain_id}",
+                    ),
+                    InlineKeyboardButton(
                         "❌ False Positive",
                         callback_data=f"reject_{data.domain_id}",
-                    ))
-                    action_row.append(InlineKeyboardButton(
-                        "📊 Status",
+                    ),
+                    InlineKeyboardButton(
+                        "📊 Report Status",
                         callback_data=f"status_{data.domain_id}",
-                    ))
-                    rows.append(action_row)
-                    keyboard = InlineKeyboardMarkup(rows)
-                elif temporal and temporal.cloaking_confirmed:
-                    # Rescan with confirmed cloaking - emphasize reporting
-                    rows = []
-                    if show_report_button:
-                        rows.append([
-                            InlineKeyboardButton(
-                                "🚨 Report (Cloaking Confirmed)",
-                                callback_data=f"approve_{data.domain_id}",
-                            ),
-                        ])
+                    ),
+                ])
+                keyboard = InlineKeyboardMarkup(rows)
+            elif temporal and temporal.cloaking_confirmed:
+                # Rescan with confirmed cloaking - emphasize reporting
+                rows = []
+                if show_report_button:
                     rows.append([
                         InlineKeyboardButton(
-                            "❌ False Positive",
-                            callback_data=f"reject_{data.domain_id}",
-                        ),
-                        InlineKeyboardButton(
-                            "📊 Status",
-                            callback_data=f"status_{data.domain_id}",
+                            "🚨 Report (Cloaking Confirmed)",
+                            callback_data=f"approve_{data.domain_id}",
                         ),
                     ])
-                    keyboard = InlineKeyboardMarkup(rows)
-                else:
-                    # Standard buttons
-                    first_row = []
-                    if show_report_button:
-                        first_row.append(InlineKeyboardButton(
-                            "✅ Approve & Report",
-                            callback_data=f"approve_{data.domain_id}",
-                        ))
-                    first_row.append(InlineKeyboardButton(
+                rows.append([
+                    InlineKeyboardButton(
+                        "✅ Allowlist",
+                        callback_data=f"allow_{data.domain_id}",
+                    ),
+                    InlineKeyboardButton(
                         "❌ False Positive",
                         callback_data=f"reject_{data.domain_id}",
+                    ),
+                    InlineKeyboardButton(
+                        "📊 Report Status",
+                        callback_data=f"status_{data.domain_id}",
+                    ),
+                ])
+                keyboard = InlineKeyboardMarkup(rows)
+            else:
+                # Standard buttons (always show FP + status)
+                first_row = []
+                if show_report_button:
+                    first_row.append(InlineKeyboardButton(
+                        "✅ Approve & Report",
+                        callback_data=f"approve_{data.domain_id}",
                     ))
-                    keyboard = InlineKeyboardMarkup([
-                        first_row,
-                        [
-                            InlineKeyboardButton(
-                                "📊 Report Status",
-                                callback_data=f"status_{data.domain_id}",
-                            ),
-                        ],
-                    ])
+                first_row.append(InlineKeyboardButton(
+                    "✅ Allowlist",
+                    callback_data=f"allow_{data.domain_id}",
+                ))
+                first_row.append(InlineKeyboardButton(
+                    "❌ False Positive",
+                    callback_data=f"reject_{data.domain_id}",
+                ))
+                keyboard = InlineKeyboardMarkup([
+                    first_row,
+                    [
+                        InlineKeyboardButton(
+                            "📊 Report Status",
+                            callback_data=f"status_{data.domain_id}",
+                        ),
+                    ],
+                ])
 
             # Optional external link buttons (work even when report buttons are hidden).
             if data.urlscan_result_url:
@@ -1342,6 +1469,61 @@ class SeedBusterBot:
             parse_mode=ParseMode.MARKDOWN,
         )
 
+    async def _callback_allowlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle allowlist (safe) button callback."""
+        if not self._is_authorized(update):
+            return
+        query = update.callback_query
+        await query.answer()
+
+        domain_short_id = query.data.replace("allow_", "")
+
+        target = await self._find_domain_by_short_id(domain_short_id)
+        if not target:
+            await query.message.reply_text(f"Domain not found: {domain_short_id}")
+            return
+
+        hostname = self._extract_hostname(target["domain"])
+        if not hostname:
+            await query.message.reply_text(f"Invalid domain for allowlist: {target['domain']}")
+            return
+
+        added = self._add_allowlist_entry(hostname)
+
+        await self.database.update_domain_status(
+            target["id"],
+            status=DomainStatus.ALLOWLISTED,
+            verdict=Verdict.BENIGN,
+        )
+
+        # Disable the allowlist button (best-effort).
+        try:
+            reply_markup = getattr(query.message, "reply_markup", None)
+            if reply_markup and getattr(reply_markup, "inline_keyboard", None):
+                new_rows = []
+                for row in reply_markup.inline_keyboard:
+                    new_row = []
+                    for button in row:
+                        if getattr(button, "callback_data", None) == query.data:
+                            new_row.append(InlineKeyboardButton("✅ Allowlisted", callback_data="noop"))
+                        else:
+                            new_row.append(button)
+                    new_rows.append(new_row)
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_rows))
+        except Exception as e:
+            logger.debug(f"Failed to update allowlist button state: {e}")
+
+        if added:
+            await query.message.reply_text(
+                f"✅ Allowlisted `{hostname}`. Future discoveries will be ignored.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            await query.message.reply_text(
+                f"✅ `{hostname}` is already allowlisted.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
     async def _callback_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle reject (false positive) button callback."""
         if not self._is_authorized(update):
@@ -1649,10 +1831,136 @@ class SeedBusterBot:
         """Handle /allowlist command."""
         if not self._is_authorized(update):
             return
-        # TODO: Implement allowlist management
+        args = [a.strip() for a in (context.args or []) if a.strip()]
+
+        if not args or args[0].lower() in {"list", "show"}:
+            entries = sorted(self._read_allowlist_entries())
+            if not entries:
+                await update.message.reply_text(
+                    "*Allowlist* is empty.\n\n"
+                    f"File: `{self.allowlist_path}`\n"
+                    "Add: `/allowlist add <domain>`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
+            max_items = 50
+            lines = [f"*Allowlist* ({len(entries)} entries)", ""]
+            for d in entries[:max_items]:
+                lines.append(f"- `{d}`")
+            extra = len(entries) - max_items
+            if extra > 0:
+                lines.append(f"...and {extra} more")
+            lines.extend([
+                "",
+                f"File: `{self.allowlist_path}`",
+                "Add: `/allowlist add <domain>`",
+                "Remove: `/allowlist remove <domain>`",
+            ])
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            return
+
+        action = args[0].lower()
+
+        if action in {"add", "+"}:
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: `/allowlist add <domain>`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
+            added: list[str] = []
+            already: list[str] = []
+            invalid: list[str] = []
+
+            for raw in args[1:]:
+                resolved = await self._find_domain_by_short_id(raw)
+                candidate = resolved["domain"] if resolved else raw
+                hostname = self._extract_hostname(candidate)
+                if not hostname:
+                    invalid.append(raw)
+                    continue
+
+                changed = self._add_allowlist_entry(hostname)
+                if changed:
+                    added.append(hostname)
+                else:
+                    already.append(hostname)
+
+                db_target = resolved or await self.database.get_domain(hostname)
+                if db_target:
+                    await self.database.update_domain_status(
+                        db_target["id"],
+                        status=DomainStatus.ALLOWLISTED,
+                        verdict=Verdict.BENIGN,
+                    )
+
+            lines = ["✅ Allowlist updated."]
+            if added:
+                lines.append("")
+                lines.append("*Added:* " + ", ".join(f"`{d}`" for d in sorted(set(added))))
+            if already:
+                lines.append("")
+                lines.append("*Already present:* " + ", ".join(f"`{d}`" for d in sorted(set(already))))
+            if invalid:
+                lines.append("")
+                lines.append("*Invalid:* " + ", ".join(f"`{d}`" for d in sorted(set(invalid))))
+
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            return
+
+        if action in {"remove", "rm", "del", "delete", "-"}:
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: `/allowlist remove <domain>`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
+            removed: list[str] = []
+            missing: list[str] = []
+            invalid: list[str] = []
+
+            for raw in args[1:]:
+                resolved = await self._find_domain_by_short_id(raw)
+                candidate = resolved["domain"] if resolved else raw
+                hostname = self._extract_hostname(candidate)
+                if not hostname:
+                    invalid.append(raw)
+                    continue
+
+                changed = self._remove_allowlist_entry(hostname)
+                if changed:
+                    removed.append(hostname)
+                else:
+                    missing.append(hostname)
+
+            lines = ["✅ Allowlist updated."]
+            if removed:
+                lines.append("")
+                lines.append("*Removed:* " + ", ".join(f"`{d}`" for d in sorted(set(removed))))
+            if missing:
+                lines.append("")
+                lines.append("*Not present:* " + ", ".join(f"`{d}`" for d in sorted(set(missing))))
+            if invalid:
+                lines.append("")
+                lines.append("*Invalid:* " + ", ".join(f"`{d}`" for d in sorted(set(invalid))))
+
+            lines.extend([
+                "",
+                "If you want to re-check a domain, run `/rescan <domain>`.",
+            ])
+
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            return
+
         await update.message.reply_text(
-            "Allowlist management coming soon.\n"
-            "Currently managed via `config/allowlist.txt`",
+            "Usage:\n"
+            "`/allowlist` - view\n"
+            "`/allowlist add <domain>`\n"
+            "`/allowlist remove <domain>`",
+            parse_mode=ParseMode.MARKDOWN,
         )
 
     async def _cmd_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
