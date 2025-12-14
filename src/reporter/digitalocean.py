@@ -98,6 +98,15 @@ Evidence:
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
 
+        manual_payload = (
+            "Submission not confirmed; manual submission recommended.\n\n"
+            f"Manual submission URL: {self.FORM_URL}\n\n"
+            f"Reporter name: {self.reporter_name}\n"
+            f"Reporter email: {self.reporter_email}\n"
+            f"Phishing URL: {evidence.url}\n\n"
+            f"Copy/paste description:\n{description}"
+        )
+
         try:
             from playwright.async_api import async_playwright
         except ImportError:
@@ -161,7 +170,7 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
                 # Evidence URL
                 evidence_input = page.locator('input[placeholder*="evidence" i], input[placeholder*="URL" i]').first
                 if await evidence_input.count() > 0:
-                    await evidence_input.fill(f"https://{do_apps[0]}")
+                    await evidence_input.fill(evidence.url)
 
                 # Source IP - scroll down first to find more fields
                 await page.evaluate("window.scrollBy(0, 300)")
@@ -169,7 +178,15 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
 
                 ip_input = page.locator('input[placeholder*="IP" i], input[placeholder*="ip" i]').first
                 if await ip_input.count() > 0:
-                    await ip_input.fill(do_apps[0])
+                    ip_value = ""
+                    try:
+                        import socket
+
+                        ip_value = await asyncio.to_thread(socket.gethostbyname, do_apps[0])
+                    except Exception:
+                        ip_value = ""
+                    if ip_value:
+                        await ip_input.fill(ip_value)
 
                 # Date field
                 now = datetime.now(timezone.utc)
@@ -210,13 +227,20 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
                             message="Submitted to DigitalOcean SOC team",
                         )
 
+                    await browser.close()
+                    return ReportResult(
+                        platform=self.platform_name,
+                        status=ReportStatus.MANUAL_REQUIRED,
+                        message=manual_payload,
+                    )
+
                 await browser.close()
 
-                # If we got here, submission might have worked but we're not sure
+                # If we got here, submission could not be verified.
                 return ReportResult(
                     platform=self.platform_name,
-                    status=ReportStatus.SUBMITTED,
-                    message="Form submitted (verification pending)",
+                    status=ReportStatus.MANUAL_REQUIRED,
+                    message=manual_payload,
                 )
 
         except Exception as e:
