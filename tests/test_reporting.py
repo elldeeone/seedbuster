@@ -17,7 +17,7 @@ from src.reporter.smtp_reporter import SMTPReporter
 from src.reporter.apwg import APWGReporter
 from src.reporter.microsoft import MicrosoftReporter
 from src.reporter.manager import ReportManager
-from src.storage.database import Database
+from src.storage.database import Database, DomainStatus
 from src.storage.evidence import EvidenceStore
 
 
@@ -491,3 +491,42 @@ async def test_microsoft_reporter_returns_manual_required():
     assert result.status == ReportStatus.MANUAL_REQUIRED
     assert "microsoft.com" in (result.message or "").lower()
     assert "https://example.com/path" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_report_manager_mark_manual_done_updates_report_and_domain(tmp_path):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    target = "example.com/path"
+    domain_id = await db.add_domain(domain=target, source="manual", domain_score=90)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=[])
+
+    report_id = await db.add_report(
+        domain_id=domain_id,
+        platform="google",
+        status=ReportStatus.MANUAL_REQUIRED.value,
+    )
+    await db.update_report(
+        report_id=report_id,
+        status=ReportStatus.MANUAL_REQUIRED.value,
+        response="Manual submission required: https://example.test/form\n\nURL: https://example.com/path",
+    )
+
+    results = await manager.mark_manual_done(domain_id=domain_id, domain=target, platforms=["google"])
+    assert results["google"].status == ReportStatus.SUBMITTED
+
+    latest = await db.get_latest_report(domain_id=domain_id, platform="google")
+    assert latest is not None
+    assert str(latest["status"]).strip().lower() == ReportStatus.SUBMITTED.value
+    assert "Manual submission required:" in (latest.get("response") or "")
+    assert "Manual submission marked complete" in (latest.get("response") or "")
+
+    domain_row = await db.get_domain_by_id(domain_id)
+    assert domain_row is not None
+    assert domain_row["status"] == DomainStatus.REPORTED.value
+
+    await db.close()

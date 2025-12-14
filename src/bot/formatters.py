@@ -358,6 +358,8 @@ class AlertFormatter:
 `/report <id>` - Submit to all enabled platforms
 `/report <id> status` - Show per-platform report status
 `/report <id> <platform>` - Submit to a specific platform
+`/report <id> done [platform|all]` - Mark manual submissions complete
+`/reports [filter] [n]` - Show reporting queue (filters: pending/manual/rate)
 `/platforms` - Show enabled/available reporting platforms
 
 *Configuration:*

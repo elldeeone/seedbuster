@@ -226,6 +226,7 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("fp", self._cmd_fp))
         self._app.add_handler(CommandHandler("evidence", self._cmd_evidence))
         self._app.add_handler(CommandHandler("report", self._cmd_report))
+        self._app.add_handler(CommandHandler("reports", self._cmd_reports))
         self._app.add_handler(CommandHandler("platforms", self._cmd_platforms))
         self._app.add_handler(CommandHandler("threshold", self._cmd_threshold))
         self._app.add_handler(CommandHandler("allowlist", self._cmd_allowlist))
@@ -930,6 +931,7 @@ class SeedBusterBot:
                 "Usage:\n"
                 "`/report <domain_id>` - Report to all platforms\n"
                 "`/report <domain_id> status` - Check report status\n"
+                "`/report <domain_id> done [platform|all]` - Mark manual submissions complete\n"
                 "`/report <domain_id> <platform>` - Report to specific platform",
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -966,6 +968,21 @@ class SeedBusterBot:
                     self._format_report_status_message(domain, reports),
                     parse_mode=ParseMode.MARKDOWN,
                 )
+        elif action == "done":
+            platform = (context.args[2] if len(context.args) > 2 else "").strip().lower()
+            platforms = None if not platform or platform == "all" else [platform]
+
+            await update.message.reply_text(
+                f"Marking manual reports complete for `{domain}`...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            results = await self.report_manager.mark_manual_done(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms,
+            )
+            summary = self.report_manager.format_results_summary(results)
+            await update.message.reply_text(summary)
         else:
             analysis_score = int(target.get("analysis_score") or 0)
             if analysis_score < self.report_min_score:
@@ -992,6 +1009,134 @@ class SeedBusterBot:
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
             await self._send_manual_report_instructions(update.message, domain, results)
+
+    async def _cmd_reports(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /reports command (queue of domains needing reporting action)."""
+        if not self._is_authorized(update):
+            return
+
+        if not self.report_manager:
+            await update.message.reply_text("Reporting not configured.")
+            return
+
+        # Optional filters: /reports [pending|manual|required|rate|rate_limited] [n]
+        filter_arg = str(context.args[0]).strip().lower() if context.args else ""
+        limit_arg = str(context.args[1]).strip() if len(context.args) > 1 else ""
+
+        limit = 10
+        if filter_arg.isdigit():
+            limit = min(50, max(1, int(filter_arg)))
+            filter_arg = ""
+        elif limit_arg.isdigit():
+            limit = min(50, max(1, int(limit_arg)))
+
+        filter_status: str | None = None
+        if filter_arg in {"pending"}:
+            filter_status = "pending"
+        elif filter_arg in {"manual", "manual_required", "required"}:
+            filter_status = "manual_required"
+        elif filter_arg in {"rate", "rate_limited", "retry"}:
+            filter_status = "rate_limited"
+
+        rows = await self.database.get_pending_reports()
+        if not rows:
+            await update.message.reply_text("No pending/manual/rate-limited reports.")
+            return
+
+        # Respect current enabled_platforms selection.
+        if self.report_manager.enabled_platforms is not None:
+            enabled = set(self.report_manager.enabled_platforms)
+            rows = [r for r in rows if str(r.get("platform") or "").strip().lower() in enabled]
+
+        if filter_status:
+            rows = [r for r in rows if str(r.get("status") or "").strip().lower() == filter_status]
+
+        if not rows:
+            await update.message.reply_text("No matching reports in the queue.")
+            return
+
+        by_domain: dict[int, dict[str, object]] = {}
+        for r in rows:
+            try:
+                domain_id = int(r.get("domain_id") or 0)
+            except Exception:
+                continue
+            if not domain_id:
+                continue
+            domain = str(r.get("domain") or "").strip()
+            if not domain:
+                continue
+            entry = by_domain.setdefault(domain_id, {"domain": domain, "rows": []})
+            entry["rows"].append(r)
+
+        items: list[tuple[int, dict[str, object]]] = []
+        for domain_id, entry in by_domain.items():
+            rows_for_domain = entry["rows"]
+            latest_id = 0
+            try:
+                latest_id = max(int(rr.get("id") or 0) for rr in rows_for_domain)
+            except Exception:
+                latest_id = 0
+            items.append((latest_id, {"domain_id": domain_id, **entry}))
+
+        items.sort(key=lambda t: t[0], reverse=True)
+        items = items[:limit]
+
+        lines = ["*Report Queue*"]
+        for _, entry in items:
+            domain_id = int(entry["domain_id"])
+            domain = str(entry["domain"])
+            safe_domain = domain.replace("`", "'")
+            short_id = self.evidence_store.get_domain_id(domain)
+
+            status_to_platforms: dict[str, list[str]] = {
+                "pending": [],
+                "manual_required": [],
+                "rate_limited": [],
+            }
+            next_attempts: list[str] = []
+            for r in entry["rows"]:
+                status = str(r.get("status") or "").strip().lower()
+                platform = str(r.get("platform") or "").strip().lower() or "unknown"
+                if status in status_to_platforms:
+                    status_to_platforms[status].append(platform)
+                if status == "rate_limited":
+                    next_attempt = str(r.get("next_attempt_at") or "").strip()
+                    if next_attempt:
+                        next_attempts.append(next_attempt)
+
+            parts: list[str] = []
+            if status_to_platforms["pending"]:
+                parts.append(f"⏳ pending:{len(status_to_platforms['pending'])}")
+            if status_to_platforms["manual_required"]:
+                parts.append(f"📝 manual:{len(status_to_platforms['manual_required'])}")
+            if status_to_platforms["rate_limited"]:
+                parts.append(f"⏱️ retry:{len(status_to_platforms['rate_limited'])}")
+
+            header = f"`{short_id}` `{safe_domain}`"
+            if parts:
+                header += " — " + ", ".join(parts)
+            lines.append(header)
+
+            manual_platforms = sorted(set(status_to_platforms["manual_required"]))
+            if manual_platforms:
+                lines.append("  📝 " + ", ".join(f"`{p}`" for p in manual_platforms))
+
+            rate_platforms = sorted(set(status_to_platforms["rate_limited"]))
+            if rate_platforms:
+                line = "  ⏱️ " + ", ".join(f"`{p}`" for p in rate_platforms)
+                if next_attempts:
+                    earliest = sorted(next_attempts)[0].replace("`", "'")
+                    line += f" (next: `{earliest}`)"
+                lines.append(line)
+
+            pending_platforms = sorted(set(status_to_platforms["pending"]))
+            if pending_platforms:
+                lines.append("  ⏳ " + ", ".join(f"`{p}`" for p in pending_platforms))
+
+            lines.append(f"  Actions: `/report {short_id}`, `/report {short_id} status`, `/report {short_id} done all`")
+
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_platforms(self, update: Update, context: ContextTypes.DEFAULT_TYPE):  # noqa: ARG002
         """Handle /platforms command (show enabled/available reporting platforms)."""
