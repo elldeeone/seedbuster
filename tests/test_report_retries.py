@@ -188,6 +188,52 @@ async def test_report_manager_persists_rate_limited_and_retry_succeeds(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_report_domain_force_bypasses_retry_schedule(tmp_path: Path, monkeypatch):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    domain = "example.com"
+    domain_id = await db.add_domain(domain=domain, source="manual", domain_score=10)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    reporter = _FakeReporter()
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["fake"])
+    manager.reporters = {"fake": reporter}
+
+    def fake_get_rate_limiter(*args, **kwargs):  # noqa: ANN001, ARG001
+        return _FakeLimiter(can_acquire=True, wait_seconds=1)
+
+    monkeypatch.setattr("src.reporter.manager.get_rate_limiter", fake_get_rate_limiter)
+
+    report_id = await db.add_report(domain_id=domain_id, platform="fake", status="pending")
+    await db.update_report(
+        report_id=report_id,
+        status=ReportStatus.RATE_LIMITED.value,
+        response="later",
+        retry_after=60,
+        next_attempt_at="2999-01-01 00:00:00",
+    )
+
+    # Without forcing, the manager should respect next_attempt_at.
+    results = await manager.report_domain(domain_id=domain_id, domain=domain, platforms=["fake"])
+    assert results["fake"].status == ReportStatus.RATE_LIMITED
+    assert reporter.calls == 0
+
+    # Forcing should bypass the schedule and attempt submission.
+    forced = await manager.report_domain(domain_id=domain_id, domain=domain, platforms=["fake"], force=True)
+    assert forced["fake"].status == ReportStatus.SUBMITTED
+    assert reporter.calls == 1
+
+    updated = await db.get_latest_report(domain_id=domain_id, platform="fake")
+    assert updated is not None
+    assert str(updated["status"]).lower() == ReportStatus.SUBMITTED.value
+    assert updated.get("next_attempt_at") is None
+
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_report_manager_dedupes_successful_report_rows(tmp_path: Path):
     db = Database(tmp_path / "seedbuster.db")
     await db.connect()

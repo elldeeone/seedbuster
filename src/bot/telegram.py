@@ -932,6 +932,7 @@ class SeedBusterBot:
                 "`/report <domain_id>` - Report to all platforms\n"
                 "`/report <domain_id> status` - Check report status\n"
                 "`/report <domain_id> done [platform|all]` - Mark manual submissions complete\n"
+                "`/report <domain_id> retry [platform|all]` - Force retry of rate-limited reports\n"
                 "`/report <domain_id> <platform>` - Report to specific platform",
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -983,6 +984,51 @@ class SeedBusterBot:
             )
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
+        elif action == "retry":
+            platform = (context.args[2] if len(context.args) > 2 else "").strip().lower()
+            requested = None if not platform or platform == "all" else platform
+
+            reports = await self.report_manager.get_report_status(domain_id)
+            rate_limited = sorted({
+                str(r.get("platform") or "").strip().lower()
+                for r in (reports or [])
+                if str(r.get("status") or "").strip().lower() == ReportStatus.RATE_LIMITED.value
+            })
+            if requested:
+                rate_limited = [p for p in rate_limited if p == requested]
+
+            # Respect current enabled_platforms selection.
+            if self.report_manager.enabled_platforms is not None:
+                enabled = set(self.report_manager.enabled_platforms)
+                rate_limited = [p for p in rate_limited if p in enabled]
+
+            if not rate_limited:
+                if requested:
+                    await update.message.reply_text(
+                        f"No rate-limited report to retry for `{domain}` on `{requested}`.",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"No rate-limited reports to retry for `{domain}`.",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                return
+
+            platforms = rate_limited
+            await update.message.reply_text(
+                f"Forcing retry for `{domain}` on " + ", ".join(f"`{p}`" for p in platforms) + "...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            results = await self.report_manager.report_domain(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms,
+                force=True,
+            )
+            summary = self.report_manager.format_results_summary(results)
+            await update.message.reply_text(summary)
+            await self._send_manual_report_instructions(update.message, domain, results)
         else:
             analysis_score = int(target.get("analysis_score") or 0)
             if analysis_score < self.report_min_score:

@@ -583,6 +583,8 @@ class ReportManager:
         domain_id: int,
         domain: str,
         platforms: Optional[list[str]] = None,
+        *,
+        force: bool = False,
     ) -> dict[str, ReportResult]:
         """
         Submit reports to multiple platforms.
@@ -591,6 +593,7 @@ class ReportManager:
             domain_id: Database ID of the domain
             domain: Domain name
             platforms: List of platforms to report to (None = all configured)
+            force: When True, bypass rate-limited schedules and attempt submission immediately
 
         Returns:
             Dict mapping platform name to ReportResult
@@ -664,8 +667,8 @@ class ReportManager:
                 )
                 continue
 
-            # Respect retry schedule for rate-limited reports.
-            if latest_status_lower == "rate_limited" and not self._is_timestamp_due(next_attempt_at):
+            # Respect retry schedule for rate-limited reports unless explicitly forced.
+            if not force and latest_status_lower == "rate_limited" and not self._is_timestamp_due(next_attempt_at):
                 results[platform] = ReportResult(
                     platform=platform,
                     status=ReportStatus.RATE_LIMITED,
