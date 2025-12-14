@@ -59,7 +59,7 @@ class GoogleSafeBrowsingReporter(BaseReporter):
         Submit phishing report to Google Safe Browsing.
 
         Note: Google uses reCAPTCHA which prevents full automation.
-        Returns PENDING status with URL for manual submission.
+        Returns MANUAL_REQUIRED status with URL for manual submission.
         """
         # Validate evidence
         is_valid, error = self.validate_evidence(evidence)
@@ -74,6 +74,6 @@ class GoogleSafeBrowsingReporter(BaseReporter):
         # Return pending with info for manual submission
         return ReportResult(
             platform=self.platform_name,
-            status=ReportStatus.PENDING,
+            status=ReportStatus.MANUAL_REQUIRED,
             message=f"Manual submission required (reCAPTCHA): {self.FORM_URL}",
         )

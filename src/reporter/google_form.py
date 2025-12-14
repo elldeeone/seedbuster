@@ -76,7 +76,7 @@ class GoogleFormReporter(BaseReporter):
                 if any(token in page_lower for token in ("recaptcha", "g-recaptcha", "captcha", "turnstile")):
                     return ReportResult(
                         platform=self.platform_name,
-                        status=ReportStatus.PENDING,
+                        status=ReportStatus.MANUAL_REQUIRED,
                         message=(
                             "Manual submission required (CAPTCHA): "
                             f"{self.REPORT_URL}\n\nCopy/paste details:\n{additional_info}"
@@ -146,10 +146,10 @@ class GoogleFormReporter(BaseReporter):
                         # Don't assume success if we can't confirm.
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.PENDING,
+                            status=ReportStatus.MANUAL_REQUIRED,
                             message=(
                                 "Submission not confirmed; manual submission recommended: "
-                                f"{self.REPORT_URL}"
+                                f"{self.REPORT_URL}\n\nCopy/paste details:\n{additional_info}"
                             ),
                         )
 

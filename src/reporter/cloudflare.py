@@ -85,7 +85,7 @@ class CloudflareReporter(BaseReporter):
                 if form_resp.status_code != 200:
                     return ReportResult(
                         platform=self.platform_name,
-                        status=ReportStatus.PENDING,
+                        status=ReportStatus.MANUAL_REQUIRED,
                         message=f"Manual submission required: {self.ABUSE_FORM_URL}",
                     )
 
@@ -93,7 +93,7 @@ class CloudflareReporter(BaseReporter):
                 if any(token in page_lower for token in ("cf-turnstile", "turnstile", "captcha", "cf-challenge")):
                     return ReportResult(
                         platform=self.platform_name,
-                        status=ReportStatus.PENDING,
+                        status=ReportStatus.MANUAL_REQUIRED,
                         message=f"Manual submission required (CAPTCHA): {self.ABUSE_FORM_URL}",
                     )
 
@@ -148,7 +148,7 @@ class CloudflareReporter(BaseReporter):
                         # Don't assume success if we can't confirm.
                         return ReportResult(
                             platform=self.platform_name,
-                            status=ReportStatus.PENDING,
+                            status=ReportStatus.MANUAL_REQUIRED,
                             message=f"Submission not confirmed; manual submission recommended: {self.ABUSE_FORM_URL}",
                         )
 
@@ -181,6 +181,6 @@ class CloudflareReporter(BaseReporter):
                 logger.exception("Cloudflare submission error")
                 return ReportResult(
                     platform=self.platform_name,
-                    status=ReportStatus.PENDING,
+                    status=ReportStatus.MANUAL_REQUIRED,
                     message=f"Auto-submit failed: {e}. Manual: {self.ABUSE_FORM_URL}",
                 )

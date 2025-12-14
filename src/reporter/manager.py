@@ -106,7 +106,7 @@ class ReportManager:
         Retry rate-limited reports that are due.
 
         This only retries reports in `rate_limited` status whose `next_attempt_at`
-        is due (or missing). Manual-required (`pending`) reports are not retried.
+        is due (or missing). Pending/manual-required reports are not retried.
         """
         due = await self.database.get_due_retry_reports(limit=limit)
         if not due:
@@ -128,6 +128,7 @@ class ReportManager:
                         status=ReportStatus.FAILED,
                         report_id=str(report_id),
                         message="Reporter not configured",
+                        response_data={"domain_id": domain_id, "domain": domain},
                     )
                     attempted.append(result)
                     await self.database.update_report(
@@ -148,6 +149,7 @@ class ReportManager:
                         status=ReportStatus.FAILED,
                         report_id=str(report_id),
                         message="Could not build evidence",
+                        response_data={"domain_id": domain_id, "domain": domain},
                     )
                     attempted.append(result)
                     await self.database.update_report(
@@ -167,6 +169,7 @@ class ReportManager:
                         report_id=str(report_id),
                         message=msg,
                         retry_after=retry_after,
+                        response_data={"domain_id": domain_id, "domain": domain},
                     )
                     attempted.append(result)
                     await self.database.update_report(
@@ -179,6 +182,14 @@ class ReportManager:
 
                 result = await reporter.submit(evidence)
                 result.report_id = str(report_id)
+                metadata = {"domain_id": domain_id, "domain": domain}
+                if result.response_data is None:
+                    result.response_data = metadata
+                else:
+                    try:
+                        result.response_data = {**result.response_data, **metadata}
+                    except Exception:
+                        result.response_data = metadata
                 attempted.append(result)
 
                 await self.database.update_report(
@@ -299,6 +310,31 @@ class ReportManager:
         if self.enabled_platforms is not None:
             platforms = [p for p in platforms if p in self.enabled_platforms]
         return platforms
+
+    async def ensure_pending_reports(self, domain_id: int, platforms: Optional[list[str]] = None) -> None:
+        """
+        Ensure there is a pending (awaiting approval) report row per platform.
+
+        This is used when reporting requires manual approval so `/report <id> status`
+        can show per-platform pending status before any submissions are attempted.
+        """
+        if platforms is None:
+            platforms = self.get_available_platforms()
+        if not platforms:
+            return
+
+        existing = await self.database.get_reports_for_domain(domain_id)
+        existing_platforms = {str(r.get("platform") or "").strip().lower() for r in existing}
+
+        for platform in platforms:
+            key = (platform or "").strip().lower()
+            if not key or key in existing_platforms:
+                continue
+            await self.database.add_report(
+                domain_id=domain_id,
+                platform=key,
+                status=ReportStatus.PENDING.value,
+            )
 
     async def build_evidence(
         self,
@@ -464,6 +500,16 @@ class ReportManager:
                 )
                 continue
 
+            # Manual-required reports shouldn't be re-attempted automatically; keep the last instructions.
+            if latest_status_lower == ReportStatus.MANUAL_REQUIRED.value:
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.MANUAL_REQUIRED,
+                    report_id=str(latest.get("id")) if latest else None,
+                    message=(latest.get("response") if latest else None) or "Manual submission required",
+                )
+                continue
+
             # Respect retry schedule for rate-limited reports.
             if latest_status_lower == "rate_limited" and not self._is_timestamp_due(next_attempt_at):
                 results[platform] = ReportResult(
@@ -606,6 +652,7 @@ class ReportManager:
                 ReportStatus.SUBMITTED: "✅",
                 ReportStatus.CONFIRMED: "✅",
                 ReportStatus.PENDING: "⏳",
+                ReportStatus.MANUAL_REQUIRED: "📝",
                 ReportStatus.FAILED: "❌",
                 ReportStatus.RATE_LIMITED: "⏱️",
                 ReportStatus.DUPLICATE: "🔄",
@@ -616,7 +663,7 @@ class ReportManager:
             if result.message:
                 msg = result.message.strip()
                 # Prefer to show manual URLs/instructions when automation is blocked.
-                max_len = 180 if (result.status == ReportStatus.PENDING or "http" in msg) else 80
+                max_len = 180 if (result.status in {ReportStatus.PENDING, ReportStatus.MANUAL_REQUIRED} or "http" in msg) else 80
                 if len(msg) > max_len:
                     msg = msg[: max_len - 1] + "…"
                 line += f" - {msg}"

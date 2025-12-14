@@ -200,6 +200,6 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
             logger.exception("DigitalOcean form submission error")
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.PENDING,
+                status=ReportStatus.MANUAL_REQUIRED,
                 message=f"Auto-submit failed: {e}. Manual: {self.FORM_URL}",
             )

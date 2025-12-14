@@ -393,6 +393,25 @@ class SeedBusterPipeline:
                         by_status[r.status.value] = by_status.get(r.status.value, 0) + 1
                     logger.info(f"Report retry pass: {by_status}")
 
+                    # Notify on progress (avoid spamming on pure rate-limit churn).
+                    notify_statuses = {"submitted", "confirmed", "duplicate", "manual_required"}
+                    notify = [r for r in results if r.status.value in notify_statuses]
+                    if notify:
+                        lines = ["*Report retry updates:*"]
+                        max_items = 10
+                        for r in notify[:max_items]:
+                            domain = (r.response_data or {}).get("domain") or "unknown"
+                            line = f"- `{domain}`: `{r.platform}` `{r.status.value}`"
+                            if r.status.value == "manual_required" and r.message:
+                                manual_url = self.bot._extract_first_url(r.message)
+                                if manual_url:
+                                    line += f" (manual: `{manual_url}`)"
+                            lines.append(line)
+                        extra = len(notify) - max_items
+                        if extra > 0:
+                            lines.append(f"...and {extra} more")
+                        await self.bot.send_message("\n".join(lines))
+
                 await asyncio.sleep(interval_seconds)
 
             except asyncio.CancelledError:
@@ -832,6 +851,14 @@ class SeedBusterPipeline:
 
             # Send alert if suspicious
             if analysis_score >= self.config.analysis_score_threshold:
+                # When reporting requires approval, pre-create pending report rows so status views
+                # show per-platform "awaiting approval" before any submission attempts.
+                if self.config.report_require_approval and analysis_score >= self.config.report_min_score:
+                    try:
+                        await self.report_manager.ensure_pending_reports(domain_id=domain_id)
+                    except Exception as e:
+                        logger.warning(f"Could not create pending report rows for {domain}: {e}")
+
                 screenshot_path = self.evidence_store.get_screenshot_path(domain)
                 screenshot_paths = self.evidence_store.get_all_screenshot_paths(domain)
 

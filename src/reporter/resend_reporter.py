@@ -126,7 +126,7 @@ class ResendReporter(BaseReporter):
         if form_url and not to_email:
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.PENDING,
+                status=ReportStatus.MANUAL_REQUIRED,
                 message=f"Manual submission required: {form_url}",
             )
 

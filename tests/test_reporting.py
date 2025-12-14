@@ -91,7 +91,7 @@ class _FakeAsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_google_form_reporter_returns_pending_when_captcha_detected(monkeypatch):
+async def test_google_form_reporter_returns_manual_required_when_captcha_detected(monkeypatch):
     import httpx
 
     def fake_async_client(*args, **kwargs):
@@ -107,11 +107,11 @@ async def test_google_form_reporter_returns_pending_when_captcha_detected(monkey
         confidence_score=90,
     )
     result = await reporter.submit(evidence)
-    assert result.status == ReportStatus.PENDING
+    assert result.status == ReportStatus.MANUAL_REQUIRED
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_reporter_returns_pending_when_turnstile_detected(monkeypatch):
+async def test_cloudflare_reporter_returns_manual_required_when_turnstile_detected(monkeypatch):
     import httpx
 
     def fake_async_client(*args, **kwargs):
@@ -127,5 +127,4 @@ async def test_cloudflare_reporter_returns_pending_when_turnstile_detected(monke
         confidence_score=90,
     )
     result = await reporter.submit(evidence)
-    assert result.status == ReportStatus.PENDING
-
+    assert result.status == ReportStatus.MANUAL_REQUIRED

@@ -12,6 +12,7 @@ class ReportStatus(str, Enum):
     """Status of an abuse report submission."""
 
     PENDING = "pending"  # Awaiting human approval
+    MANUAL_REQUIRED = "manual_required"  # Automation blocked; manual submission needed
     APPROVED = "approved"  # Approved, ready to send
     SUBMITTED = "submitted"  # Successfully submitted
     CONFIRMED = "confirmed"  # Platform confirmed receipt

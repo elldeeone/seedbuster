@@ -511,14 +511,14 @@ class Database:
             return [dict(row) for row in rows]
 
     async def get_pending_reports(self) -> list[dict]:
-        """Get all domains with pending report status."""
+        """Get all domains with pending report status (approval/manual/retry)."""
         async with self._lock:
             cursor = await self._connection.execute(
                 """
                 SELECT r.*, d.domain
                 FROM reports r
                 JOIN domains d ON r.domain_id = d.id
-                WHERE r.status IN ('pending', 'rate_limited')
+                WHERE r.status IN ('pending', 'manual_required', 'rate_limited')
                 ORDER BY r.id ASC
                 """
             )

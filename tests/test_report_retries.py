@@ -191,3 +191,29 @@ async def test_report_manager_dedupes_successful_report_rows(tmp_path: Path):
 
     await db.close()
 
+
+@pytest.mark.asyncio
+async def test_report_manager_ensure_pending_reports_creates_rows_once(tmp_path: Path):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    domain_id = await db.add_domain(domain="example.com", source="manual", domain_score=10)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    reporter = _FakeReporter()
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["fake"])
+    manager.reporters = {"fake": reporter}
+
+    await manager.ensure_pending_reports(domain_id=domain_id)
+    rows = await db.get_reports_for_domain(domain_id)
+    assert len(rows) == 1
+    assert rows[0]["platform"] == "fake"
+    assert rows[0]["status"] == ReportStatus.PENDING.value
+
+    # Second call should not create duplicates.
+    await manager.ensure_pending_reports(domain_id=domain_id)
+    rows = await db.get_reports_for_domain(domain_id)
+    assert len(rows) == 1
+
+    await db.close()

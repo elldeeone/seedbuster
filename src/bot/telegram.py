@@ -73,10 +73,12 @@ class SeedBusterBot:
         for r in reports:
             status = str(r.get("status") or "unknown").strip().lower()
             platform = str(r.get("platform") or "unknown").strip()
+            response_text = str(r.get("response") or "")
             status_emoji = {
                 "submitted": "✅",
                 "confirmed": "✅",
                 "pending": "⏳",
+                "manual_required": "📝",
                 "failed": "❌",
                 "rate_limited": "⏱️",
                 "duplicate": "🔄",
@@ -84,31 +86,42 @@ class SeedBusterBot:
             }.get(status, "❓")
 
             report_id = r.get("id")
-            line = f"{status_emoji} {platform}: {status}"
+            status_label = status
+            if status == "pending":
+                if response_text and ("manual" in response_text.lower() or self._extract_first_url(response_text)):
+                    status_label = "pending (manual action needed)"
+                else:
+                    status_label = "pending (awaiting approval)"
+            platform_label = platform.replace("`", "'")
+            status_label = status_label.replace("`", "'")
+            line = f"{status_emoji} `{platform_label}`: `{status_label}`"
             if report_id:
-                line += f" (id {report_id})"
+                line += f" (id `{report_id}`)"
 
             if status == "rate_limited":
                 next_attempt_at = (r.get("next_attempt_at") or "").strip()
                 if next_attempt_at:
-                    line += f" (next attempt: {next_attempt_at})"
+                    safe_next_attempt = next_attempt_at.replace("`", "'")
+                    line += f" (next attempt: `{safe_next_attempt}`)"
                 else:
                     retry_after = r.get("retry_after")
                     if retry_after:
-                        line += f" (retry after: {retry_after}s)"
+                        line += f" (retry after: `{retry_after}`s)"
 
-            if status == "pending":
-                response = str(r.get("response") or "")
-                manual_url = self._extract_first_url(response)
+            if status in {"pending", "manual_required"}:
+                manual_url = self._extract_first_url(response_text)
                 if manual_url:
-                    line += f" (manual: {manual_url})"
+                    safe_manual_url = manual_url.replace("`", "'")
+                    line += f" (manual: `{safe_manual_url}`)"
 
-            if status in {"failed"} and r.get("response"):
-                response = str(r.get("response") or "").strip().replace("\n", " ")
-                if response:
-                    if len(response) > 120:
-                        response = response[:119] + "…"
-                    line += f" - {response}"
+            if status in {"failed", "manual_required", "pending"} and response_text:
+                response_snippet = response_text.strip().replace("\n", " ")
+                if response_snippet:
+                    max_len = 200 if status in {"manual_required", "pending"} else 120
+                    if len(response_snippet) > max_len:
+                        response_snippet = response_snippet[: max_len - 1] + "…"
+                    safe_response = response_snippet.replace("`", "'")
+                    line += f" - `{safe_response}`"
 
             status_lines.append(line)
         return "\n".join(status_lines)
