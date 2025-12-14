@@ -54,6 +54,19 @@ playwright install chromium
 python -m src.main
 ```
 
+### 5. Dashboard (optional)
+
+**Docker:**
+```bash
+docker-compose up -d dashboard
+```
+
+**Local (separate terminal):**
+```bash
+seedbuster-dashboard
+# or: python -m src.dashboard.main
+```
+
 ## Telegram Commands
 
 | Command | Description |
@@ -131,7 +144,7 @@ Paths:
 - `CONFIG_DIR` (default: `./config`)
 
 Dashboard (optional):
-- `DASHBOARD_ENABLED` - If `true`, starts a small web dashboard server
+- Run separately via `seedbuster-dashboard` (or `python -m src.dashboard.main`)
 - `DASHBOARD_HOST`, `DASHBOARD_PORT`
 - `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD` - Basic auth for `/admin`
 

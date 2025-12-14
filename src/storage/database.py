@@ -1,6 +1,7 @@
 """SQLite database operations for SeedBuster."""
 
 import asyncio
+import json
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,15 @@ class Database:
         """Establish database connection and create tables."""
         self._connection = await aiosqlite.connect(self.db_path)
         self._connection.row_factory = aiosqlite.Row
+        # Enable better multi-process concurrency for dashboard + pipeline usage.
+        # Best-effort because some SQLite builds/settings may reject these pragmas.
+        try:
+            await self._connection.execute("PRAGMA journal_mode=WAL")
+            await self._connection.execute("PRAGMA synchronous=NORMAL")
+            await self._connection.execute("PRAGMA busy_timeout=5000")
+            await self._connection.commit()
+        except Exception:
+            pass
         await self._create_tables()
 
     async def close(self):
@@ -97,6 +107,17 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (domain_id) REFERENCES domains(id)
                     );
+
+                    CREATE TABLE IF NOT EXISTS dashboard_actions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        kind TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        claimed_at TIMESTAMP,
+                        processed_at TIMESTAMP,
+                        error TEXT
+                    );
                 """
             )
             await self._connection.commit()
@@ -115,6 +136,7 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_domains_domain ON domains(domain)",
             "CREATE INDEX IF NOT EXISTS idx_reports_domain_platform ON reports(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_next_attempt ON reports(status, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_status ON dashboard_actions(status, id)",
         ]
 
         for stmt in statements:
@@ -430,6 +452,88 @@ class Database:
             cursor = await self._connection.execute(sql, params)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def enqueue_dashboard_action(self, kind: str, payload: dict) -> int:
+        """Add an admin action requested by the dashboard (processed by the pipeline)."""
+        record = {
+            "kind": str(kind or "").strip().lower(),
+            "payload": payload or {},
+        }
+        if not record["kind"]:
+            raise ValueError("Action kind is required")
+
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT INTO dashboard_actions (kind, payload, status)
+                VALUES (?, ?, 'pending')
+                """,
+                (record["kind"], json.dumps(record["payload"])),
+            )
+            await self._connection.commit()
+            return int(cursor.lastrowid)
+
+    async def claim_dashboard_actions(self, limit: int = 20) -> list[dict]:
+        """Claim pending dashboard actions for processing (multi-process safe, best-effort)."""
+        limit = max(1, min(int(limit), 100))
+
+        async with self._lock:
+            try:
+                await self._connection.execute("BEGIN IMMEDIATE")
+            except Exception:
+                # If we can't start a write transaction, just bail and retry later.
+                return []
+
+            cursor = await self._connection.execute(
+                """
+                SELECT id, kind, payload
+                FROM dashboard_actions
+                WHERE status = 'pending'
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            ids = [int(r["id"]) for r in rows]
+
+            if ids:
+                await self._connection.executemany(
+                    """
+                    UPDATE dashboard_actions
+                    SET status = 'processing', claimed_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    [(i,) for i in ids],
+                )
+            await self._connection.commit()
+
+        return [dict(r) for r in rows]
+
+    async def finish_dashboard_action(
+        self,
+        action_id: int,
+        *,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Mark a dashboard action as done/failed."""
+        status_value = (status or "").strip().lower() or "done"
+        if status_value not in {"done", "failed"}:
+            raise ValueError("Invalid action status")
+
+        async with self._lock:
+            await self._connection.execute(
+                """
+                UPDATE dashboard_actions
+                SET status = ?,
+                    processed_at = CURRENT_TIMESTAMP,
+                    error = ?
+                WHERE id = ?
+                """,
+                (status_value, error, int(action_id)),
+            )
+            await self._connection.commit()
 
     async def mark_false_positive(self, domain_id: int):
         """Mark domain as false positive."""

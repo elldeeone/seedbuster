@@ -47,7 +47,6 @@ class Config:
     telegram_chat_id: str
 
     # Dashboard (optional)
-    dashboard_enabled: bool = False
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8080
     dashboard_admin_user: str = "admin"
@@ -215,7 +214,6 @@ def load_config() -> Config:
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
-        dashboard_enabled=os.getenv("DASHBOARD_ENABLED", "false").lower() == "true",
         dashboard_host=os.getenv("DASHBOARD_HOST", "127.0.0.1"),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8080")),
         dashboard_admin_user=os.getenv("DASHBOARD_ADMIN_USER", "admin"),

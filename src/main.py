@@ -1,6 +1,7 @@
 """Main entry point for SeedBuster phishing detection pipeline."""
 
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -23,7 +24,6 @@ from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot
 from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
-from .dashboard.server import DashboardServer, DashboardConfig
 
 # Configure logging
 logging.basicConfig(
@@ -109,7 +109,6 @@ class SeedBusterPipeline:
         )
         self.ct_listener: AsyncCertstreamListener = None
         self.search_discovery: SearchDiscovery | None = None
-        self.dashboard: DashboardServer | None = None
 
     def _manual_submit(self, domain: str):
         """Handle manual domain submission from Telegram."""
@@ -185,47 +184,6 @@ class SeedBusterPipeline:
         await self.database.connect()
         logger.info("Database connected")
 
-        # Start dashboard (optional)
-        if self.config.dashboard_enabled:
-            async def _report(domain_id: int, domain: str, platforms: list[str] | None, force: bool):
-                return await self.report_manager.report_domain(
-                    domain_id=domain_id,
-                    domain=domain,
-                    platforms=platforms,
-                    force=force,
-                )
-
-            async def _mark_manual_done(domain_id: int, domain: str, platforms: list[str] | None, note: str):
-                return await self.report_manager.mark_manual_done(
-                    domain_id=domain_id,
-                    domain=domain,
-                    platforms=platforms,
-                    note=note,
-                )
-
-            self.dashboard = DashboardServer(
-                config=DashboardConfig(
-                    enabled=True,
-                    host=self.config.dashboard_host,
-                    port=self.config.dashboard_port,
-                    admin_user=self.config.dashboard_admin_user,
-                    admin_password=self.config.dashboard_admin_password,
-                ),
-                database=self.database,
-                evidence_dir=self.config.evidence_dir,
-                submit_callback=self._manual_submit,
-                rescan_callback=self._manual_rescan,
-                report_callback=_report,
-                mark_manual_done_callback=_mark_manual_done,
-                get_available_platforms=self.report_manager.get_available_platforms,
-            )
-            await self.dashboard.start()
-            logger.info(
-                "Dashboard started on http://%s:%s",
-                self.config.dashboard_host,
-                self.config.dashboard_port,
-            )
-
         # Start browser
         await self.browser.start()
         logger.info("Browser started")
@@ -296,6 +254,7 @@ class SeedBusterPipeline:
         self._tasks = [
             asyncio.create_task(self._discovery_worker()),
             asyncio.create_task(self._analysis_worker()),
+            asyncio.create_task(self._dashboard_actions_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
             asyncio.create_task(self._report_retry_worker()),
         ]
@@ -339,10 +298,6 @@ class SeedBusterPipeline:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         self.search_discovery = None
-
-        if self.dashboard:
-            await self.dashboard.stop()
-            self.dashboard = None
 
         await self.bot.send_message("*SeedBuster stopping*...")
         await self.bot.stop()
@@ -418,6 +373,139 @@ class SeedBusterPipeline:
             except Exception as e:
                 logger.error(f"Discovery worker error: {e}")
                 await asyncio.sleep(1)
+
+    async def _dashboard_actions_worker(self):
+        """Process dashboard admin actions (submit/rescan/report) from SQLite queue."""
+        logger.info("Dashboard actions worker started")
+
+        while self._running:
+            try:
+                actions = await self.database.claim_dashboard_actions(limit=20)
+                if not actions:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                for action in actions:
+                    action_id = int(action.get("id") or 0)
+                    kind = str(action.get("kind") or "").strip().lower()
+                    payload_raw = action.get("payload") or "{}"
+
+                    try:
+                        payload = (
+                            json.loads(payload_raw)
+                            if isinstance(payload_raw, str) and payload_raw.strip()
+                            else {}
+                        )
+                    except Exception:
+                        payload = {}
+
+                    try:
+                        await self._handle_dashboard_action(kind, payload)
+                        await self.database.finish_dashboard_action(action_id, status="done")
+                    except Exception as e:
+                        logger.warning(
+                            "Dashboard action failed (id=%s kind=%s): %s",
+                            action_id,
+                            kind,
+                            e,
+                        )
+                        await self.database.finish_dashboard_action(
+                            action_id,
+                            status="failed",
+                            error=str(e),
+                        )
+
+            except Exception as e:
+                logger.error(f"Dashboard actions worker error: {e}")
+                await asyncio.sleep(1.0)
+
+    async def _handle_dashboard_action(self, kind: str, payload: dict) -> None:
+        """Handle a single dashboard action payload."""
+        action = str(kind or "").strip().lower()
+
+        if action == "submit_domain":
+            domain = str(payload.get("domain") or "").strip().lower()
+            if not domain:
+                raise ValueError("domain is required")
+
+            # If it already exists, treat it as a rescan request.
+            if await self.database.domain_exists(domain):
+                self._manual_rescan(domain)
+                return
+
+            try:
+                self._discovery_queue.put_nowait({
+                    "domain": domain,
+                    "source": "manual",
+                    "force": True,
+                })
+            except asyncio.QueueFull:
+                raise RuntimeError("discovery queue full")
+
+            return
+
+        if action == "rescan_domain":
+            domain = str(payload.get("domain") or "").strip().lower()
+            if not domain:
+                raise ValueError("domain is required")
+            self._manual_rescan(domain)
+            return
+
+        if action == "report_domain":
+            domain_id = int(payload.get("domain_id") or 0)
+            domain = str(payload.get("domain") or "").strip()
+            force = bool(payload.get("force", False))
+            platforms = payload.get("platforms")
+            platforms_list: list[str] | None = None
+            if isinstance(platforms, list):
+                platforms_list = [str(p).strip().lower() for p in platforms if str(p).strip()]
+
+            if not domain and domain_id:
+                row = await self.database.get_domain_by_id(domain_id)
+                domain = str(row.get("domain") or "").strip() if row else ""
+            if not domain_id and domain:
+                row = await self.database.get_domain(domain)
+                domain_id = int(row.get("id") or 0) if row else 0
+
+            if not domain_id or not domain:
+                raise ValueError("domain_id/domain required")
+
+            await self.report_manager.report_domain(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms_list,
+                force=force,
+            )
+            return
+
+        if action == "manual_done":
+            domain_id = int(payload.get("domain_id") or 0)
+            domain = str(payload.get("domain") or "").strip()
+            platforms = payload.get("platforms")
+            platforms_list: list[str] | None = None
+            if isinstance(platforms, list):
+                platforms_list = [str(p).strip().lower() for p in platforms if str(p).strip()]
+            note = str(payload.get("note") or "Manual submission marked complete").strip()
+
+            if not domain and domain_id:
+                row = await self.database.get_domain_by_id(domain_id)
+                domain = str(row.get("domain") or "").strip() if row else ""
+            if not domain_id and domain:
+                row = await self.database.get_domain(domain)
+                domain_id = int(row.get("id") or 0) if row else 0
+
+            if not domain_id or not domain:
+                raise ValueError("domain_id/domain required")
+
+            await self.report_manager.mark_manual_done(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms_list,
+                note=note,
+            )
+            return
+
+        raise ValueError(f"unknown action kind: {action}")
 
     async def _analysis_worker(self):
         """Analyze queued domains for phishing signals."""

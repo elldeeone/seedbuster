@@ -30,6 +30,7 @@ dev = [
 
 [project.scripts]
 seedbuster = "src.main:main"
+seedbuster-dashboard = "src.dashboard.main:main"
 
 [build-system]
 requires = ["hatchling"]
