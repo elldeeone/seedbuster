@@ -4,7 +4,12 @@ import asyncio
 
 import pytest
 
-from src.discovery.search_discovery import SearchDiscovery, SearchResult, normalize_search_target
+from src.discovery.search_discovery import (
+    SearchDiscovery,
+    SearchProviderConfigurationError,
+    SearchResult,
+    normalize_search_target,
+)
 
 
 def test_normalize_search_target_skips_non_http():
@@ -32,6 +37,19 @@ class _StubProvider:
 
     async def close(self) -> None:
         return
+
+
+class _FailingProvider:
+    def __init__(self):
+        self.calls: int = 0
+        self.closed: bool = False
+
+    async def search(self, query: str, max_results: int, *, start: int = 1) -> list[SearchResult]:  # noqa: ARG002
+        self.calls += 1
+        raise SearchProviderConfigurationError("bad config")
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -97,3 +115,37 @@ async def test_search_discovery_rotates_pages_and_persists(tmp_path):
     )
     await discovery2.run_once()
     assert provider2.calls == [("kaspa wallet", 20, 21)]
+
+
+@pytest.mark.asyncio
+async def test_search_discovery_run_once_raises_on_configuration_error():
+    queue: asyncio.Queue[object] = asyncio.Queue(maxsize=10)
+    provider = _FailingProvider()
+    discovery = SearchDiscovery(
+        queue=queue,
+        provider=provider,
+        queries=["kaspa wallet"],
+        interval_seconds=3600,
+        results_per_query=10,
+    )
+
+    with pytest.raises(SearchProviderConfigurationError):
+        await discovery.run_once()
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_search_discovery_run_loop_exits_and_closes_on_configuration_error():
+    queue: asyncio.Queue[object] = asyncio.Queue(maxsize=10)
+    provider = _FailingProvider()
+    discovery = SearchDiscovery(
+        queue=queue,
+        provider=provider,
+        queries=["kaspa wallet"],
+        interval_seconds=3600,
+        results_per_query=10,
+    )
+
+    await discovery.run_loop()
+    assert provider.calls == 1
+    assert provider.closed is True

@@ -17,6 +17,10 @@ import tldextract
 logger = logging.getLogger(__name__)
 
 
+class SearchProviderConfigurationError(RuntimeError):
+    """Raised when a search provider is misconfigured (keys/engine IDs missing/invalid)."""
+
+
 @dataclass(frozen=True)
 class SearchResult:
     """Single search result entry."""
@@ -82,7 +86,31 @@ class GoogleCSEProvider:
             ) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise RuntimeError(f"Google CSE HTTP {resp.status}: {text[:200]}")
+                    snippet = text[:200]
+                    try:
+                        payload = json.loads(text)
+                        err = payload.get("error") or {}
+                        msg = str(err.get("message") or "").strip()
+                        details = err.get("errors") or []
+                        reason = ""
+                        if isinstance(details, list) and details and isinstance(details[0], dict):
+                            reason = str(details[0].get("reason") or "").strip()
+
+                        # These typically indicate misconfiguration (wrong cx/key or disabled API).
+                        if resp.status == 404 and ("not found" in msg.lower() or reason.lower() == "notfound"):
+                            raise SearchProviderConfigurationError(
+                                f"Google CSE search engine not found (cx={self._cse_id}); check GOOGLE_CSE_ID"
+                            )
+                        if resp.status in {400, 403} and msg:
+                            raise SearchProviderConfigurationError(
+                                f"Google CSE configuration error (HTTP {resp.status}: {msg}); "
+                                "check GOOGLE_CSE_API_KEY/GOOGLE_CSE_ID and ensure the Custom Search API is enabled"
+                            )
+                        if msg:
+                            snippet = msg
+                    except json.JSONDecodeError:
+                        pass
+                    raise RuntimeError(f"Google CSE HTTP {resp.status}: {snippet}")
                 data = await resp.json()
 
             items = data.get("items") or []
@@ -321,6 +349,8 @@ class SearchDiscovery:
             while True:
                 await self.run_once()
                 await asyncio.sleep(self.interval_seconds)
+        except SearchProviderConfigurationError as e:
+            logger.error("Search discovery disabled due to configuration error: %s", e)
         except asyncio.CancelledError:
             raise
         finally:
@@ -348,6 +378,8 @@ class SearchDiscovery:
             try:
                 results = await self.provider.search(query, self.results_per_query, start=start)
                 total_results = len(results)
+            except SearchProviderConfigurationError:
+                raise
             except Exception as e:
                 logger.warning("Search discovery query failed (%s): %s", query, e)
                 continue
