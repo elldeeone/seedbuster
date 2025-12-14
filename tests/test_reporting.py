@@ -11,6 +11,7 @@ from src.reporter.base import BaseReporter, ReportResult
 from src.reporter.cloudflare import CloudflareReporter
 from src.reporter.google_form import GoogleFormReporter
 from src.reporter.hosting_provider import HostingProviderReporter
+from src.reporter.registrar import RegistrarReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database
 from src.storage.evidence import EvidenceStore
@@ -119,14 +120,22 @@ async def test_report_manager_saves_manual_instruction_file(tmp_path):
 
 
 class _FakeResponse:
-    def __init__(self, *, status_code: int, text: str = ""):
+    def __init__(self, *, status_code: int, text: str = "", json_data: object = None):
         self.status_code = status_code
         self.text = text
+        self._json_data = json_data
+
+    def json(self):  # noqa: ANN201
+        if self._json_data is None:
+            raise ValueError("No JSON configured for fake response")
+        return self._json_data
 
 
 class _FakeAsyncClient:
-    def __init__(self, *, get_text: str):
+    def __init__(self, *, get_text: str = "", get_json: object = None, get_status_code: int = 200):
         self._get_text = get_text
+        self._get_json = get_json
+        self._get_status_code = get_status_code
         self.get_calls: list[str] = []
         self.post_calls: list[str] = []
 
@@ -138,7 +147,7 @@ class _FakeAsyncClient:
 
     async def get(self, url: str, *args, **kwargs):
         self.get_calls.append(url)
-        return _FakeResponse(status_code=200, text=self._get_text)
+        return _FakeResponse(status_code=self._get_status_code, text=self._get_text, json_data=self._get_json)
 
     async def post(self, url: str, *args, **kwargs):
         self.post_calls.append(url)
@@ -213,3 +222,93 @@ async def test_hosting_provider_reporter_returns_manual_required_for_email_provi
     result = await reporter.submit(evidence)
     assert result.status == ReportStatus.MANUAL_REQUIRED
     assert "abuse@namecheap.com" in (result.message or "")
+
+
+class _SkipReporter(BaseReporter):
+    platform_name = "skip"
+
+    def __init__(self):
+        super().__init__()
+        self._configured = True
+        self.called = False
+
+    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:  # noqa: ARG002
+        return False, "No matching infrastructure"
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:  # noqa: ARG002
+        self.called = True
+        return ReportResult(platform=self.platform_name, status=ReportStatus.SUBMITTED, message="should not submit")
+
+
+@pytest.mark.asyncio
+async def test_report_manager_marks_non_applicable_reporters_as_skipped(tmp_path):
+    db = Database(tmp_path / "seedbuster.db")
+    await db.connect()
+
+    target = "example.com/path"
+    domain_id = await db.add_domain(domain=target, source="manual", domain_score=90)
+    assert domain_id is not None
+
+    store = EvidenceStore(tmp_path / "evidence")
+    await store.save_analysis(target, {
+        "domain": target,
+        "final_url": "https://example.com/path",
+        "reasons": ["Seed phrase form detected"],
+    })
+
+    reporter = _SkipReporter()
+    manager = ReportManager(database=db, evidence_store=store, enabled_platforms=["skip"])
+    manager.reporters = {"skip": reporter}
+
+    results = await manager.report_domain(domain_id=domain_id, domain=target, platforms=["skip"])
+    assert results["skip"].status == ReportStatus.SKIPPED
+    assert "No matching infrastructure" in (results["skip"].message or "")
+    assert reporter.called is False
+
+    latest = await db.get_latest_report(domain_id=domain_id, platform="skip")
+    assert latest is not None
+    assert str(latest["status"]).lower() == ReportStatus.SKIPPED.value
+    assert "No matching infrastructure" in (str(latest.get("response") or ""))
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_registrar_reporter_returns_manual_required_from_rdap(monkeypatch):
+    import httpx
+
+    rdap_json = {
+        "entities": [
+            {
+                "roles": ["registrar"],
+                "vcardArray": [
+                    "vcard",
+                    [
+                        ["fn", {}, "text", "Example Registrar"],
+                        ["email", {}, "text", "mailto:abuse@example-registrar.tld"],
+                    ],
+                ],
+            }
+        ]
+    }
+
+    def fake_async_client(*args, **kwargs):  # noqa: ANN001, ARG001
+        return _FakeAsyncClient(get_json=rdap_json)
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+
+    reporter = RegistrarReporter(reporter_email="analyst@example.com")
+    evidence = ReportEvidence(
+        domain="example.com",
+        url="https://example.com/path",
+        detected_at=datetime.now(),
+        confidence_score=90,
+        detection_reasons=["Seed phrase form detected"],
+    )
+
+    result = await reporter.submit(evidence)
+    assert result.status == ReportStatus.MANUAL_REQUIRED
+    message = result.message or ""
+    assert "Registrar detected: Example Registrar" in message
+    assert "Manual submission (email): abuse@example-registrar.tld" in message
+    assert "Subject:" in message

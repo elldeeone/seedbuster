@@ -81,6 +81,7 @@ class SeedBusterBot:
                 "pending": "⏳",
                 "manual_required": "📝",
                 "failed": "❌",
+                "skipped": "➖",
                 "rate_limited": "⏱️",
                 "duplicate": "🔄",
                 "rejected": "🚫",
@@ -115,7 +116,7 @@ class SeedBusterBot:
                     safe_manual_url = manual_url.replace("`", "'")
                     line += f" (manual: `{safe_manual_url}`)"
 
-            if status in {"failed", "manual_required", "pending"} and response_text:
+            if status in {"failed", "manual_required", "pending", "skipped"} and response_text:
                 response_snippet = response_text.strip().replace("\n", " ")
                 if response_snippet:
                     max_len = 200 if status in {"manual_required", "pending"} else 120
@@ -142,6 +143,8 @@ class SeedBusterBot:
         manual = any(s == ReportStatus.MANUAL_REQUIRED.value for s in statuses)
         rate_limited = any(s == ReportStatus.RATE_LIMITED.value for s in statuses)
         failed = any(s == ReportStatus.FAILED.value for s in statuses)
+        if all(s == ReportStatus.SKIPPED.value for s in statuses):
+            return "➖ Not Applicable"
         success_statuses = {
             ReportStatus.SUBMITTED.value,
             ReportStatus.CONFIRMED.value,

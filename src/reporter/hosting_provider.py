@@ -78,6 +78,14 @@ class HostingProviderReporter(BaseReporter):
 
         return None
 
+    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:
+        provider = self._detect_provider_from_evidence(evidence)
+        if not provider:
+            return False, "No hosting provider identified"
+        if provider not in ABUSE_FORMS and provider not in ABUSE_EMAILS:
+            return False, f"No known abuse destination for provider: {provider}"
+        return True, ""
+
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """Return manual instructions for the best-matching hosting provider."""
         is_valid, error = self.validate_evidence(evidence)
@@ -92,8 +100,8 @@ class HostingProviderReporter(BaseReporter):
         if not provider:
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message="Could not determine hosting provider for manual reporting",
+                status=ReportStatus.SKIPPED,
+                message="No hosting provider identified",
             )
 
         form_url = ABUSE_FORMS.get(provider)
@@ -102,7 +110,7 @@ class HostingProviderReporter(BaseReporter):
         if not form_url and not email:
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.FAILED,
+                status=ReportStatus.SKIPPED,
                 message=f"No known abuse destination for provider: {provider}",
             )
 
@@ -145,4 +153,3 @@ class HostingProviderReporter(BaseReporter):
             status=ReportStatus.MANUAL_REQUIRED,
             message="\n".join(parts).strip(),
         )
-

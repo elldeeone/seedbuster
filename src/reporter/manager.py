@@ -175,6 +175,24 @@ class ReportManager:
                     )
                     continue
 
+                applicable, skip_reason = reporter.is_applicable(evidence)
+                if not applicable:
+                    msg = skip_reason or "Not applicable"
+                    result = ReportResult(
+                        platform=platform,
+                        status=ReportStatus.SKIPPED,
+                        report_id=str(report_id),
+                        message=msg,
+                        response_data={"domain_id": domain_id, "domain": domain},
+                    )
+                    attempted.append(result)
+                    await self.database.update_report(
+                        report_id=report_id,
+                        status=result.status.value,
+                        response=result.message,
+                    )
+                    continue
+
                 limiter = get_rate_limiter(platform, reporter.rate_limit_per_minute)
                 if not await limiter.acquire(timeout=5):
                     retry_after = max(30, int(limiter.wait_time() or 60))
@@ -273,6 +291,7 @@ class ReportManager:
         from .google_form import GoogleFormReporter
         from .netcraft import NetcraftReporter
         from .hosting_provider import HostingProviderReporter
+        from .registrar import RegistrarReporter
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -299,6 +318,12 @@ class ReportManager:
             reporter_email=self.resend_from_email or self.reporter_email or ""
         )
         logger.info("Initialized hosting provider manual reporter")
+
+        # Registrar manual helper (opt-in via REPORT_PLATFORMS)
+        self.reporters["registrar"] = RegistrarReporter(
+            reporter_email=self.resend_from_email or self.reporter_email or ""
+        )
+        logger.info("Initialized registrar manual reporter")
 
         # Resend email reporter (if API key configured)
         if self.resend_api_key:
@@ -550,6 +575,29 @@ class ReportManager:
                 )
                 continue
 
+            applicable, skip_reason = reporter.is_applicable(evidence)
+            if not applicable:
+                msg = skip_reason or "Not applicable"
+                report_row_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed", "skipped"} else 0
+                if not report_row_id:
+                    report_row_id = await self.database.add_report(
+                        domain_id=domain_id,
+                        platform=platform,
+                        status=ReportStatus.SKIPPED.value,
+                    )
+                await self.database.update_report(
+                    report_id=report_row_id,
+                    status=ReportStatus.SKIPPED.value,
+                    response=msg,
+                )
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.SKIPPED,
+                    report_id=str(report_row_id),
+                    message=msg,
+                )
+                continue
+
             # Check rate limit
             limiter = get_rate_limiter(
                 platform,
@@ -561,7 +609,7 @@ class ReportManager:
                 msg = f"Rate limit exceeded; retry scheduled in {retry_after}s"
 
                 # Create or reuse a report record so the retry worker can pick it up.
-                report_row_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed"} else 0
+                report_row_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed", "skipped"} else 0
                 if not report_row_id:
                     report_row_id = await self.database.add_report(
                         domain_id=domain_id,
@@ -586,7 +634,7 @@ class ReportManager:
 
             try:
                 # Create or reuse a report row for this platform.
-                report_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed"} else 0
+                report_id = int(latest["id"]) if latest and latest_status_lower in {"rate_limited", "pending", "failed", "skipped"} else 0
                 if not report_id:
                     report_id = await self.database.add_report(
                         domain_id=domain_id,
@@ -691,6 +739,7 @@ class ReportManager:
                 ReportStatus.PENDING: "⏳",
                 ReportStatus.MANUAL_REQUIRED: "📝",
                 ReportStatus.FAILED: "❌",
+                ReportStatus.SKIPPED: "➖",
                 ReportStatus.RATE_LIMITED: "⏱️",
                 ReportStatus.DUPLICATE: "🔄",
                 ReportStatus.REJECTED: "🚫",

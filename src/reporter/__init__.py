@@ -24,6 +24,7 @@ from .resend_reporter import ResendReporter
 from .digitalocean import DigitalOceanReporter
 from .google_safebrowsing import GoogleSafeBrowsingReporter
 from .hosting_provider import HostingProviderReporter
+from .registrar import RegistrarReporter
 
 __all__ = [
     # Base classes
@@ -51,4 +52,5 @@ __all__ = [
     "DigitalOceanReporter",
     "GoogleSafeBrowsingReporter",
     "HostingProviderReporter",
+    "RegistrarReporter",
 ]

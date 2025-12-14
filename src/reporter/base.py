@@ -18,6 +18,7 @@ class ReportStatus(str, Enum):
     CONFIRMED = "confirmed"  # Platform confirmed receipt
     REJECTED = "rejected"  # Human rejected / false positive
     FAILED = "failed"  # Submission failed
+    SKIPPED = "skipped"  # Not applicable / intentionally skipped
     RATE_LIMITED = "rate_limited"  # Hit rate limit, retry later
     DUPLICATE = "duplicate"  # Already reported
 
@@ -154,6 +155,15 @@ class BaseReporter(ABC):
             return False, "URL is required"
         if evidence.confidence_score < 0 or evidence.confidence_score > 100:
             return False, "Confidence score must be 0-100"
+        return True, ""
+
+    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:
+        """
+        Return whether this reporter is applicable for this evidence.
+
+        This is used by the manager to avoid noisy failures (e.g., provider-specific
+        reporters when no matching infrastructure is present).
+        """
         return True, ""
 
 

@@ -31,6 +31,33 @@ class DigitalOceanReporter(BaseReporter):
         self.reporter_name = reporter_name
         self._configured = bool(reporter_email)
 
+    @staticmethod
+    def _extract_do_apps(evidence: ReportEvidence) -> list[str]:
+        """Extract DigitalOcean App Platform hostnames from evidence."""
+        all_domains = (evidence.backend_domains or []) + (evidence.suspicious_endpoints or [])
+        do_apps: list[str] = []
+        for d in all_domains:
+            if not isinstance(d, str):
+                continue
+            if "ondigitalocean.app" not in d.lower():
+                continue
+            # Extract just the domain part if it's a URL
+            if "://" in d:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(d)
+                if parsed.netloc:
+                    do_apps.append(parsed.netloc)
+            else:
+                do_apps.append(d)
+        return sorted(set(do_apps))
+
+    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:
+        do_apps = self._extract_do_apps(evidence)
+        if not do_apps:
+            return False, "No DigitalOcean App Platform backends found"
+        return True, ""
+
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """Submit phishing report to DigitalOcean using Playwright."""
         if not self._configured:
@@ -50,24 +77,13 @@ class DigitalOceanReporter(BaseReporter):
             )
 
         # Get DO apps from backend domains and suspicious endpoints
-        all_domains = (evidence.backend_domains or []) + (evidence.suspicious_endpoints or [])
-        do_apps = []
-        for d in all_domains:
-            if "ondigitalocean.app" in d.lower():
-                # Extract just the domain part if it's a URL
-                if "://" in d:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(d)
-                    do_apps.append(parsed.netloc)
-                else:
-                    do_apps.append(d)
-        do_apps = list(set(do_apps))  # Deduplicate
+        do_apps = self._extract_do_apps(evidence)
 
         if not do_apps:
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message="No DigitalOcean apps found in evidence",
+                status=ReportStatus.SKIPPED,
+                message="No DigitalOcean App Platform backends found",
             )
 
         # Build description
@@ -87,8 +103,15 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
         except ImportError:
             return ReportResult(
                 platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message="Playwright not installed",
+                status=ReportStatus.MANUAL_REQUIRED,
+                message=(
+                    "Playwright not installed; manual submission required.\n\n"
+                    f"Manual submission URL: {self.FORM_URL}\n\n"
+                    f"Reporter name: {self.reporter_name}\n"
+                    f"Reporter email: {self.reporter_email}\n"
+                    f"Phishing URL: {evidence.url}\n\n"
+                    f"Copy/paste description:\n{description}"
+                ),
             )
 
         try:
