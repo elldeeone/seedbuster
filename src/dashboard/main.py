@@ -116,6 +116,7 @@ async def run_dashboard() -> None:
         ),
         database=db,
         evidence_dir=config.evidence_dir,
+        clusters_dir=config.data_dir / "clusters",
         submit_callback=submit_callback,
         rescan_callback=rescan_callback,
         report_callback=report_callback,

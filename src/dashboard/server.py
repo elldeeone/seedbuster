@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import secrets
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlencode, urlparse
@@ -70,10 +72,12 @@ def _report_badge(value: str | None) -> str:
 
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
-    # Only show navigation toggle in admin view - public view has no admin reference
-    nav = ""
+    # Build navigation links
+    clusters_href = "/admin/clusters" if admin else "/clusters"
+    nav_items = [f'<a class="nav-link" href="{clusters_href}">Clusters</a>']
     if admin:
-        nav = '<a class="nav-link" href="/">Public View</a>'
+        nav_items.append('<a class="nav-link" href="/">Public View</a>')
+    nav = "".join(nav_items)
 
     mode_indicator = "ADMIN" if admin else "PUBLIC"
     mode_class = "mode-admin" if admin else "mode-public"
@@ -1195,6 +1199,236 @@ def _render_pagination(*, status: str, verdict: str, q: str, limit: int, page: i
     """
 
 
+def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admin: bool) -> str:
+    """Render cluster/campaign info panel for domain detail page."""
+    if not cluster:
+        return ""
+
+    cluster_name = cluster.get("name", "Unknown Campaign")
+    cluster_id = cluster.get("cluster_id", "")
+    confidence = cluster.get("confidence", 0)
+    shared_backends = list(cluster.get("shared_backends", []))
+    shared_kits = list(cluster.get("shared_kits", []))
+    shared_nameservers = list(cluster.get("shared_nameservers", []))
+
+    # Related domains list - make them clickable links
+    related_html = ""
+    if related_domains:
+        base_url = "/admin/domains" if admin else "/domains"
+        visible_items = []
+        hidden_items = []
+
+        for i, member in enumerate(related_domains):
+            domain = member.get("domain", "")
+            domain_id = member.get("id")
+            score = member.get("score", 0)
+            # Link directly to domain detail page if we have the ID
+            if domain_id:
+                href = f"{base_url}/{domain_id}"
+            else:
+                # Fallback to search if ID not found
+                fallback_url = "/admin" if admin else "/"
+                href = f"{fallback_url}?q={quote(domain)}"
+            item_html = (
+                f'<div class="sb-breakdown-item">'
+                f'<a href="{_escape(href)}" class="sb-breakdown-key" style="color: var(--text-link);">{_escape(domain)}</a>'
+                f'<span class="sb-score">{_escape(score)}</span>'
+                f'</div>'
+            )
+            if i < 10:
+                visible_items.append(item_html)
+            else:
+                hidden_items.append(item_html)
+
+        related_html = f'<div class="sb-breakdown">{"".join(visible_items)}</div>'
+
+        if hidden_items:
+            related_html += f'''
+              <details style="margin-top: 8px;">
+                <summary class="sb-muted" style="cursor: pointer; padding: 8px 0; font-size: 12px;">
+                  + {len(hidden_items)} more domains
+                </summary>
+                <div class="sb-breakdown" style="margin-top: 8px;">{"".join(hidden_items)}</div>
+              </details>
+            '''
+    else:
+        related_html = '<div class="sb-muted">No other domains in this cluster yet.</div>'
+
+    # Shared indicators - vertical layout with expandable lists
+    def render_indicator_list(label: str, items: list) -> str:
+        if not items:
+            return ""
+        visible = items[:3]
+        hidden = items[3:]
+
+        visible_html = "".join(
+            f'<code class="sb-code" style="display: inline-block; margin: 2px 4px 2px 0;">{_escape(item)}</code>'
+            for item in visible
+        )
+
+        if hidden:
+            hidden_html = "".join(
+                f'<code class="sb-code" style="display: inline-block; margin: 2px 4px 2px 0;">{_escape(item)}</code>'
+                for item in hidden
+            )
+            return f'''
+              <div style="margin-bottom: 12px;">
+                <div class="sb-label" style="margin-bottom: 6px;">{_escape(label)}</div>
+                <div>{visible_html}</div>
+                <details style="margin-top: 4px;">
+                  <summary class="sb-muted" style="cursor: pointer; font-size: 11px;">+ {len(hidden)} more</summary>
+                  <div style="margin-top: 4px;">{hidden_html}</div>
+                </details>
+              </div>
+            '''
+        else:
+            return f'''
+              <div style="margin-bottom: 12px;">
+                <div class="sb-label" style="margin-bottom: 6px;">{_escape(label)}</div>
+                <div>{visible_html}</div>
+              </div>
+            '''
+
+    indicators_html = ""
+    indicators_html += render_indicator_list("Backends", shared_backends)
+    indicators_html += render_indicator_list("Kits", shared_kits)
+    indicators_html += render_indicator_list("Nameservers", shared_nameservers)
+
+    if not indicators_html:
+        indicators_html = '<div class="sb-muted">No shared indicators.</div>'
+
+    # Confidence badge color
+    if confidence >= 70:
+        conf_class = "sb-badge-high"
+    elif confidence >= 40:
+        conf_class = "sb-badge-medium"
+    else:
+        conf_class = "sb-badge-low"
+
+    clusters_link = "/admin/clusters" if admin else "/clusters"
+
+    return f"""
+      <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.3); margin-bottom: 16px;">
+        <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
+          <div>
+            <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
+            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all clusters →</a>
+          </div>
+          <span class="sb-badge {conf_class}">{confidence:.0f}% confidence</span>
+        </div>
+        <div class="sb-grid">
+          <div class="col-6">
+            <div style="margin-bottom: 16px;">
+              <div class="sb-label">Campaign Name</div>
+              <div style="font-size: 16px; font-weight: 600; color: var(--text-primary);">{_escape(cluster_name)}</div>
+              <div class="sb-muted" style="font-size: 12px; margin-top: 4px;">ID: <code class="sb-code">{_escape(cluster_id)}</code></div>
+            </div>
+            <div>
+              <div class="sb-label">Shared Indicators</div>
+              {indicators_html}
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="sb-label">Related Domains ({len(related_domains)} linked)</div>
+            {related_html}
+          </div>
+        </div>
+      </div>
+    """
+
+
+def _render_clusters_list(clusters: list[dict], admin: bool) -> str:
+    """Render the clusters/campaigns listing page."""
+    if not clusters:
+        return """
+          <div class="sb-panel">
+            <div class="sb-muted" style="text-align: center; padding: 32px;">
+              No threat clusters identified yet. Clusters are formed when related phishing sites share common infrastructure.
+            </div>
+          </div>
+        """
+
+    cluster_cards = []
+    for cluster in clusters:
+        cluster_id = cluster.get("cluster_id", "")
+        cluster_name = cluster.get("name", "Unknown Campaign")
+        confidence = cluster.get("confidence", 0)
+        members = cluster.get("members", [])
+        shared_backends = cluster.get("shared_backends", [])
+        shared_kits = cluster.get("shared_kits", [])
+        shared_nameservers = cluster.get("shared_nameservers", [])
+        created_at = cluster.get("created_at", "")
+        updated_at = cluster.get("updated_at", "")
+
+        # Confidence badge color
+        if confidence >= 70:
+            conf_class = "sb-badge-high"
+        elif confidence >= 40:
+            conf_class = "sb-badge-medium"
+        else:
+            conf_class = "sb-badge-low"
+
+        # Build indicators summary
+        indicators = []
+        if shared_backends:
+            indicators.append(f"{len(shared_backends)} backend(s)")
+        if shared_kits:
+            indicators.append(f"{len(shared_kits)} kit(s)")
+        if shared_nameservers:
+            indicators.append(f"{len(shared_nameservers)} nameserver(s)")
+        indicators_text = ", ".join(indicators) if indicators else "No shared indicators"
+
+        # Build member domains list (show first 5)
+        domain_links = []
+        for member in members[:5]:
+            domain = member.get("domain", "")
+            href = f"/admin/domains?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
+            domain_links.append(
+                f'<a href="{_escape(href)}" class="sb-code" style="margin-right: 8px; margin-bottom: 4px; display: inline-block;">{_escape(domain)}</a>'
+            )
+        if len(members) > 5:
+            domain_links.append(f'<span class="sb-muted">+{len(members) - 5} more</span>')
+
+        cluster_cards.append(f"""
+          <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.2);">
+            <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.15);">
+              <div>
+                <span style="font-size: 16px; font-weight: 600; color: var(--text-primary);">{_escape(cluster_name)}</span>
+                <span class="sb-muted" style="margin-left: 12px; font-size: 12px;">ID: <code class="sb-code">{_escape(cluster_id[:12])}...</code></span>
+              </div>
+              <span class="sb-badge {conf_class}">{confidence:.0f}% confidence</span>
+            </div>
+            <div class="sb-grid">
+              <div class="col-6">
+                <div class="sb-label">Shared Indicators</div>
+                <div class="sb-text-secondary" style="margin-bottom: 12px;">{_escape(indicators_text)}</div>
+                <div class="sb-label">Timeline</div>
+                <div class="sb-muted" style="font-size: 12px;">
+                  Created: {_escape(created_at[:10] if created_at else "—")} · Updated: {_escape(updated_at[:10] if updated_at else "—")}
+                </div>
+              </div>
+              <div class="col-6">
+                <div class="sb-label">Member Domains ({len(members)})</div>
+                <div style="line-height: 1.8;">{"".join(domain_links)}</div>
+              </div>
+            </div>
+          </div>
+        """)
+
+    return f"""
+      <div class="sb-panel" style="margin-bottom: 24px;">
+        <div class="sb-panel-header">
+          <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaigns</span>
+          <span class="sb-muted">{len(clusters)} cluster(s) identified</span>
+        </div>
+        <div class="sb-muted" style="margin-bottom: 16px;">
+          Clusters group related phishing sites that share common infrastructure like backends, phishing kits, or nameservers.
+        </div>
+      </div>
+      {"".join(cluster_cards)}
+    """
+
+
 def _render_kv_table(items: Iterable[tuple[str, object]]) -> str:
     rows = []
     for k, v in items:
@@ -1224,6 +1458,8 @@ def _render_domain_detail(
     msg: str | None,
     error: bool,
     available_platforms: list[str],
+    cluster: dict | None = None,
+    related_domains: list[dict] | None = None,
 ) -> str:
     did = domain.get("id")
     domain_name = domain.get("domain") or ""
@@ -1483,6 +1719,7 @@ def _render_domain_detail(
           </div>
         </div>
       </div>
+      {_render_cluster_info(cluster, related_domains or [], admin)}
       {admin_forms}
       {evidence_bits}
       {reports_table}
@@ -1507,6 +1744,7 @@ class DashboardServer:
         config: DashboardConfig,
         database: Database,
         evidence_dir: Path,
+        clusters_dir: Path | None = None,
         submit_callback: Callable[[str], None] | None = None,
         rescan_callback: Callable[[str], None] | None = None,
         report_callback: Callable[[int, str, Optional[list[str]], bool], object] | None = None,
@@ -1516,6 +1754,7 @@ class DashboardServer:
         self.config = config
         self.database = database
         self.evidence_dir = evidence_dir
+        self.clusters_dir = clusters_dir
         self.submit_callback = submit_callback
         self.rescan_callback = rescan_callback
         self.report_callback = report_callback
@@ -1528,9 +1767,53 @@ class DashboardServer:
         self._app = web.Application(middlewares=[self._admin_auth_middleware])
         self._register_routes()
 
+    def _load_clusters(self) -> list[dict]:
+        """Load all clusters from clusters.json."""
+        if not self.clusters_dir:
+            return []
+        clusters_file = self.clusters_dir / "clusters.json"
+        if not clusters_file.exists():
+            return []
+        try:
+            with open(clusters_file, "r") as f:
+                data = json.load(f)
+            return data.get("clusters", [])
+        except Exception:
+            return []
+
+    def _get_cluster_for_domain(self, domain: str) -> dict | None:
+        """Get cluster info for a specific domain."""
+        clusters = self._load_clusters()
+        for cluster in clusters:
+            members = cluster.get("members", [])
+            for member in members:
+                if member.get("domain") == domain:
+                    return cluster
+        return None
+
+    def _get_related_domains(self, domain: str, cluster: dict | None) -> list[dict]:
+        """Get list of related domains from the same cluster."""
+        if not cluster:
+            return []
+        members = cluster.get("members", [])
+        return [m for m in members if m.get("domain") != domain]
+
+    async def _enrich_related_domains_with_ids(self, related_domains: list[dict]) -> list[dict]:
+        """Look up domain IDs from database and add them to related_domains."""
+        enriched = []
+        for member in related_domains:
+            domain_name = member.get("domain", "")
+            domain_record = await self.database.get_domain(domain_name)
+            enriched_member = dict(member)
+            if domain_record:
+                enriched_member["id"] = domain_record.get("id")
+            enriched.append(enriched_member)
+        return enriched
+
     def _register_routes(self) -> None:
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
+        self._app.router.add_get("/clusters", self._public_clusters)
         self._app.router.add_get("/healthz", self._healthz)
 
         # Evidence directory is public by design for transparency.
@@ -1538,6 +1821,7 @@ class DashboardServer:
 
         # Admin
         self._app.router.add_get("/admin", self._admin_index)
+        self._app.router.add_get("/admin/clusters", self._admin_clusters)
         self._app.router.add_post("/admin/submit", self._admin_submit)
         self._app.router.add_get("/admin/domains/{domain_id}", self._admin_domain)
         self._app.router.add_post("/admin/domains/{domain_id}/update", self._admin_update_domain)
@@ -1670,6 +1954,12 @@ class DashboardServer:
         screenshots = self._get_screenshots(domain, evidence_dir)
         instruction_files = self._get_instruction_files(evidence_dir)
 
+        # Get cluster info for this domain
+        domain_name = domain.get("domain") or ""
+        cluster = self._get_cluster_for_domain(domain_name)
+        related_domains = self._get_related_domains(domain_name, cluster)
+        related_domains = await self._enrich_related_domains_with_ids(related_domains)
+
         body = _render_domain_detail(
             domain,
             reports,
@@ -1682,8 +1972,22 @@ class DashboardServer:
             msg=request.query.get("msg"),
             error=(request.query.get("error") == "1"),
             available_platforms=[],
+            cluster=cluster,
+            related_domains=related_domains,
         )
         html_out = _layout(title="SeedBuster Dashboard", body=body, admin=False)
+        return web.Response(text=html_out, content_type="text/html")
+
+    async def _public_clusters(self, request: web.Request) -> web.Response:
+        clusters = self._load_clusters()
+        body = _render_clusters_list(clusters, admin=False)
+        html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=False)
+        return web.Response(text=html_out, content_type="text/html")
+
+    async def _admin_clusters(self, request: web.Request) -> web.Response:
+        clusters = self._load_clusters()
+        body = _render_clusters_list(clusters, admin=True)
+        html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=True)
         return web.Response(text=html_out, content_type="text/html")
 
     async def _admin_index(self, request: web.Request) -> web.Response:
@@ -1785,6 +2089,12 @@ class DashboardServer:
         screenshots = self._get_screenshots(domain, evidence_dir)
         instruction_files = self._get_instruction_files(evidence_dir)
 
+        # Get cluster info for this domain
+        domain_name = domain.get("domain") or ""
+        cluster = self._get_cluster_for_domain(domain_name)
+        related_domains = self._get_related_domains(domain_name, cluster)
+        related_domains = await self._enrich_related_domains_with_ids(related_domains)
+
         msg = request.query.get("msg")
         error = request.query.get("error") == "1"
 
@@ -1803,6 +2113,8 @@ class DashboardServer:
                     msg=msg,
                     error=error,
                     available_platforms=self.get_available_platforms(),
+                    cluster=cluster,
+                    related_domains=related_domains,
                 ),
                 admin=True,
             ),
