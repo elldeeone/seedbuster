@@ -284,17 +284,19 @@ network logs) upon request.
 
         body = f"""Cryptocurrency phishing (seed phrase theft)
 
-URL: {evidence.url}
+Evidence URL: {evidence.url}
 Observed: {seed_line}
 Confidence: {evidence.confidence_score}%
 
 Key evidence (automated capture):
 {cls._format_list(highlights, prefix='- ')}
 
-Captured evidence (screenshot + HTML) available on request.
+Steps to reproduce:
+1) Open the evidence URL above.
+2) The page presents a wallet/recovery flow.
+3) It prompts the user to enter their seed phrase/mnemonic.
 
-Please block/flag this URL as phishing.
-Reporter: {reporter_email}
+Captured evidence (screenshot + HTML) available on request.
 """
 
         return {

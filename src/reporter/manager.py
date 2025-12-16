@@ -417,7 +417,8 @@ class ReportManager:
         logger.info("Initialized Google Safe Browsing reporter")
 
         # Cloudflare abuse form (always available)
-        self.reporters["cloudflare"] = CloudflareReporter()
+        reporter_identity = self.resend_from_email or self.reporter_email or ""
+        self.reporters["cloudflare"] = CloudflareReporter(reporter_email=reporter_identity)
         logger.info("Initialized Cloudflare reporter")
 
         # Netcraft (always available, no account needed)
@@ -1222,28 +1223,83 @@ Value:
 {description}
 """
         elif platform == "cloudflare":
+            reporter_name = ""
+            reporter_identity = (self.resend_from_email or self.reporter_email or "").strip()
+            if "<" in reporter_identity and ">" in reporter_identity:
+                reporter_name = reporter_identity.split("<", 1)[0].strip().strip('"')
+            reporter_name = reporter_name or os.environ.get("CLOUDFLARE_REPORTER_NAME", "").strip() or "SeedBuster"
+
+            cf_title = os.environ.get("CLOUDFLARE_REPORTER_TITLE", "").strip()
+            cf_company = os.environ.get("CLOUDFLARE_REPORTER_COMPANY", "").strip()
+            cf_tele = os.environ.get("CLOUDFLARE_REPORTER_TELEPHONE", "").strip()
+            cf_brand = os.environ.get("CLOUDFLARE_TARGETED_BRAND", "").strip()
+            cf_country = os.environ.get("CLOUDFLARE_REPORTED_COUNTRY", "").strip()
+            cf_user_agent = os.environ.get("CLOUDFLARE_REPORTED_USER_AGENT", "").strip()
+
             template_data = ReportTemplates.cloudflare(evidence, reporter_email_addr or "")
+
+            internal_lines: list[str] = []
+            if evidence.backend_domains:
+                internal_lines.append("Backend infrastructure (hostnames observed):")
+                internal_lines.extend(f"- {b}" for b in evidence.backend_domains[:10])
+                internal_lines.append("")
+            if evidence.suspicious_endpoints:
+                internal_lines.append("Observed data collection endpoints:")
+                internal_lines.extend(f"- {u}" for u in evidence.suspicious_endpoints[:10])
+                internal_lines.append("")
+            if evidence.screenshot_path or evidence.html_path:
+                internal_lines.append("Captured evidence (screenshot + HTML) available on request.")
+            internal_comments = "\n".join(internal_lines).strip() or "(optional)"
+
             return f"""
 CLOUDFLARE ABUSE REPORT PREVIEW
 ===============================
 
 Form URL: https://abuse.cloudflare.com/phishing
 
+Abuse type: Phishing & Malware
+
+Field: name
+Value: {reporter_name}
+
+Field: email
+Value: {reporter_email_addr or "(not set)"}
+
+Field: email2
+Value: {reporter_email_addr or "(not set)"}
+
+Field: title (optional)
+Value: {cf_title or "(blank)"}
+
+Field: company (optional)
+Value: {cf_company or "(blank)"}
+
+Field: telephone (optional)
+Value: {cf_tele or "(blank)"}
+
 Field: urls
-Value: {evidence.url}
+Value:
+{evidence.url}
 
-Field: abuse_type
-Value: phishing
-
-Field: comments
+Field: justification (may be released publicly)
 Value:
 {template_data.get('body', 'N/A')}
 
-Field: email (optional)
-Value: {reporter_email_addr or "(not set)"}
+Field: original_work / targeted_brand (optional)
+Value:
+{cf_brand or "(blank)"}
 
-Field: name
-Value: SeedBuster
+Field: reported_country (optional)
+Value: {cf_country or "(blank)"}
+
+Field: reported_user_agent (optional)
+Value: {cf_user_agent or "(blank)"}
+
+Field: comments (internal to Cloudflare)
+Value:
+{internal_comments}
+
+Note: Cloudflare uses Turnstile; submission is typically manual.
 """
         elif platform == "google":
             additional_info = ReportTemplates.google_safebrowsing_comment(evidence)

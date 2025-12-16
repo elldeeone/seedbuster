@@ -1,6 +1,7 @@
 """Cloudflare abuse form reporter for SeedBuster."""
 
 import logging
+import os
 import re
 from typing import Optional
 
@@ -29,10 +30,44 @@ class CloudflareReporter(BaseReporter):
     ABUSE_FORM_URL = "https://abuse.cloudflare.com/phishing"
     SUBMIT_URL = "https://abuse.cloudflare.com/api/v1/phishing"
 
-    def __init__(self, reporter_email: str = ""):
+    def __init__(
+        self,
+        reporter_email: str = "",
+        *,
+        reporter_name: str = "",
+        reporter_title: str = "",
+        reporter_company: str = "",
+        reporter_telephone: str = "",
+        targeted_brand: str = "",
+        reported_country: str = "",
+        reported_user_agent: str = "",
+    ):
         super().__init__()
-        self.reporter_email = reporter_email
+        parsed_name, parsed_email = self._parse_name_email(reporter_email)
+        self.reporter_email = parsed_email
+        self.reporter_name = (
+            reporter_name.strip()
+            or os.environ.get("CLOUDFLARE_REPORTER_NAME", "").strip()
+            or parsed_name
+            or "SeedBuster"
+        )
+        self.reporter_title = reporter_title or os.environ.get("CLOUDFLARE_REPORTER_TITLE", "")
+        self.reporter_company = reporter_company or os.environ.get("CLOUDFLARE_REPORTER_COMPANY", "")
+        self.reporter_telephone = reporter_telephone or os.environ.get("CLOUDFLARE_REPORTER_TELEPHONE", "")
+        self.targeted_brand = targeted_brand or os.environ.get("CLOUDFLARE_TARGETED_BRAND", "")
+        self.reported_country = reported_country or os.environ.get("CLOUDFLARE_REPORTED_COUNTRY", "")
+        self.reported_user_agent = reported_user_agent or os.environ.get("CLOUDFLARE_REPORTED_USER_AGENT", "")
         self._configured = True  # Always available
+
+    @staticmethod
+    def _parse_name_email(value: str) -> tuple[str, str]:
+        """Parse `Name <email>` into (name, email)."""
+        raw = (value or "").strip()
+        if "<" in raw and ">" in raw:
+            name = raw.split("<", 1)[0].strip().strip('"')
+            email = raw.split("<", 1)[1].split(">", 1)[0].strip()
+            return name, email
+        return "", raw
 
     @staticmethod
     def _extract_csrf_token_from_html(html: str) -> Optional[str]:
@@ -48,6 +83,87 @@ class CloudflareReporter(BaseReporter):
             if match:
                 return match.group(1)
         return None
+
+    def _build_public_justification(self, evidence: ReportEvidence) -> str:
+        """Text for Cloudflare's 'Logs or other evidence of abuse' (may be public)."""
+        report = ReportTemplates.cloudflare(evidence, "")
+        return str(report.get("body") or "").strip()
+
+    def _build_internal_comments(self, evidence: ReportEvidence) -> str:
+        """Text for Cloudflare's 'Comments' (kept internal to Cloudflare)."""
+        lines: list[str] = []
+        if evidence.backend_domains:
+            lines.append("Backend infrastructure (hostnames observed):")
+            lines.extend(f"- {b}" for b in evidence.backend_domains[:10])
+            lines.append("")
+        if evidence.suspicious_endpoints:
+            lines.append("Observed data collection endpoints:")
+            lines.extend(f"- {u}" for u in evidence.suspicious_endpoints[:10])
+            lines.append("")
+        if evidence.screenshot_path or evidence.html_path:
+            lines.append("Captured evidence (screenshot + HTML) available on request.")
+        return "\n".join(lines).strip()
+
+    def _build_manual_payload(self, evidence: ReportEvidence, *, reason: str) -> str:
+        justification = self._build_public_justification(evidence)
+        internal_comments = self._build_internal_comments(evidence)
+
+        email = (self.reporter_email or "").strip()
+        name = (self.reporter_name or "").strip()
+        title = (self.reporter_title or "").strip()
+        company = (self.reporter_company or "").strip()
+        tele = (self.reporter_telephone or "").strip()
+        targeted_brand = (self.targeted_brand or "").strip()
+        reported_country = (self.reported_country or "").strip()
+        reported_user_agent = (self.reported_user_agent or "").strip()
+
+        lines = [
+            f"Manual submission required ({reason}): {self.ABUSE_FORM_URL}",
+            "",
+            "Cloudflare form fields:",
+            f"- Your full name: {name or '(fill manually)'}",
+            f"- Your email address: {email or '(fill manually)'}",
+            f"- Confirm email address: {email or '(fill manually)'}",
+        ]
+        if title:
+            lines.append(f"- Title (optional): {title}")
+        if company:
+            lines.append(f"- Company name (optional): {company}")
+        if tele:
+            lines.append(f"- Telephone (optional): {tele}")
+
+        lines.extend(
+            [
+                "- Evidence URLs (one per line):",
+                evidence.url,
+                "",
+                "- Logs or other evidence of abuse (may be released publicly):",
+                justification,
+            ]
+        )
+
+        if targeted_brand:
+            lines.extend(["", "- Targeted Brand (optional):", targeted_brand])
+
+        if reported_country:
+            lines.extend(["", f"- Reporter current country (optional): {reported_country}"])
+        if reported_user_agent:
+            lines.append(f"- User agent (optional): {reported_user_agent}")
+
+        if internal_comments:
+            lines.extend(["", "- Comments (internal to Cloudflare):", internal_comments])
+
+        lines.extend(
+            [
+                "",
+                "Notes:",
+                "- The Cloudflare form includes Turnstile; you may need to complete it before submitting.",
+                "- Leave the 'Include my name and contact information' checkboxes unchecked if you do not want your contact details forwarded.",
+                "- You will likely need to check the 'I understand and agree' (DSA certification) box to submit.",
+            ]
+        )
+
+        return "\n".join(lines).strip()
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """
@@ -68,8 +184,8 @@ class CloudflareReporter(BaseReporter):
                 message=error,
             )
 
-        # Generate report content
-        report = ReportTemplates.cloudflare(evidence, self.reporter_email)
+        justification = self._build_public_justification(evidence)
+        internal_comments = self._build_internal_comments(evidence)
 
         async with httpx.AsyncClient(
             timeout=30,
@@ -86,11 +202,7 @@ class CloudflareReporter(BaseReporter):
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=(
-                            f"Manual submission required: {self.ABUSE_FORM_URL}\n\n"
-                            f"URL: {evidence.url}\n\n"
-                            f"Comments:\n{report['body']}"
-                        ),
+                        message=self._build_manual_payload(evidence, reason=f"HTTP {form_resp.status_code}"),
                     )
 
                 page_lower = (form_resp.text or "").lower()
@@ -98,23 +210,25 @@ class CloudflareReporter(BaseReporter):
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=(
-                            f"Manual submission required (CAPTCHA): {self.ABUSE_FORM_URL}\n\n"
-                            f"URL: {evidence.url}\n\n"
-                            f"Comments:\n{report['body']}"
-                        ),
+                        message=self._build_manual_payload(evidence, reason="Turnstile/CAPTCHA"),
                     )
 
                 csrf_token = self._extract_csrf_token_from_html(form_resp.text)
 
                 # Prepare form data
                 form_data = {
-                    "urls": evidence.url,
-                    "abuse_type": "phishing",
-                    "abuse_type_other": "",
-                    "comments": report["body"],
+                    "name": self.reporter_name,
                     "email": self.reporter_email,
-                    "name": "SeedBuster",
+                    "email2": self.reporter_email,
+                    "title": self.reporter_title,
+                    "company": self.reporter_company,
+                    "tele": self.reporter_telephone,
+                    "urls": evidence.url,
+                    "justification": justification,
+                    "original_work": self.targeted_brand,
+                    "reported_country": self.reported_country,
+                    "reported_user_agent": self.reported_user_agent,
+                    "comments": internal_comments,
                 }
 
                 if csrf_token:
@@ -157,11 +271,7 @@ class CloudflareReporter(BaseReporter):
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
-                            message=(
-                                f"Submission not confirmed; manual submission recommended: {self.ABUSE_FORM_URL}\n\n"
-                                f"URL: {evidence.url}\n\n"
-                                f"Comments:\n{report['body']}"
-                            ),
+                            message=self._build_manual_payload(evidence, reason="Submission not confirmed"),
                         )
 
                 elif resp.status_code == 429:
@@ -194,10 +304,5 @@ class CloudflareReporter(BaseReporter):
                 return ReportResult(
                     platform=self.platform_name,
                     status=ReportStatus.MANUAL_REQUIRED,
-                    message=(
-                        f"Auto-submit failed: {e}\n\n"
-                        f"Manual submission required: {self.ABUSE_FORM_URL}\n\n"
-                        f"URL: {evidence.url}\n\n"
-                        f"Comments:\n{report['body']}"
-                    ),
+                    message=self._build_manual_payload(evidence, reason=f"Auto-submit failed: {e}"),
                 )

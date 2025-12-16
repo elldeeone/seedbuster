@@ -134,6 +134,7 @@ Reporting:
 - `registrar` platform - Optional helper that does an RDAP lookup for registrar abuse contacts and generates a copy/paste email template
 - `apwg` platform - Optional helper that generates instructions for reporting to `reportphishing@apwg.org` (APWG)
 - `microsoft` platform - Optional helper that generates instructions for reporting to Microsoft SmartScreen/WDSI
+- Cloudflare: the abuse form is protected by Turnstile, so SeedBuster typically generates a pre-filled preview/instructions for manual submission (see `.env.example` `CLOUDFLARE_*` fields).
 
 Manual reporting:
 - When a platform returns `manual_required`, SeedBuster writes `report_instructions_<platform>.txt` into the domain evidence folder and sends it after `/report` or "Approve & Report" (you can also use `/evidence <id>`).
