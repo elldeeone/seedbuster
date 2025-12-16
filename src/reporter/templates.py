@@ -1,5 +1,6 @@
 """Report template generation for abuse reports."""
 
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
@@ -12,82 +13,158 @@ if TYPE_CHECKING:
 class ReportTemplates:
     """Generates formatted abuse reports for various platforms."""
 
+    @staticmethod
+    def _extract_seed_phrase_indicator(reasons: list[str]) -> str | None:
+        for reason in reasons or []:
+            text = (reason or "").strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if "seed phrase" not in lower and "mnemonic" not in lower:
+                continue
+            match = re.search(r"'([^']+)'", text)
+            if match:
+                return match.group(1).strip() or None
+        return None
+
+    @classmethod
+    def _summarize_reasons(cls, reasons: list[str], *, max_items: int = 5) -> list[str]:
+        cleaned: list[str] = []
+        for r in reasons or []:
+            text = (r or "").strip()
+            if text:
+                cleaned.append(text)
+
+        if not cleaned:
+            return []
+
+        drop_substrings = (
+            "suspicion score",
+            "domain suspicion",
+            "keyword",
+            "tld",
+            "kaspa-related title",
+            "wallet-related title",
+            "known malicious domain",
+        )
+
+        keep_substrings = (
+            "seed phrase",
+            "mnemonic",
+            "recovery phrase",
+            "private key",
+            "walletconnect",
+            "cloaking detected",
+            "ondigitalocean.app",
+            "workers.dev",
+        )
+
+        def humanize(text: str) -> str:
+            out = (text or "").strip()
+            lower = out.lower()
+            if lower.startswith("temporal:"):
+                out = out.split(":", 1)[1].strip()
+            out = out.replace("Seed phrase form found via exploration:", "Seed phrase form detected:")
+            out = out.replace("Seed phrase form found:", "Seed phrase form detected:")
+            out = out.replace(" via exploration", "")
+            out = out.replace("Cloaking detected", "Cloaking detected (content varied across scans)")
+            return out
+
+        high_signal: list[str] = []
+        other: list[str] = []
+        for text in cleaned:
+            lower = text.lower()
+            if lower.startswith("temporal:") and "cloaking" not in lower:
+                # "Temporal" heuristics are noisy; keep only explicit cloaking.
+                continue
+            if any(s in lower for s in drop_substrings):
+                continue
+            if any(s in lower for s in keep_substrings):
+                high_signal.append(humanize(text))
+            else:
+                other.append(humanize(text))
+
+        out = high_signal[: max_items]
+        if len(out) < max_items:
+            out.extend(other[: max_items - len(out)])
+
+        if not out:
+            out = cleaned[: max_items]
+
+        return out
+
     @classmethod
     def generic_email(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
         """
         Generate a generic abuse report email.
         Action-first format optimized for busy abuse teams.
         """
-        subject = f"Phishing Report: {evidence.domain}"
+        subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
 
-        body = f"""
-================================================================================
-                         PHISHING ABUSE REPORT
-================================================================================
+        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = f"Observed seed phrase field: '{seed_hint}'" if seed_hint else "Observed seed phrase theft flow"
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+        if seed_hint:
+            seed_lower = seed_hint.lower()
+            highlights = [
+                h
+                for h in highlights
+                if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
+            ]
+        observations = [seed_line, *highlights]
 
-ACTION REQUESTED
-----------------
-Please investigate and take down the following phishing infrastructure.
+        body = f"""Cryptocurrency phishing / seed phrase theft
 
-REPORTED SITE
--------------
-  Domain:     {evidence.domain}
-  URL:        {evidence.url}
-  Detected:   {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-  Confidence: {evidence.confidence_score}%
+Action requested:
+- Please suspend/disable the phishing content for the URL below.
 
---------------------------------------------------------------------------------
-                              EVIDENCE
---------------------------------------------------------------------------------
+Target:
+- Domain: {evidence.domain}
+- URL: {evidence.url}
+- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
+- Confidence: {evidence.confidence_score}%
 
-DETECTION REASONS
-{cls._format_list(evidence.detection_reasons)}
+What we observed:
+{cls._format_list(observations, prefix='- ')}
+
+Impact:
+- A seed phrase is the master key for a crypto wallet; theft enables immediate, irreversible loss of funds.
 
 """
 
         if evidence.backend_domains:
-            body += f"""BACKEND INFRASTRUCTURE
-The phishing site sends stolen data to these servers:
-{cls._format_list(evidence.backend_domains)}
+            body += f"""Backend infrastructure (if applicable):
+{cls._format_list(evidence.backend_domains, prefix='- ')}
 
 """
 
         if evidence.suspicious_endpoints:
-            body += f"""DATA EXFILTRATION ENDPOINTS
-{cls._format_list(evidence.suspicious_endpoints[:5])}
+            body += f"""Observed data collection endpoints:
+{cls._format_list(evidence.suspicious_endpoints[:5], prefix='- ')}
 
 """
 
         if evidence.api_keys_found:
-            body += f"""API KEYS FOUND IN MALICIOUS CODE
-(useful for tracking this threat actor)
-{cls._format_list(evidence.api_keys_found)}
+            body += f"""API keys found in malicious code:
+{cls._format_list(evidence.api_keys_found, prefix='- ')}
 
 """
 
-        body += """--------------------------------------------------------------------------------
-                           ABOUT THIS THREAT
---------------------------------------------------------------------------------
+        attachments: list[str] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(f"{evidence.html_path.name} (HTML capture)")
+        if attachments:
+            body += f"""Attachments:
+{cls._format_list(attachments, prefix='- ')}
 
-WHAT IS SEED PHRASE PHISHING?
-Cryptocurrency wallets use a 12 or 24-word "seed phrase" as a master key.
-Anyone with these words has COMPLETE control over the wallet and can steal
-all funds instantly and irreversibly.
+"""
 
-This phishing site impersonates a legitimate wallet and tricks users into
-entering their seed phrase, which is then sent to the attacker's servers.
-
-IMPACT
-- Victims lose all cryptocurrency in their wallet
-- Theft is immediate and irreversible
-- No bank or authority can recover the funds
-
---------------------------------------------------------------------------------
-
-Reporter: {}
-Tool: SeedBuster - Automated Cryptocurrency Phishing Detection
+        body += f"""Reporter: {reporter_email}
+Tool: SeedBuster (automated phishing detection)
 Source: https://github.com/elldeeone/seedbuster
-""".format(reporter_email)
+"""
 
         return {"subject": subject, "body": body}
 
@@ -199,35 +276,25 @@ network logs) upon request.
     @classmethod
     def cloudflare(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
         """Generate a Cloudflare abuse report."""
-        subject = f"Phishing Report: {evidence.domain}"
+        subject = f"Phishing report: {evidence.domain}"
 
-        body = f"""CRYPTOCURRENCY PHISHING SITE
+        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = f"Requests seed phrase ('{seed_hint}')" if seed_hint else "Requests cryptocurrency seed phrase"
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
 
-ACTION REQUESTED: Block/flag this domain for phishing
+        body = f"""Cryptocurrency phishing (seed phrase theft)
 
-REPORTED SITE
-  Domain:     {evidence.domain}
-  URL:        {evidence.url}
-  Confidence: {evidence.confidence_score}%
+URL: {evidence.url}
+Observed: {seed_line}
+Confidence: {evidence.confidence_score}%
 
-WHAT IT DOES
-This site impersonates a legitimate cryptocurrency wallet. It tricks users
-into entering their 12-word seed phrase, which gives attackers complete
-control over the victim's wallet and all funds.
+Key evidence (automated capture):
+{cls._format_list(highlights, prefix='- ')}
 
-DETECTION EVIDENCE
-{cls._format_list(evidence.detection_reasons)}
+Captured evidence (screenshot + HTML) available on request.
 
-"""
-        if evidence.backend_domains:
-            body += f"""BACKEND SERVERS (receiving stolen data)
-{cls._format_list(evidence.backend_domains)}
-
-"""
-
-        body += f"""---
+Please block/flag this URL as phishing.
 Reporter: {reporter_email}
-Detection: SeedBuster (automated phishing detection)
 """
 
         return {
@@ -246,55 +313,62 @@ Detection: SeedBuster (automated phishing detection)
     ) -> dict:
         """Generate a domain registrar abuse report."""
         registrar_str = f" - {registrar_name}" if registrar_name else ""
-        subject = f"Domain Abuse Report: {evidence.domain}"
+        subject = f"Domain Abuse Report (phishing / seed phrase theft): {evidence.domain}"
 
-        body = f"""
-================================================================================
-                    DOMAIN ABUSE REPORT{registrar_str}
-================================================================================
+        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = f"Observed seed phrase field: '{seed_hint}'" if seed_hint else "Observed seed phrase theft flow"
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+        if seed_hint:
+            seed_lower = seed_hint.lower()
+            highlights = [
+                h
+                for h in highlights
+                if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
+            ]
+        observations = [seed_line, *highlights]
 
-ACTION REQUESTED
-----------------
-Please investigate and consider suspending this domain for phishing.
+        body = f"""Registrar abuse report{registrar_str}
 
-REPORTED DOMAIN
----------------
-  Domain:     {evidence.domain}
-  URL:        {evidence.url}
-  Abuse Type: Phishing / Cryptocurrency Theft
-  Detected:   {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-  Confidence: {evidence.confidence_score}%
+Action requested:
+- Please suspend/disable this domain for phishing / cryptocurrency theft.
 
-DESCRIPTION
------------
-This domain hosts a phishing site impersonating a legitimate cryptocurrency
-wallet. It collects victims' seed phrases (12/24-word recovery phrases),
-which provide complete control over cryptocurrency wallets and enable
-immediate, irreversible theft of funds.
+Target:
+- Domain: {evidence.domain}
+- URL: {evidence.url}
+- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
+- Confidence: {evidence.confidence_score}%
 
-EVIDENCE
---------
-{cls._format_list(evidence.detection_reasons)}
+What we observed:
+{cls._format_list(observations, prefix='- ')}
 
 """
 
         if evidence.backend_domains:
-            body += f"""BACKEND INFRASTRUCTURE
-{cls._format_list(evidence.backend_domains)}
+            body += f"""Backend infrastructure (if applicable):
+{cls._format_list(evidence.backend_domains, prefix='- ')}
 
 """
 
         if evidence.suspicious_endpoints:
-            body += f"""MALICIOUS ENDPOINTS
-{cls._format_list(evidence.suspicious_endpoints[:5])}
+            body += f"""Observed data collection endpoints:
+{cls._format_list(evidence.suspicious_endpoints[:5], prefix='- ')}
 
 """
 
-        body += f"""================================================================================
+        attachments: list[str] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(f"{evidence.html_path.name} (HTML capture)")
+        if attachments:
+            body += f"""Attachments:
+{cls._format_list(attachments, prefix='- ')}
 
-Reporter: {reporter_email}
-Tool:     SeedBuster - Automated Phishing Detection
-Source:   https://github.com/elldeeone/seedbuster
+"""
+
+        body += f"""Reporter: {reporter_email}
+Tool: SeedBuster (automated phishing detection)
+Source: https://github.com/elldeeone/seedbuster
 """
 
         return {"subject": subject, "body": body}
@@ -302,13 +376,17 @@ Source:   https://github.com/elldeeone/seedbuster
     @classmethod
     def phishtank_comment(cls, evidence: ReportEvidence) -> str:
         """Generate a comment for PhishTank submission."""
+        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
         lines = [
-            "Cryptocurrency seed phrase phishing site.",
+            "Cryptocurrency phishing (seed phrase theft).",
+            seed_line,
             f"Confidence: {evidence.confidence_score}%",
             "",
-            "Detection reasons:",
+            "Key evidence:",
         ]
-        for reason in evidence.detection_reasons[:5]:
+        for reason in highlights:
             lines.append(f"- {reason}")
 
         if evidence.backend_domains:
@@ -325,14 +403,18 @@ Source:   https://github.com/elldeeone/seedbuster
     @classmethod
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
+        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
         lines = [
-            "Cryptocurrency wallet phishing - steals seed phrases",
+            "Cryptocurrency wallet phishing (seed phrase theft).",
+            seed_line,
             "",
-            "Evidence:",
+            "Key evidence (automated capture):",
         ]
-        for reason in evidence.detection_reasons[:5]:
+        for reason in highlights:
             lines.append(f"- {reason}")
-
+        lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
         return "\n".join(lines)
 
     @staticmethod

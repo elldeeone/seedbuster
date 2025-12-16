@@ -216,9 +216,11 @@ class SMTPReporter(BaseReporter):
             report = ReportTemplates.generic_email(evidence, self.from_email)
 
         # Collect attachments
-        attachments = []
+        attachments: list[Path] = []
         if evidence.screenshot_path and evidence.screenshot_path.exists():
             attachments.append(evidence.screenshot_path)
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(evidence.html_path)
 
         try:
             success = await self.send_email(
@@ -279,9 +281,11 @@ class SMTPReporter(BaseReporter):
             report = ReportTemplates.generic_email(evidence, self.from_email)
 
         # Collect attachments
-        attachments = []
+        attachments: list[Path] = []
         if evidence.screenshot_path and evidence.screenshot_path.exists():
             attachments.append(evidence.screenshot_path)
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(evidence.html_path)
 
         try:
             success = await self.send_email(

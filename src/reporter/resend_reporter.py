@@ -234,82 +234,48 @@ class ResendReporter(BaseReporter):
         else:
             report = ReportTemplates.generic_email(evidence, self.from_email)
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                attachments: list[dict[str, str]] = []
-                if evidence.screenshot_path and evidence.screenshot_path.exists():
-                    try:
-                        raw = await asyncio.to_thread(evidence.screenshot_path.read_bytes)
-                        encoded = base64.b64encode(raw).decode("ascii")
-                        attachments.append({
-                            "filename": evidence.screenshot_path.name,
-                            "content": encoded,
-                        })
-                    except Exception as e:
-                        logger.warning(f"Failed to attach screenshot: {e}")
+        attachments: list[Path] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(evidence.screenshot_path)
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(evidence.html_path)
 
-                payload: dict[str, object] = {
-                    "from": self.from_email,
-                    "to": [to_email],
-                    "subject": report["subject"],
-                    "text": report["body"],
-                }
-                if attachments:
-                    payload["attachments"] = attachments
-
-                resp = await client.post(
-                    self.API_URL,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
+        try:
+            email_id = await self.send_email(
+                to_email=to_email,
+                subject=report["subject"],
+                body=report["body"],
+                attachments=attachments,
+            )
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.SUBMITTED,
+                report_id=email_id,
+                message=f"Sent to {to_email}",
+            )
+        except APIError as e:
+            if e.status_code == 429:
+                return ReportResult(
+                    platform=self.platform_name,
+                    status=ReportStatus.RATE_LIMITED,
+                    message="Resend rate limit exceeded",
+                    retry_after=60,
                 )
-
-                if resp.status_code in (200, 201):
-                    result = resp.json()
-                    email_id = result.get("id", "")
-                    return ReportResult(
-                        platform=self.platform_name,
-                        status=ReportStatus.SUBMITTED,
-                        report_id=email_id,
-                        message=f"Sent to {to_email}",
-                    )
-
-                elif resp.status_code == 429:
-                    return ReportResult(
-                        platform=self.platform_name,
-                        status=ReportStatus.RATE_LIMITED,
-                        message="Resend rate limit exceeded",
-                        retry_after=60,
-                    )
-
-                elif resp.status_code == 401:
-                    return ReportResult(
-                        platform=self.platform_name,
-                        status=ReportStatus.FAILED,
-                        message="Invalid Resend API key",
-                    )
-
-                else:
-                    error_msg = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-                    return ReportResult(
-                        platform=self.platform_name,
-                        status=ReportStatus.FAILED,
-                        message=f"Resend error: {error_msg}",
-                    )
-
-            except httpx.TimeoutException:
+            if e.status_code == 401:
                 return ReportResult(
                     platform=self.platform_name,
                     status=ReportStatus.FAILED,
-                    message="Request timed out",
+                    message="Invalid Resend API key",
                 )
-
-            except Exception as e:
-                logger.exception("Resend submission error")
-                return ReportResult(
-                    platform=self.platform_name,
-                    status=ReportStatus.FAILED,
-                    message=f"Failed to send: {e}",
-                )
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=f"Resend error: {e}",
+            )
+        except Exception as e:
+            logger.exception("Resend submission error")
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=f"Failed to send: {e}",
+            )

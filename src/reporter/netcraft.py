@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +47,27 @@ class NetcraftReporter(BaseReporter):
             )
 
         # Build reason string
-        reason_parts = [
-            "Cryptocurrency seed phrase phishing site.",
+        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = (
+            f"Requests seed phrase ('{seed_hint}')."
+            if seed_hint
+            else "Requests cryptocurrency seed phrase."
+        )
+        highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+
+        reason_lines = [
+            "Cryptocurrency phishing (seed phrase theft).",
+            seed_line,
             f"Confidence: {evidence.confidence_score}%",
+            "",
+            "Key evidence (automated capture):",
+            *[f"- {r}" for r in highlights],
+            "",
+            "Captured evidence (screenshot + HTML) available on request.",
+            "",
+            "Detected by SeedBuster.",
         ]
-        for r in evidence.detection_reasons[:3]:
-            reason_parts.append(f"- {r}")
-        reason_parts.append("Detected by SeedBuster.")
-        reason = " ".join(reason_parts)
+        reason = "\n".join(reason_lines).strip()
 
         # Build payload
         payload = {

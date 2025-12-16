@@ -135,13 +135,14 @@ async def run_dashboard() -> None:
     async def preview_domain_report_callback(domain_id: int, domain: str) -> dict:
         """Send dry-run reports to operator's email."""
         dry_run_email = os.environ.get("DRY_RUN_EMAIL")
-        if not dry_run_email:
+        save_only = os.environ.get("DRY_RUN_SAVE_ONLY", "false").lower() == "true"
+        if not dry_run_email and not save_only:
             raise ValueError("DRY_RUN_EMAIL not configured")
         return await report_manager.report_domain(
             domain_id=domain_id,
             domain=domain,
             dry_run=True,
-            dry_run_email=dry_run_email,
+            dry_run_email=dry_run_email or "",
         )
 
     async def generate_campaign_pdf_callback(cluster_id: str) -> Path | None:
@@ -156,13 +157,14 @@ async def run_dashboard() -> None:
     async def preview_campaign_report_callback(cluster_id: str) -> dict:
         """Send dry-run campaign reports to operator's email."""
         dry_run_email = os.environ.get("DRY_RUN_EMAIL")
-        if not dry_run_email:
+        save_only = os.environ.get("DRY_RUN_SAVE_ONLY", "false").lower() == "true"
+        if not dry_run_email and not save_only:
             raise ValueError("DRY_RUN_EMAIL not configured")
         return await report_manager.report_campaign(
             cluster_id=cluster_id,
             cluster_manager=cluster_manager,
             dry_run=True,
-            dry_run_email=dry_run_email,
+            dry_run_email=dry_run_email or "",
         )
 
     async def submit_campaign_report_callback(cluster_id: str) -> dict:

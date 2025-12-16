@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +88,25 @@ class DigitalOceanReporter(BaseReporter):
             )
 
         # Build description
+        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = (
+            f"Requests seed phrase ('{seed_hint}')"
+            if seed_hint
+            else "Requests cryptocurrency seed phrase"
+        )
+        highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+
         description = f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
 {chr(10).join(f'- {app}' for app in do_apps)}
 
-Attack: {evidence.domain} steals seed phrases, sends to DO apps above.
+Phishing URL: {evidence.url}
+Observed: {seed_line}
 Confidence: {evidence.confidence_score}%
 
-Evidence:
-{chr(10).join(f'- {r}' for r in evidence.detection_reasons[:3])}
+Key evidence (automated capture):
+{chr(10).join(f'- {r}' for r in highlights)}
+
+Captured evidence (screenshot + HTML) available on request.
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
 

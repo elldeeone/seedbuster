@@ -56,6 +56,11 @@ class ReportManager:
         return os.environ.get("REPORT_PREVIEW_ONLY", "false").lower() == "true"
 
     @staticmethod
+    def _dry_run_save_only_enabled() -> bool:
+        """Return True when dry-run previews should only be saved locally."""
+        return os.environ.get("DRY_RUN_SAVE_ONLY", "false").lower() == "true"
+
+    @staticmethod
     def _ensure_url(target: str) -> str:
         """Ensure a scheme is present so urlparse works predictably."""
         value = (target or "").strip()
@@ -1070,7 +1075,7 @@ class ReportManager:
         Each platform's report is sent as a separate email so you can see exactly
         what each abuse team would receive.
         """
-        if not dry_run_email:
+        if not dry_run_email and not self._dry_run_save_only_enabled():
             return {
                 "error": ReportResult(
                     platform="dry_run",
@@ -1124,9 +1129,12 @@ class ReportManager:
                     report_content=report_content,
                     evidence=evidence,
                 )
-                msg = f"Dry-run sent to {dry_run_email}"
-                if saved:
-                    msg += f" (saved: {saved})"
+                if self._dry_run_save_only_enabled():
+                    msg = f"Dry-run saved: {saved}"
+                else:
+                    msg = f"Dry-run sent to {dry_run_email}"
+                    if saved:
+                        msg += f" (saved: {saved})"
                 results[platform] = ReportResult(
                     platform=platform,
                     status=ReportStatus.SUBMITTED,
@@ -1169,14 +1177,25 @@ class ReportManager:
                     do_apps.append(d)
             do_apps = sorted(set(do_apps))
 
+            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+            seed_line = (
+                f"Requests seed phrase ('{seed_hint}')"
+                if seed_hint
+                else "Requests cryptocurrency seed phrase"
+            )
+            highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+
             description = f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
 {chr(10).join(f'- {app}' for app in do_apps)}
 
-Attack: {evidence.domain} steals seed phrases, sends to DO apps above.
+Phishing URL: {evidence.url}
+Observed: {seed_line}
 Confidence: {evidence.confidence_score}%
 
-Evidence:
-{chr(10).join(f'- {r}' for r in evidence.detection_reasons[:3])}
+Key evidence (automated capture):
+{chr(10).join(f'- {r}' for r in highlights)}
+
+Captured evidence (screenshot + HTML) available on request.
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
 
@@ -1244,14 +1263,27 @@ Value:
 Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers them at submit time.
 """
         elif platform == "netcraft":
-            reason_parts = [
-                "Cryptocurrency seed phrase phishing site.",
+            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+            seed_line = (
+                f"Requests seed phrase ('{seed_hint}')."
+                if seed_hint
+                else "Requests cryptocurrency seed phrase."
+            )
+            highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+
+            reason_lines = [
+                "Cryptocurrency phishing (seed phrase theft).",
+                seed_line,
                 f"Confidence: {evidence.confidence_score}%",
+                "",
+                "Key evidence (automated capture):",
+                *[f"- {r}" for r in highlights],
+                "",
+                "Captured evidence (screenshot + HTML) available on request.",
+                "",
+                "Detected by SeedBuster.",
             ]
-            for r in evidence.detection_reasons[:3]:
-                reason_parts.append(f"- {r}")
-            reason_parts.append("Detected by SeedBuster.")
-            reason = " ".join(reason_parts)
+            reason = "\n".join(reason_lines).strip()
 
             payload: dict[str, object] = {
                 "urls": [
@@ -1312,6 +1344,8 @@ Evidence Summary:
         attachments: list[Path] = []
         if evidence.screenshot_path and evidence.screenshot_path.exists():
             attachments.append(evidence.screenshot_path)
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(evidence.html_path)
 
         subject = f"[DRY-RUN] Platform: {platform} | Domain: {domain}"
         body = f"""
@@ -1376,6 +1410,10 @@ To submit for real, run the command without --dry-run.
             )
         except Exception as e:  # pragma: no cover - best-effort only
             logger.warning("Failed to save dry-run preview: %s", e)
+
+        if self._dry_run_save_only_enabled():
+            logger.info("DRY_RUN_SAVE_ONLY enabled; skipping sending preview email (%s)", txt_path)
+            return txt_path
 
         resend_reporter = self.reporters.get("resend")
         if resend_reporter and resend_reporter.is_configured():
@@ -1637,9 +1675,12 @@ Domains: {', '.join(m.domain for m in cluster.members[:10])}{'...' if len(cluste
                 report_content=report_content,
                 evidence=evidence,
             )
-            msg = f"Dry-run sent to {dry_run_email}"
-            if saved:
-                msg += f" (saved: {saved})"
+            if self._dry_run_save_only_enabled():
+                msg = f"Dry-run saved: {saved}"
+            else:
+                msg = f"Dry-run sent to {dry_run_email}"
+                if saved:
+                    msg += f" (saved: {saved})"
             return ReportResult(
                 platform=f"{platform}_backend",
                 status=ReportStatus.SUBMITTED,
