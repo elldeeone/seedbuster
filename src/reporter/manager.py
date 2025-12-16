@@ -342,10 +342,19 @@ class ReportManager:
                     except Exception as e:
                         logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
 
+                # Serialize response_data to JSON for storage
+                response_data_json = None
+                if result.response_data:
+                    try:
+                        response_data_json = json.dumps(result.response_data)
+                    except Exception:
+                        pass
+
                 await self.database.update_report(
                     report_id=report_id,
                     status=result.status.value,
                     response=result.message,
+                    response_data=response_data_json,
                     retry_after=result.retry_after,
                 )
 
@@ -497,6 +506,27 @@ class ReportManager:
         if self.enabled_platforms is not None:
             platforms = [p for p in platforms if p in self.enabled_platforms]
         return platforms
+
+    def get_platform_info(self) -> dict[str, dict]:
+        """Get metadata about each available platform.
+
+        Returns dict mapping platform name to info dict:
+        {
+            "cloudflare": {"manual_only": False, "url": "https://..."},
+            "microsoft": {"manual_only": True, "url": "https://..."},
+            ...
+        }
+        """
+        platforms = self.get_available_platforms()
+        info = {}
+        for name in platforms:
+            reporter = self.reporters.get(name)
+            if reporter:
+                info[name] = {
+                    "manual_only": getattr(reporter, "manual_only", False),
+                    "url": getattr(reporter, "platform_url", ""),
+                }
+        return info
 
     async def ensure_pending_reports(self, domain_id: int, platforms: Optional[list[str]] = None) -> None:
         """
@@ -709,11 +739,21 @@ class ReportManager:
 
             # Manual-required reports shouldn't be re-attempted automatically; keep the last instructions.
             if latest_status_lower == ReportStatus.MANUAL_REQUIRED.value:
+                # Parse response_data from database to include structured fields
+                response_data = None
+                if latest:
+                    raw_response_data = latest.get("response_data")
+                    if raw_response_data:
+                        try:
+                            response_data = json.loads(raw_response_data) if isinstance(raw_response_data, str) else raw_response_data
+                        except (json.JSONDecodeError, TypeError):
+                            pass
                 results[platform] = ReportResult(
                     platform=platform,
                     status=ReportStatus.MANUAL_REQUIRED,
                     report_id=str(latest.get("id")) if latest else None,
                     message=(latest.get("response") if latest else None) or "Manual submission required",
+                    response_data=response_data,
                 )
                 continue
 
@@ -869,11 +909,20 @@ class ReportManager:
                     except Exception as e:
                         logger.warning(f"Failed to save manual report instructions for {domain} ({platform}): {e}")
 
+                # Serialize response_data to JSON for storage
+                response_data_json = None
+                if result.response_data:
+                    try:
+                        response_data_json = json.dumps(result.response_data)
+                    except Exception:
+                        pass
+
                 # Update database
                 await self.database.update_report(
                     report_id=report_id,
                     status=result.status.value,
                     response=result.message,
+                    response_data=response_data_json,
                     retry_after=result.retry_after,
                 )
 
@@ -1118,6 +1167,54 @@ class ReportManager:
                     status=ReportStatus.SKIPPED,
                     message=skip_reason or "Not applicable",
                 )
+                continue
+
+            # For manual-only platforms, call submit() to get structured response_data
+            # for the dashboard, then store in database
+            if reporter.manual_only:
+                try:
+                    result = await reporter.submit(evidence)
+                    # Create report in database so dashboard can access structured fields
+                    report_id = await self.database.add_report(
+                        domain_id=domain_id,
+                        platform=platform,
+                        status=result.status.value,
+                    )
+                    response_data_json = None
+                    if result.response_data:
+                        try:
+                            response_data_json = json.dumps(result.response_data)
+                        except Exception:
+                            pass
+                    await self.database.update_report(
+                        report_id=report_id,
+                        status=result.status.value,
+                        response=result.message,
+                        response_data=response_data_json,
+                    )
+                    result.report_id = str(report_id)
+                    results[platform] = result
+
+                    # Also send dry-run preview email for manual platforms
+                    try:
+                        report_content = self._build_platform_report_preview(platform, evidence)
+                        await self._send_dry_run_email(
+                            to_email=dry_run_email,
+                            platform=platform,
+                            domain=domain,
+                            report_content=report_content,
+                            evidence=evidence,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send dry-run email for manual platform {platform}: {e}")
+
+                except Exception as e:
+                    logger.error(f"Failed to get manual fields for {platform}: {e}")
+                    results[platform] = ReportResult(
+                        platform=platform,
+                        status=ReportStatus.MANUAL_REQUIRED,
+                        message=f"Manual submission required: {reporter.platform_url}",
+                    )
                 continue
 
             # Build the report content that would be sent

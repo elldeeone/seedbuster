@@ -101,6 +101,7 @@ class Database:
                         attempted_at TIMESTAMP,
                         submitted_at TIMESTAMP,
                         response TEXT,
+                        response_data TEXT,
                         attempts INTEGER DEFAULT 0,
                         retry_after INTEGER,
                         next_attempt_at TIMESTAMP,
@@ -179,6 +180,8 @@ class Database:
             migrations.append("ALTER TABLE reports ADD COLUMN retry_after INTEGER")
         if "next_attempt_at" not in existing:
             migrations.append("ALTER TABLE reports ADD COLUMN next_attempt_at TIMESTAMP")
+        if "response_data" not in existing:
+            migrations.append("ALTER TABLE reports ADD COLUMN response_data TEXT")
 
         for stmt in migrations:
             try:
@@ -614,6 +617,7 @@ class Database:
         report_id: int,
         status: str,
         response: str = None,
+        response_data: str | None = None,
         retry_after: int | None = None,
         next_attempt_at: str | None = None,
     ):
@@ -639,6 +643,7 @@ class Database:
                 UPDATE reports
                 SET status = ?,
                     response = ?,
+                    response_data = COALESCE(?, response_data),
                     attempted_at = CURRENT_TIMESTAMP,
                     submitted_at = CASE
                         WHEN ? THEN CURRENT_TIMESTAMP
@@ -658,6 +663,7 @@ class Database:
                 (
                     status,
                     response,
+                    response_data,
                     1 if set_submitted_at else 0,
                     1 if status_lower == "rate_limited" else 0,
                     int(retry_after) if retry_after is not None else None,

@@ -674,6 +674,1243 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         border-color: var(--accent-green);
       }}
 
+      /* Manual Submission Helper */
+      .sb-manual-helper {{
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: 20px;
+        margin: 12px 0;
+      }}
+
+      .sb-manual-helper-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-manual-helper-title {{
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent-orange);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .sb-manual-helper-reason {{
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-tertiary);
+        background: var(--bg-overlay);
+        padding: 4px 10px;
+        border-radius: var(--radius-sm);
+      }}
+
+      .sb-copy-field {{
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        position: relative;
+      }}
+
+      .sb-copy-field-label {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 6px;
+      }}
+
+      .sb-copy-field-value {{
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+      }}
+
+      .sb-copy-field-value.multiline {{
+        max-height: 140px;
+        overflow-y: auto;
+        padding-right: 8px;
+      }}
+
+      .sb-copy-btn {{
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 4px 10px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        background: var(--bg-overlay);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        color: var(--text-tertiary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .sb-copy-btn:hover {{
+        background: var(--accent-blue-subtle);
+        color: var(--accent-blue);
+        border-color: rgba(88, 166, 255, 0.3);
+      }}
+
+      .sb-copy-btn.copied {{
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+        border-color: rgba(63, 185, 80, 0.3);
+      }}
+
+      .sb-manual-helper-actions {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-subtle);
+      }}
+
+      .sb-manual-helper-notes {{
+        margin-top: 16px;
+        padding: 12px 14px;
+        background: var(--bg-overlay);
+        border-radius: var(--radius-md);
+        border-left: 3px solid var(--accent-amber);
+      }}
+
+      .sb-manual-helper-notes-title {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent-amber);
+        margin-bottom: 8px;
+      }}
+
+      .sb-manual-helper-notes ul {{
+        margin: 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }}
+
+      .sb-manual-helper-notes li {{
+        margin-bottom: 4px;
+      }}
+
+      /* New Manual Submission UI */
+      .sb-manual-cta {{
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-manual-cta-btn {{
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 24px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: linear-gradient(135deg, var(--accent-blue) 0%, #4a90d9 100%);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius-md);
+        text-decoration: none;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        box-shadow: 0 2px 8px rgba(88, 166, 255, 0.3);
+      }}
+
+      .sb-manual-cta-btn:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(88, 166, 255, 0.4);
+        background: linear-gradient(135deg, #6ab0ff 0%, #5a9ee9 100%);
+      }}
+
+      .sb-manual-cta-icon {{
+        font-size: 16px;
+      }}
+
+      .sb-manual-copy-all {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 20px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: var(--bg-overlay);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-manual-copy-all:hover {{
+        background: var(--bg-elevated);
+        border-color: var(--accent-blue);
+        color: var(--accent-blue);
+      }}
+
+      .sb-manual-copy-all.copied {{
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+        border-color: rgba(63, 185, 80, 0.3);
+      }}
+
+      .sb-copy-card-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }}
+
+      .sb-copy-card {{
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        transition: border-color var(--transition-fast);
+      }}
+
+      .sb-copy-card:hover {{
+        border-color: var(--border-muted);
+      }}
+
+      .sb-copy-card-full {{
+        grid-column: 1 / -1;
+      }}
+
+      .sb-copy-card-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: var(--bg-overlay);
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-copy-card-label {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+      }}
+
+      .sb-copy-card-btn {{
+        padding: 4px 10px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        background: transparent;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        color: var(--text-tertiary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .sb-copy-card-btn:hover {{
+        background: var(--accent-blue-subtle);
+        color: var(--accent-blue);
+        border-color: rgba(88, 166, 255, 0.3);
+      }}
+
+      .sb-copy-card-btn.copied {{
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+        border-color: rgba(63, 185, 80, 0.3);
+      }}
+
+      .sb-copy-card-btn.copied .sb-copy-card-btn-text {{
+        display: none;
+      }}
+
+      .sb-copy-card-btn.copied::after {{
+        content: 'Copied!';
+      }}
+
+      .sb-copy-card-value {{
+        padding: 10px 12px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-primary);
+        word-break: break-all;
+        line-height: 1.4;
+      }}
+
+      .sb-copy-card-value-multi {{
+        max-height: 120px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }}
+
+      .sb-manual-notes {{
+        margin-top: 16px;
+        padding: 12px 14px;
+        background: rgba(210, 153, 34, 0.08);
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(210, 153, 34, 0.2);
+      }}
+
+      .sb-manual-notes-title {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent-amber);
+        margin-bottom: 8px;
+      }}
+
+      .sb-manual-notes ul {{
+        margin: 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }}
+
+      .sb-manual-notes li {{
+        margin-bottom: 4px;
+      }}
+
+      /* Platform Categories */
+      .sb-platform-section {{
+        margin-bottom: 16px;
+      }}
+
+      .sb-platform-section-title {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-platform-section-title.manual {{
+        color: var(--accent-orange);
+        border-bottom-color: rgba(240, 136, 62, 0.2);
+      }}
+
+      .sb-platform-section-desc {{
+        font-size: 11px;
+        color: var(--text-tertiary);
+        margin-bottom: 8px;
+      }}
+
+      /* ========================================
+         TWO-STAGE MANUAL SUBMISSION MODAL
+         ======================================== */
+
+      /* Notification Bar */
+      .sb-notify-bar {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        margin-bottom: 16px;
+        background: linear-gradient(135deg, rgba(240, 136, 62, 0.08) 0%, rgba(240, 136, 62, 0.03) 100%);
+        border: 1px solid rgba(240, 136, 62, 0.25);
+        border-left: 3px solid var(--accent-orange);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-notify-bar:hover {{
+        background: linear-gradient(135deg, rgba(240, 136, 62, 0.14) 0%, rgba(240, 136, 62, 0.06) 100%);
+        border-color: rgba(240, 136, 62, 0.4);
+        transform: translateX(2px);
+      }}
+
+      .sb-notify-bar-content {{
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }}
+
+      .sb-notify-bar-icon {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        background: var(--accent-orange);
+        color: var(--bg-deep);
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 800;
+        flex-shrink: 0;
+      }}
+
+      .sb-notify-bar-text {{
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+      }}
+
+      .sb-notify-bar-text strong {{
+        color: var(--accent-orange);
+        font-weight: 700;
+      }}
+
+      .sb-notify-bar-hint {{
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--accent-orange);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: rgba(240, 136, 62, 0.1);
+        border-radius: var(--radius-sm);
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-notify-bar:hover .sb-notify-bar-hint {{
+        background: rgba(240, 136, 62, 0.2);
+      }}
+
+      /* Modal Overlay */
+      .sb-modal-overlay {{
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(6px);
+        z-index: 1000;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.25s ease, visibility 0.25s ease;
+      }}
+
+      .sb-modal-overlay.open {{
+        opacity: 1;
+        visibility: visible;
+      }}
+
+      /* Two-Stage Modal Panel */
+      .sb-modal-panel {{
+        position: fixed;
+        top: 0;
+        right: 0;
+        height: 100vh;
+        background: var(--bg-base);
+        border-left: 1px solid var(--border-default);
+        box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+        z-index: 1001;
+        transform: translateX(100%);
+        transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), width 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        display: flex;
+        flex-direction: column;
+        width: 320px;
+      }}
+
+      .sb-modal-panel.open {{
+        transform: translateX(0);
+      }}
+
+      .sb-modal-panel.expanded {{
+        width: 580px;
+      }}
+
+      @media (max-width: 640px) {{
+        .sb-modal-panel {{
+          width: 100vw;
+        }}
+        .sb-modal-panel.expanded {{
+          width: 100vw;
+        }}
+      }}
+
+      /* Modal Header */
+      .sb-modal-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-default);
+        flex-shrink: 0;
+        min-height: 64px;
+      }}
+
+      .sb-modal-header-left {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }}
+
+      .sb-modal-back {{
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        background: var(--bg-overlay);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        font-size: 14px;
+      }}
+
+      .sb-modal-panel.expanded .sb-modal-back {{
+        display: flex;
+      }}
+
+      .sb-modal-back:hover {{
+        background: var(--bg-elevated);
+        border-color: var(--text-tertiary);
+        color: var(--text-primary);
+      }}
+
+      .sb-modal-title {{
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--accent-orange);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }}
+
+      .sb-modal-subtitle {{
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-tertiary);
+        margin-top: 2px;
+      }}
+
+      .sb-modal-close {{
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        color: var(--text-tertiary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        font-size: 16px;
+      }}
+
+      .sb-modal-close:hover {{
+        background: var(--bg-overlay);
+        border-color: var(--text-tertiary);
+        color: var(--text-primary);
+      }}
+
+      /* Modal Body */
+      .sb-modal-body {{
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }}
+
+      /* Stage 1: Platform List */
+      .sb-platform-list {{
+        padding: 12px;
+      }}
+
+      .sb-platform-list-item {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        margin-bottom: 8px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-platform-list-item:hover {{
+        background: var(--bg-elevated);
+        border-color: var(--accent-orange);
+        transform: translateX(3px);
+      }}
+
+      .sb-platform-list-item.done {{
+        opacity: 0.6;
+        border-color: rgba(63, 185, 80, 0.3);
+      }}
+
+      .sb-platform-list-item.done:hover {{
+        opacity: 0.8;
+        border-color: rgba(63, 185, 80, 0.5);
+      }}
+
+      .sb-platform-list-info {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }}
+
+      .sb-platform-list-icon {{
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-overlay);
+        border-radius: var(--radius-sm);
+        font-size: 16px;
+      }}
+
+      .sb-platform-list-item.done .sb-platform-list-icon {{
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+      }}
+
+      .sb-platform-list-name {{
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }}
+
+      .sb-platform-list-status {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .sb-platform-list-item.done .sb-platform-list-status {{
+        color: var(--accent-green);
+      }}
+
+      .sb-platform-list-arrow {{
+        color: var(--text-tertiary);
+        font-size: 14px;
+        transition: transform var(--transition-fast);
+      }}
+
+      .sb-platform-list-item:hover .sb-platform-list-arrow {{
+        transform: translateX(3px);
+        color: var(--accent-orange);
+      }}
+
+      .sb-platform-list-item.done .sb-platform-list-arrow {{
+        color: var(--accent-green);
+      }}
+
+      /* Stage 2: Platform Detail View */
+      .sb-platform-detail {{
+        display: none;
+        padding: 0;
+      }}
+
+      .sb-modal-panel.expanded .sb-platform-list {{
+        display: none;
+      }}
+
+      .sb-modal-panel.expanded .sb-platform-detail.active {{
+        display: block;
+      }}
+
+      /* Detail Header */
+      .sb-detail-header {{
+        padding: 20px;
+        background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-base) 100%);
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-detail-platform {{
+        font-family: var(--font-mono);
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 4px;
+      }}
+
+      .sb-detail-subtitle {{
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-tertiary);
+      }}
+
+      /* Open Form CTA */
+      .sb-detail-cta {{
+        padding: 16px 20px;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-detail-cta-btn {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        padding: 14px 20px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: linear-gradient(135deg, var(--accent-blue) 0%, #4a90d9 100%);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius-md);
+        text-decoration: none;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-detail-cta-btn:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(88, 166, 255, 0.35);
+      }}
+
+      .sb-detail-cta-btn span {{
+        font-size: 16px;
+      }}
+
+      /* Form Fields Section */
+      .sb-detail-fields {{
+        padding: 16px 20px;
+      }}
+
+      .sb-detail-fields-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }}
+
+      .sb-detail-fields-title {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+
+      .sb-detail-fields-progress {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-tertiary);
+        padding: 4px 8px;
+        background: var(--bg-overlay);
+        border-radius: var(--radius-sm);
+      }}
+
+      /* Individual Copy Field */
+      .sb-field {{
+        position: relative;
+        margin-bottom: 10px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        transition: all var(--transition-fast);
+        overflow: hidden;
+      }}
+
+      .sb-field.copied {{
+        border-color: rgba(63, 185, 80, 0.4);
+        background: rgba(63, 185, 80, 0.03);
+      }}
+
+      .sb-field-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px 8px 12px;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-field-label {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }}
+
+      .sb-field.copied .sb-field-label {{
+        color: var(--accent-green);
+      }}
+
+      .sb-field-copy {{
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: var(--bg-overlay);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        color: var(--text-tertiary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-field-copy:hover {{
+        background: var(--bg-surface);
+        border-color: var(--accent-blue);
+        color: var(--accent-blue);
+      }}
+
+      .sb-field.copied .sb-field-copy {{
+        background: var(--accent-green-subtle);
+        border-color: rgba(63, 185, 80, 0.3);
+        color: var(--accent-green);
+      }}
+
+      .sb-field-value {{
+        padding: 10px 12px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-primary);
+        line-height: 1.5;
+        word-break: break-word;
+        white-space: pre-wrap;
+        max-height: 120px;
+        overflow-y: auto;
+      }}
+
+      .sb-field-value.multiline {{
+        max-height: 200px;
+        font-size: 11px;
+        background: var(--bg-deep);
+        border-radius: 0 0 var(--radius-md) var(--radius-md);
+      }}
+
+      /* Evidence Section */
+      .sb-detail-evidence {{
+        padding: 16px 20px;
+        border-top: 1px solid var(--border-subtle);
+        background: var(--bg-surface);
+      }}
+
+      .sb-detail-evidence-title {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }}
+
+      .sb-detail-evidence-title::before {{
+        content: '📎';
+        font-size: 12px;
+      }}
+
+      .sb-evidence-files {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }}
+
+      .sb-evidence-file {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        background: var(--bg-overlay);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        text-decoration: none;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-evidence-file:hover {{
+        background: var(--bg-elevated);
+        border-color: var(--accent-blue);
+        color: var(--accent-blue);
+      }}
+
+      .sb-evidence-file-icon {{
+        font-size: 14px;
+      }}
+
+      /* Detail Footer / Mark as Done */
+      .sb-detail-footer {{
+        padding: 16px 20px;
+        background: var(--bg-surface);
+        border-top: 1px solid var(--border-default);
+        margin-top: auto;
+      }}
+
+      .sb-detail-done-btn {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        padding: 14px 20px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: var(--accent-green-subtle);
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        border-radius: var(--radius-md);
+        color: var(--accent-green);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-detail-done-btn:hover {{
+        background: rgba(63, 185, 80, 0.2);
+        border-color: var(--accent-green);
+        transform: translateY(-1px);
+      }}
+
+      .sb-detail-done-btn:disabled {{
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }}
+
+      /* Tips Section */
+      .sb-detail-tips {{
+        padding: 12px 20px;
+        background: var(--bg-overlay);
+        border-top: 1px solid var(--border-subtle);
+      }}
+
+      .sb-detail-tips-title {{
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 700;
+        color: var(--accent-amber);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 8px;
+      }}
+
+      .sb-detail-tips ul {{
+        margin: 0;
+        padding-left: 14px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-tertiary);
+        line-height: 1.6;
+      }}
+
+      .sb-detail-tips li {{
+        margin-bottom: 2px;
+      }}
+
+      /* Confirmation Dialog */
+      .sb-confirm-dialog {{
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.95);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        width: 380px;
+        max-width: 90vw;
+        z-index: 1002;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      }}
+
+      .sb-confirm-dialog.open {{
+        opacity: 1;
+        visibility: visible;
+        transform: translate(-50%, -50%) scale(1);
+      }}
+
+      .sb-confirm-title {{
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 12px;
+      }}
+
+      .sb-confirm-message {{
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        line-height: 1.6;
+      }}
+
+      .sb-confirm-actions {{
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }}
+
+      .sb-platform-card-status {{
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 4px 8px;
+        border-radius: var(--radius-sm);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .sb-platform-card-status.pending {{
+        background: rgba(240, 136, 62, 0.15);
+        color: var(--accent-orange);
+      }}
+
+      .sb-platform-card-status.done {{
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+      }}
+
+      .sb-platform-card-toggle {{
+        font-size: 12px;
+        color: var(--text-tertiary);
+        transition: transform var(--transition-fast);
+      }}
+
+      .sb-platform-card.expanded .sb-platform-card-toggle {{
+        transform: rotate(180deg);
+      }}
+
+      .sb-platform-card-body {{
+        display: none;
+        padding: 16px;
+        border-top: 1px solid var(--border-subtle);
+      }}
+
+      .sb-platform-card.expanded .sb-platform-card-body {{
+        display: block;
+      }}
+
+      .sb-platform-card-actions {{
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-subtle);
+      }}
+
+      .sb-platform-open-btn {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: linear-gradient(135deg, var(--accent-blue) 0%, #4a90d9 100%);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius-md);
+        text-decoration: none;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-platform-open-btn:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+      }}
+
+      .sb-platform-done-btn {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: var(--accent-green-subtle);
+        color: var(--accent-green);
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-platform-done-btn:hover {{
+        background: rgba(63, 185, 80, 0.2);
+        border-color: var(--accent-green);
+      }}
+
+      .sb-platform-done-btn:disabled {{
+        opacity: 0.5;
+        cursor: not-allowed;
+      }}
+
+      /* Confirmation Dialog */
+      .sb-confirm-dialog {{
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.9);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        width: 400px;
+        max-width: 90vw;
+        z-index: 1002;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.2s ease;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+      }}
+
+      .sb-confirm-dialog.open {{
+        opacity: 1;
+        visibility: visible;
+        transform: translate(-50%, -50%) scale(1);
+      }}
+
+      .sb-confirm-title {{
+        font-family: var(--font-mono);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+      }}
+
+      .sb-confirm-text {{
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }}
+
+      .sb-confirm-actions {{
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+      }}
+
+      .sb-confirm-cancel {{
+        padding: 10px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        background: transparent;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-confirm-cancel:hover {{
+        background: var(--bg-overlay);
+        border-color: var(--text-tertiary);
+      }}
+
+      .sb-confirm-ok {{
+        padding: 10px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--accent-green);
+        border: none;
+        border-radius: var(--radius-md);
+        color: var(--bg-deep);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }}
+
+      .sb-confirm-ok:hover {{
+        background: #4ec969;
+      }}
+
+      /* Expandable Report Row */
+      .sb-report-expandable {{
+        border: none;
+        background: none;
+        width: 100%;
+      }}
+
+      .sb-report-expandable summary {{
+        cursor: pointer;
+        list-style: none;
+        display: contents;
+      }}
+
+      .sb-report-expandable summary::-webkit-details-marker {{
+        display: none;
+      }}
+
+      .sb-report-expandable[open] .sb-expand-icon {{
+        transform: rotate(90deg);
+      }}
+
+      .sb-expand-icon {{
+        display: inline-block;
+        transition: transform var(--transition-fast);
+        font-size: 10px;
+        margin-right: 6px;
+      }}
+
       /* Code */
       .sb-code {{
         font-family: var(--font-mono);
@@ -922,6 +2159,330 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         background: var(--border-emphasis);
       }}
     </style>
+    <script>
+      // Copy field to clipboard
+      function copyField(fieldId, btnId) {{
+        const el = document.getElementById(fieldId);
+        const btn = document.getElementById(btnId);
+        if (!el || !btn) return;
+        const text = el.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {{
+          btn.classList.add('copied');
+          setTimeout(() => {{ btn.classList.remove('copied'); }}, 2000);
+        }}).catch(err => {{
+          console.error('Copy failed:', err);
+        }});
+      }}
+
+      // Copy all fields in a container
+      function copyAllFields(containerId) {{
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const cards = container.querySelectorAll('.sb-copy-card');
+        let text = '';
+        cards.forEach(card => {{
+          const label = card.querySelector('.sb-copy-card-label');
+          const value = card.querySelector('.sb-copy-card-value');
+          if (label && value) {{
+            text += label.textContent.trim() + ':\\n' + value.textContent.trim() + '\\n\\n';
+          }}
+        }});
+        // Also try the older format
+        const fields = container.querySelectorAll('.sb-copy-field');
+        fields.forEach(field => {{
+          const label = field.querySelector('.sb-copy-field-label');
+          const value = field.querySelector('.sb-copy-field-value');
+          if (label && value) {{
+            text += label.textContent.trim() + ':\\n' + value.textContent.trim() + '\\n\\n';
+          }}
+        }});
+        navigator.clipboard.writeText(text.trim()).then(() => {{
+          const btn = container.querySelector('.sb-manual-copy-all, .sb-copy-all-btn');
+          if (btn) {{
+            btn.classList.add('copied');
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => {{
+              btn.textContent = orig;
+              btn.classList.remove('copied');
+            }}, 2000);
+          }}
+        }});
+      }}
+
+      // Toggle report row in table
+      function toggleManualHelper(rowId) {{
+        const row = document.getElementById(rowId);
+        const icon = document.getElementById(rowId + '_icon');
+        if (!row) return;
+        if (row.style.display === 'none') {{
+          row.style.display = 'table-row';
+          if (icon) icon.style.transform = 'rotate(90deg)';
+        }} else {{
+          row.style.display = 'none';
+          if (icon) icon.style.transform = 'rotate(0deg)';
+        }}
+      }}
+
+      // ==========================================
+      // TWO-STAGE MANUAL SUBMISSION MODAL
+      // ==========================================
+      let currentPanelId = null;
+      let currentPlatformId = null;
+      let pendingMarkDone = null;
+
+      // Open modal (Stage 1: Platform List)
+      function openManualModal(panelId) {{
+        currentPanelId = panelId;
+        const overlay = document.getElementById(panelId + '_overlay');
+        const modal = document.getElementById(panelId + '_modal');
+        if (overlay && modal) {{
+          overlay.classList.add('open');
+          modal.classList.add('open');
+          modal.classList.remove('expanded');
+          document.body.style.overflow = 'hidden';
+          // Hide all detail views
+          modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        }}
+      }}
+
+      // Close modal completely
+      function closeManualModal(panelId) {{
+        panelId = panelId || currentPanelId;
+        const overlay = document.getElementById(panelId + '_overlay');
+        const modal = document.getElementById(panelId + '_modal');
+        if (overlay) overlay.classList.remove('open');
+        if (modal) {{
+          modal.classList.remove('open');
+          modal.classList.remove('expanded');
+        }}
+        document.body.style.overflow = '';
+        currentPlatformId = null;
+      }}
+
+      // Expand to show platform detail (Stage 2)
+      function showPlatformDetail(panelId, platformId) {{
+        currentPlatformId = platformId;
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+
+        // Expand modal
+        modal.classList.add('expanded');
+
+        // Hide all details, show selected
+        modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        const detail = document.getElementById(platformId + '_detail');
+        if (detail) detail.classList.add('active');
+
+        // Update header title
+        const titleEl = document.getElementById(panelId + '_title');
+        const platform = detail?.dataset.platform || '';
+        if (titleEl) titleEl.textContent = platform.toUpperCase();
+      }}
+
+      // Back to platform list (Stage 1)
+      function backToList(panelId) {{
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+
+        modal.classList.remove('expanded');
+        modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        currentPlatformId = null;
+
+        // Reset header title
+        const titleEl = document.getElementById(panelId + '_title');
+        if (titleEl) titleEl.textContent = 'Manual Submissions';
+      }}
+
+      // Copy field with visual feedback
+      function copyFieldValue(fieldId, btnId) {{
+        const field = document.getElementById(fieldId);
+        const btn = document.getElementById(btnId);
+        if (!field) return;
+
+        const text = field.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {{
+          // Mark field as copied
+          const fieldContainer = field.closest('.sb-field');
+          if (fieldContainer) fieldContainer.classList.add('copied');
+
+          // Update button
+          if (btn) {{
+            btn.innerHTML = '✓ Copied';
+            setTimeout(() => {{
+              btn.innerHTML = 'Copy';
+            }}, 2000);
+          }}
+
+          // Update progress
+          updateFieldProgress();
+        }}).catch(err => {{
+          console.error('Copy failed:', err);
+          alert('Failed to copy. Please select and copy manually.');
+        }});
+      }}
+
+      // Update field copy progress counter
+      function updateFieldProgress() {{
+        document.querySelectorAll('.sb-platform-detail.active').forEach(detail => {{
+          const totalFields = detail.querySelectorAll('.sb-field').length;
+          const copiedFields = detail.querySelectorAll('.sb-field.copied').length;
+          const progressEl = detail.querySelector('.sb-detail-fields-progress');
+          if (progressEl) {{
+            progressEl.textContent = `${{copiedFields}}/${{totalFields}} copied`;
+          }}
+        }});
+      }}
+
+      // Show confirmation dialog
+      function showConfirmDialog(platformId, platform, domainId) {{
+        const panelId = platformId.replace(/_platform_\d+$/, '');
+        const csrf = document.querySelector('input[name="csrf"]')?.value || '';
+        pendingMarkDone = {{ platformId, platform, domainId, csrf, panelId }};
+
+        const dialog = document.getElementById(panelId + '_confirm');
+        const platformEl = document.getElementById(panelId + '_confirm_platform');
+        if (dialog && platformEl) {{
+          platformEl.textContent = platform.toUpperCase();
+          dialog.classList.add('open');
+        }}
+      }}
+
+      // Hide confirmation dialog
+      function hideConfirmDialog(panelId) {{
+        panelId = panelId || (pendingMarkDone && pendingMarkDone.panelId);
+        if (panelId) {{
+          const dialog = document.getElementById(panelId + '_confirm');
+          if (dialog) dialog.classList.remove('open');
+        }}
+        pendingMarkDone = null;
+      }}
+
+      // Confirm and mark as done
+      async function confirmMarkDone(panelId) {{
+        if (!pendingMarkDone) return;
+        const {{ platformId, platform, domainId, csrf }} = pendingMarkDone;
+
+        const confirmBtn = document.querySelector('#' + panelId + '_confirm .sb-btn-success');
+        if (confirmBtn) {{
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Submitting...';
+        }}
+
+        try {{
+          const formData = new FormData();
+          formData.append('csrf', csrf);
+          formData.append('note', 'Manually submitted via dashboard');
+          formData.append('platform', platform);
+
+          const response = await fetch(`/admin/domains/${{domainId}}/manual_done`, {{
+            method: 'POST',
+            body: formData,
+          }});
+
+          if (response.ok || response.redirected) {{
+            // Mark list item as done
+            const listItem = document.getElementById(platformId);
+            if (listItem) {{
+              listItem.classList.add('done');
+              const statusEl = listItem.querySelector('.sb-platform-list-status');
+              if (statusEl) statusEl.textContent = 'Submitted';
+              const iconEl = listItem.querySelector('.sb-platform-list-icon');
+              if (iconEl) iconEl.textContent = '✓';
+            }}
+
+            // Go back to list
+            backToList(panelId);
+            updateModalProgress(panelId);
+
+            // Check if all done
+            const modal = document.getElementById(panelId + '_modal');
+            const pendingItems = modal ? modal.querySelectorAll('.sb-platform-list-item:not(.done)') : [];
+            if (pendingItems.length === 0) {{
+              setTimeout(() => {{
+                closeManualModal(panelId);
+                const notifyBar = document.getElementById(panelId + '_notify');
+                if (notifyBar) notifyBar.style.display = 'none';
+                const url = new URL(window.location);
+                url.searchParams.delete('manual_pending');
+                window.history.replaceState({{}}, '', url);
+              }}, 600);
+            }}
+          }} else {{
+            alert('Failed to mark as submitted. Please try again.');
+          }}
+        }} catch (err) {{
+          console.error('Error:', err);
+          alert('Failed to mark as submitted. Please try again.');
+        }} finally {{
+          hideConfirmDialog(panelId);
+          if (confirmBtn) {{
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Yes, I've Submitted";
+          }}
+        }}
+      }}
+
+      // Update modal progress counter
+      function updateModalProgress(panelId) {{
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+        const totalItems = modal.querySelectorAll('.sb-platform-list-item').length;
+        const doneItems = modal.querySelectorAll('.sb-platform-list-item.done').length;
+        const pending = totalItems - doneItems;
+
+        const progressEl = document.getElementById(panelId + '_progress');
+        if (progressEl) {{
+          progressEl.textContent = `${{pending}} of ${{totalItems}} pending`;
+        }}
+
+        const notifyBar = document.getElementById(panelId + '_notify');
+        if (notifyBar) {{
+          const textEl = notifyBar.querySelector('.sb-notify-bar-text');
+          if (textEl && pending > 0) {{
+            textEl.innerHTML = `<strong>Action Required:</strong> ${{pending}} platform${{pending > 1 ? 's' : ''}} need manual submission`;
+          }}
+        }}
+      }}
+
+      // Keyboard handlers
+      document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') {{
+          // Close confirm dialog first if open
+          if (pendingMarkDone && pendingMarkDone.panelId) {{
+            const dialog = document.getElementById(pendingMarkDone.panelId + '_confirm');
+            if (dialog && dialog.classList.contains('open')) {{
+              hideConfirmDialog(pendingMarkDone.panelId);
+              return;
+            }}
+          }}
+          // If expanded, go back to list
+          if (currentPanelId) {{
+            const modal = document.getElementById(currentPanelId + '_modal');
+            if (modal && modal.classList.contains('expanded')) {{
+              backToList(currentPanelId);
+              return;
+            }}
+          }}
+          if (currentPanelId) {{
+            closeManualModal(currentPanelId);
+          }}
+        }}
+      }});
+
+      // Auto-open modal if manual_pending is in URL
+      document.addEventListener('DOMContentLoaded', function() {{
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('manual_pending')) {{
+          // Find the notification bar and extract panel ID
+          const notifyBar = document.querySelector('.sb-notify-bar');
+          if (notifyBar && notifyBar.id) {{
+            const panelId = notifyBar.id.replace('_notify', '');
+            openManualModal(panelId);
+          }}
+        }}
+      }});
+    </script>
   </head>
   <body>
     <div class="sb-container">
@@ -1633,6 +3194,371 @@ def _render_kv_table(items: Iterable[tuple[str, object]]) -> str:
     """
 
 
+def _render_manual_helper(report: dict, helper_id: str) -> str:
+    """Render the manual submission helper UI for a MANUAL_REQUIRED report."""
+    # Parse response_data from JSON if it's a string (from database)
+    response_data = report.get("response_data")
+    if isinstance(response_data, str):
+        try:
+            response_data = json.loads(response_data)
+        except (json.JSONDecodeError, TypeError):
+            response_data = {}
+    response_data = response_data or {}
+
+    manual_fields = response_data.get("manual_fields")
+    platform = report.get("platform", "unknown")
+
+    if not manual_fields:
+        # Fallback: parse the plain text message and create a basic UI
+        msg = report.get("response") or report.get("message") or ""
+        # Try to extract URL from the message
+        import re
+        url_match = re.search(r'https?://[^\s<>"]+', msg)
+        form_url = url_match.group(0) if url_match else ""
+
+        return f"""
+          <div id="{helper_id}" class="sb-manual-helper">
+            <div class="sb-manual-helper-header">
+              <div class="sb-manual-helper-title">{_escape(platform.upper())} Manual Submission</div>
+            </div>
+            {f'''<div class="sb-manual-cta">
+              <a class="sb-manual-cta-btn" href="{_escape(form_url)}" target="_blank" rel="noreferrer">
+                <span class="sb-manual-cta-icon">↗</span>
+                <span>Open Abuse Form</span>
+              </a>
+            </div>''' if form_url else ''}
+            <div class="sb-copy-field">
+              <div class="sb-copy-field-label">Report Details</div>
+              <div id="{helper_id}_fallback" class="sb-copy-field-value multiline">{_escape(msg)}</div>
+              <button type="button" id="{helper_id}_fallback_btn" class="sb-copy-btn" onclick="copyField('{helper_id}_fallback', '{helper_id}_fallback_btn')">Copy</button>
+            </div>
+          </div>
+        """
+
+    form_url = manual_fields.get("form_url", "")
+    reason = manual_fields.get("reason", "")
+    fields = manual_fields.get("fields", [])
+    notes = manual_fields.get("notes", [])
+
+    # Determine if this is an email (mailto:) or web form
+    is_email = form_url.startswith("mailto:")
+    open_btn_text = "Open Email Client" if is_email else "Open Abuse Form"
+    open_btn_icon = "✉" if is_email else "↗"
+
+    # Render the CTA button
+    cta_html = ""
+    if form_url:
+        cta_html = f"""
+          <div class="sb-manual-cta">
+            <a class="sb-manual-cta-btn" href="{_escape(form_url)}" target="_blank" rel="noreferrer">
+              <span class="sb-manual-cta-icon">{open_btn_icon}</span>
+              <span>{open_btn_text}</span>
+            </a>
+            <button type="button" class="sb-manual-copy-all" onclick="copyAllFields('{helper_id}')">
+              Copy All Fields
+            </button>
+          </div>
+        """
+
+    # Render fields in a 2-column grid for short fields, full width for long ones
+    field_html = []
+    for i, f in enumerate(fields):
+        field_id = f"{helper_id}_field_{i}"
+        btn_id = f"{helper_id}_btn_{i}"
+        is_multiline = f.get("multiline", False)
+        value = f.get("value", "")
+        is_long = is_multiline or len(value) > 60
+
+        field_class = "sb-copy-card sb-copy-card-full" if is_long else "sb-copy-card"
+        value_class = "sb-copy-card-value sb-copy-card-value-multi" if is_multiline else "sb-copy-card-value"
+
+        field_html.append(f"""
+          <div class="{field_class}">
+            <div class="sb-copy-card-header">
+              <span class="sb-copy-card-label">{_escape(f.get("label", ""))}</span>
+              <button type="button" id="{btn_id}" class="sb-copy-card-btn" onclick="copyField('{field_id}', '{btn_id}')">
+                <span class="sb-copy-card-btn-text">Copy</span>
+              </button>
+            </div>
+            <div id="{field_id}" class="{value_class}">{_escape(value)}</div>
+          </div>
+        """)
+
+    # Render notes
+    notes_html = ""
+    if notes:
+        notes_items = "".join(f"<li>{_escape(n)}</li>" for n in notes)
+        notes_html = f"""
+          <div class="sb-manual-notes">
+            <div class="sb-manual-notes-title">Tips</div>
+            <ul>{notes_items}</ul>
+          </div>
+        """
+
+    return f"""
+      <div id="{helper_id}" class="sb-manual-helper">
+        <div class="sb-manual-helper-header">
+          <div class="sb-manual-helper-title">{_escape(platform.upper())} Manual Submission</div>
+          {f'<div class="sb-manual-helper-reason">{_escape(reason)}</div>' if reason else ''}
+        </div>
+
+        {cta_html}
+
+        <div class="sb-copy-card-grid">
+          {''.join(field_html)}
+        </div>
+
+        {notes_html}
+      </div>
+    """
+
+
+def _render_platform_detail(
+    report: dict,
+    platform_id: str,
+    domain_id: int,
+    panel_id: str,
+    evidence_base_url: str | None = None,
+) -> str:
+    """Render the detail view for a single platform with form fields and evidence."""
+    # Parse response_data from JSON if it's a string
+    response_data = report.get("response_data")
+    if isinstance(response_data, str):
+        try:
+            response_data = json.loads(response_data)
+        except (json.JSONDecodeError, TypeError):
+            response_data = {}
+    response_data = response_data or {}
+
+    manual_fields = response_data.get("manual_fields")
+    platform = report.get("platform", "unknown")
+
+    # Get form URL and fields
+    if manual_fields:
+        form_url = manual_fields.get("form_url", "")
+        fields = manual_fields.get("fields", [])
+        notes = manual_fields.get("notes", [])
+    else:
+        # Fallback: extract from plain text
+        msg = report.get("response") or report.get("message") or ""
+        import re
+        url_match = re.search(r'https?://[^\s<>"]+', msg)
+        form_url = url_match.group(0) if url_match else ""
+        fields = [{"label": "Report Details", "value": msg, "multiline": True}] if msg else []
+        notes = []
+
+    # Determine button text
+    is_email = form_url.startswith("mailto:") if form_url else False
+    open_btn_text = "Open Email Client" if is_email else "Open Abuse Form"
+    open_btn_icon = "✉" if is_email else "↗"
+
+    # Render CTA button
+    cta_html = ""
+    if form_url:
+        cta_html = f"""
+          <div class="sb-detail-cta">
+            <a class="sb-detail-cta-btn" href="{_escape(form_url)}" target="_blank" rel="noreferrer">
+              <span>{open_btn_icon}</span>
+              {open_btn_text}
+            </a>
+          </div>
+        """
+
+    # Render form fields
+    fields_html = []
+    for i, f in enumerate(fields):
+        field_id = f"{platform_id}_field_{i}"
+        btn_id = f"{platform_id}_btn_{i}"
+        is_multiline = f.get("multiline", False)
+        value = f.get("value", "")
+        value_class = "sb-field-value multiline" if is_multiline else "sb-field-value"
+
+        fields_html.append(f"""
+          <div class="sb-field">
+            <div class="sb-field-header">
+              <span class="sb-field-label">{_escape(f.get("label", ""))}</span>
+              <button type="button" id="{btn_id}" class="sb-field-copy" onclick="copyFieldValue('{field_id}', '{btn_id}')">Copy</button>
+            </div>
+            <div id="{field_id}" class="{value_class}">{_escape(value)}</div>
+          </div>
+        """)
+
+    fields_section = ""
+    if fields_html:
+        fields_section = f"""
+          <div class="sb-detail-fields">
+            <div class="sb-detail-fields-header">
+              <span class="sb-detail-fields-title">Form Fields</span>
+              <span class="sb-detail-fields-progress">0/{len(fields)} copied</span>
+            </div>
+            {''.join(fields_html)}
+          </div>
+        """
+
+    # Render notes/tips
+    tips_html = ""
+    if notes:
+        notes_items = "".join(f"<li>{_escape(n)}</li>" for n in notes)
+        tips_html = f"""
+          <div class="sb-detail-tips">
+            <div class="sb-detail-tips-title">Tips</div>
+            <ul>{notes_items}</ul>
+          </div>
+        """
+
+    return f"""
+      <div id="{platform_id}_detail" class="sb-platform-detail" data-platform="{_escape(platform)}">
+        <div class="sb-detail-header">
+          <div class="sb-detail-platform">{_escape(platform.upper())}</div>
+          <div class="sb-detail-subtitle">Copy the fields below and paste into the abuse form</div>
+        </div>
+
+        {cta_html}
+        {fields_section}
+        {tips_html}
+
+        <div class="sb-detail-footer">
+          <button type="button" class="sb-detail-done-btn" onclick="showConfirmDialog('{platform_id}', '{_escape(platform)}', {domain_id})">
+            ✓ Mark as Submitted
+          </button>
+        </div>
+      </div>
+    """
+
+
+def _render_action_required_panel(
+    manual_pending: list[str],
+    reports: list[dict],
+    domain_id: int,
+    evidence_base_url: str | None = None,
+) -> str:
+    """Render two-stage notification bar + slide-out modal for manual platform submissions."""
+    if not manual_pending:
+        return ""
+
+    # Build a map of platform -> report
+    reports_by_platform: dict[str, dict] = {}
+    for r in reports:
+        platform = (r.get("platform") or "").lower()
+        if platform in manual_pending:
+            existing = reports_by_platform.get(platform)
+            if not existing or (r.get("status") or "").lower() == "manual_required":
+                reports_by_platform[platform] = r
+
+    # Create placeholders for platforms without reports
+    for platform in manual_pending:
+        if platform not in reports_by_platform:
+            reports_by_platform[platform] = {
+                "platform": platform,
+                "status": "manual_required",
+                "response": f"Manual submission required for {platform.upper()}",
+            }
+
+    manual_reports = list(reports_by_platform.values())
+    if not manual_reports:
+        return ""
+
+    panel_id = f"action_required_{domain_id}"
+    count = len(manual_reports)
+    platform_word = "platform" if count == 1 else "platforms"
+
+    # Platform icons
+    platform_icons = {
+        "cloudflare": "☁",
+        "google": "🔍",
+        "microsoft": "🪟",
+        "netcraft": "🛡",
+        "apwg": "🎣",
+        "phishtank": "🐟",
+        "registrar": "📝",
+        "hosting_provider": "🖥",
+        "digitalocean": "🌊",
+    }
+
+    # Build platform list items and detail views
+    list_items = []
+    detail_views = []
+
+    for i, r in enumerate(manual_reports):
+        platform = (r.get("platform") or "unknown").lower()
+        platform_display = platform.upper()
+        platform_id = f"{panel_id}_platform_{i}"
+        icon = platform_icons.get(platform, "📋")
+
+        # List item
+        list_items.append(f"""
+          <div id="{platform_id}" class="sb-platform-list-item" onclick="showPlatformDetail('{panel_id}', '{platform_id}')">
+            <div class="sb-platform-list-info">
+              <div class="sb-platform-list-icon">{icon}</div>
+              <div>
+                <div class="sb-platform-list-name">{_escape(platform_display)}</div>
+                <div class="sb-platform-list-status">Pending</div>
+              </div>
+            </div>
+            <span class="sb-platform-list-arrow">→</span>
+          </div>
+        """)
+
+        # Detail view
+        detail_views.append(_render_platform_detail(
+            r, platform_id, domain_id, panel_id, evidence_base_url
+        ))
+
+    # Notification bar
+    notification_bar = f"""
+      <div id="{panel_id}_notify" class="sb-notify-bar" onclick="openManualModal('{panel_id}')">
+        <div class="sb-notify-bar-content">
+          <span class="sb-notify-bar-icon">!</span>
+          <span class="sb-notify-bar-text">
+            <strong>Action Required:</strong> {count} {platform_word} need manual submission
+          </span>
+        </div>
+        <span class="sb-notify-bar-hint">Review →</span>
+      </div>
+    """
+
+    # Slide-out modal with two stages
+    modal = f"""
+      <div id="{panel_id}_overlay" class="sb-modal-overlay" onclick="closeManualModal('{panel_id}')"></div>
+      <div id="{panel_id}_modal" class="sb-modal-panel">
+        <div class="sb-modal-header">
+          <div class="sb-modal-header-left">
+            <button type="button" class="sb-modal-back" onclick="backToList('{panel_id}')">←</button>
+            <div>
+              <div class="sb-modal-title" id="{panel_id}_title">Manual Submissions</div>
+              <div class="sb-modal-subtitle" id="{panel_id}_progress">{count} of {count} pending</div>
+            </div>
+          </div>
+          <button type="button" class="sb-modal-close" onclick="closeManualModal('{panel_id}')">&times;</button>
+        </div>
+        <div class="sb-modal-body">
+          <div class="sb-platform-list">
+            {''.join(list_items)}
+          </div>
+          {''.join(detail_views)}
+        </div>
+      </div>
+    """
+
+    # Confirmation dialog
+    confirm_dialog = f"""
+      <div id="{panel_id}_confirm" class="sb-confirm-dialog">
+        <div class="sb-confirm-content">
+          <div class="sb-confirm-title">Confirm Submission</div>
+          <div class="sb-confirm-message">
+            Have you submitted the abuse report to <strong id="{panel_id}_confirm_platform"></strong>?
+          </div>
+          <div class="sb-confirm-actions">
+            <button type="button" class="sb-btn" onclick="hideConfirmDialog('{panel_id}')">Not Yet</button>
+            <button type="button" class="sb-btn sb-btn-success" onclick="confirmMarkDone('{panel_id}')">Yes, I've Submitted</button>
+          </div>
+        </div>
+      </div>
+    """
+
+    return notification_bar + modal + confirm_dialog
+
+
 def _render_domain_detail(
     domain: dict,
     reports: list[dict],
@@ -1646,8 +3572,10 @@ def _render_domain_detail(
     msg: str | None,
     error: bool,
     available_platforms: list[str],
+    platform_info: dict[str, dict] | None = None,
     cluster: dict | None = None,
     related_domains: list[dict] | None = None,
+    manual_pending: list[str] | None = None,
 ) -> str:
     did = domain.get("id")
     domain_name = domain.get("domain") or ""
@@ -1709,18 +3637,42 @@ def _render_domain_detail(
 
     # Reports table
     reports_rows = []
-    for r in reports:
-        reports_rows.append(
-            "<tr>"
-            f"<td>{_escape(r.get('platform') or '')}</td>"
-            f"<td>{_report_badge(r.get('status'))}</td>"
-            f'<td class="sb-muted">{_escape(r.get("attempts") or 0)}</td>'
-            f'<td class="sb-muted">{_escape(r.get("attempted_at") or "—")}</td>'
-            f'<td class="sb-muted">{_escape(r.get("submitted_at") or "—")}</td>'
-            f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "—")}</td>'
-            f'<td class="sb-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{_escape((r.get("response") or "")[:120])}</td>'
-            "</tr>"
-        )
+    for idx, r in enumerate(reports):
+        status = (r.get("status") or "").lower()
+        platform = r.get("platform") or ""
+
+        if status == "manual_required":
+            # Expandable row for manual submission helper
+            helper_id = f"manual_helper_{did}_{idx}"
+            row_id = f"manual_row_{did}_{idx}"
+            helper_html = _render_manual_helper(r, helper_id)
+            reports_rows.append(
+                f'<tr style="cursor: pointer;" onclick="toggleManualHelper(\'{row_id}\')">'
+                f'<td><span id="{row_id}_icon" class="sb-expand-icon">▶</span> {_escape(platform)}</td>'
+                f"<td>{_report_badge(status)}</td>"
+                f'<td class="sb-muted">{_escape(r.get("attempts") or 0)}</td>'
+                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "—")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "—")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "—")}</td>'
+                f'<td class="sb-muted" style="font-size: 11px; color: var(--accent-orange);">Click to expand</td>'
+                "</tr>"
+                f'<tr id="{row_id}" style="display: none;"><td colspan="7" style="padding: 0; border-top: none;">'
+                f"{helper_html}"
+                f"</td></tr>"
+            )
+        else:
+            # Standard row for other statuses
+            reports_rows.append(
+                "<tr>"
+                f"<td>{_escape(platform)}</td>"
+                f"<td>{_report_badge(status)}</td>"
+                f'<td class="sb-muted">{_escape(r.get("attempts") or 0)}</td>'
+                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "—")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "—")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "—")}</td>'
+                f'<td class="sb-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{_escape((r.get("response") or "")[:120])}</td>'
+                "</tr>"
+            )
 
     reports_table = f"""
       <div class="sb-panel">
@@ -1757,14 +3709,47 @@ def _render_domain_detail(
         status_val = (domain.get("status") or "").strip().lower()
         verdict_val = (domain.get("verdict") or "").strip().lower()
 
-        platform_checks = []
+        # Categorize platforms into automated vs manual
+        pinfo = platform_info or {}
+        automated_platforms = []
+        manual_platforms = []
         for p in available_platforms:
-            platform_checks.append(
-                f'<label style="display:flex;gap:10px;align-items:center;padding:8px 0;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);cursor:pointer;">'
+            info = pinfo.get(p, {})
+            if info.get("manual_only", False):
+                manual_platforms.append(p)
+            else:
+                automated_platforms.append(p)
+
+        def render_platform_checkbox(p: str) -> str:
+            return (
+                f'<label style="display:flex;gap:10px;align-items:center;padding:6px 0;'
+                f'font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);cursor:pointer;">'
                 f'<input type="checkbox" name="platform" value="{_escape(p)}" checked />'
                 f'<span>{_escape(p)}</span>'
                 f"</label>"
             )
+
+        platform_checks_html = ""
+        if automated_platforms:
+            auto_checks = "".join(render_platform_checkbox(p) for p in automated_platforms)
+            platform_checks_html += f"""
+              <div class="sb-platform-section">
+                <div class="sb-platform-section-title">Automated Platforms</div>
+                <div class="sb-platform-section-desc">Submitted automatically via API or form</div>
+                {auto_checks}
+              </div>
+            """
+        if manual_platforms:
+            manual_checks = "".join(render_platform_checkbox(p) for p in manual_platforms)
+            platform_checks_html += f"""
+              <div class="sb-platform-section">
+                <div class="sb-platform-section-title manual">Manual Submission Required</div>
+                <div class="sb-platform-section-desc">Generates copy-paste data for manual forms</div>
+                {manual_checks}
+              </div>
+            """
+        if not automated_platforms and not manual_platforms:
+            platform_checks_html = '<div class="sb-muted" style="padding: 12px 0;">No configured reporters.</div>'
 
         admin_forms = f"""
           <div class="sb-panel" style="border-color: rgba(210, 153, 34, 0.3);">
@@ -1840,8 +3825,8 @@ def _render_domain_detail(
                   <div class="sb-action-card-title">Submit Reports</div>
                   <form method="post" action="/admin/domains/{_escape(did)}/report">
                     <input type="hidden" name="csrf" value="{_escape(csrf)}" />
-                    <div style="max-height:140px;overflow:auto;border:1px solid var(--border-default);border-radius:var(--radius-md);padding:4px 12px;margin-bottom:12px;background:var(--bg-elevated);">
-                      {''.join(platform_checks) if platform_checks else '<div class="sb-muted" style="padding: 12px 0;">No configured reporters.</div>'}
+                    <div style="max-height:220px;overflow:auto;border:1px solid var(--border-default);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:12px;background:var(--bg-elevated);">
+                      {platform_checks_html}
                     </div>
                     <div class="sb-row">
                       <label style="display:flex;gap:8px;align-items:center;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);cursor:pointer;">
@@ -1887,6 +3872,13 @@ def _render_domain_detail(
         ]
     )
 
+    # Render the Action Required panel if manual platforms are pending
+    action_required_html = ""
+    if manual_pending and admin:
+        action_required_html = _render_action_required_panel(
+            manual_pending, reports, did, evidence_base_url
+        )
+
     return f"""
       <div class="sb-domain-header">
         <div class="sb-row sb-space-between" style="margin-bottom: 16px;">
@@ -1902,6 +3894,7 @@ def _render_domain_detail(
         </div>
       </div>
       {_flash(msg, error=error)}
+      {action_required_html}
       <div class="sb-grid" style="margin-bottom: 16px;">
         <div class="col-6">{info}</div>
         <div class="col-6">
@@ -1950,6 +3943,7 @@ class DashboardServer:
         report_callback: Callable[[int, str, Optional[list[str]], bool], object] | None = None,
         mark_manual_done_callback: Callable[[int, str, Optional[list[str]], str], object] | None = None,
         get_available_platforms: Callable[[], list[str]] | None = None,
+        get_platform_info: Callable[[], dict[str, dict]] | None = None,
         # New callbacks for enhanced reporting
         generate_domain_pdf_callback: Callable[[str, int | None], Path | None] | None = None,
         generate_domain_package_callback: Callable[[str, int | None], Path | None] | None = None,
@@ -1968,6 +3962,7 @@ class DashboardServer:
         self.report_callback = report_callback
         self.mark_manual_done_callback = mark_manual_done_callback
         self.get_available_platforms = get_available_platforms or (lambda: [])
+        self.get_platform_info = get_platform_info or (lambda: {})
         # New callbacks
         self.generate_domain_pdf_callback = generate_domain_pdf_callback
         self.generate_domain_package_callback = generate_domain_package_callback
@@ -2323,6 +4318,9 @@ class DashboardServer:
 
         msg = request.query.get("msg")
         error = request.query.get("error") == "1"
+        # Parse manual_pending platforms from query param (comma-separated)
+        manual_pending_raw = request.query.get("manual_pending", "")
+        manual_pending = [p.strip().lower() for p in manual_pending_raw.split(",") if p.strip()]
 
         resp = web.Response(
             text=_layout(
@@ -2339,8 +4337,10 @@ class DashboardServer:
                     msg=msg,
                     error=error,
                     available_platforms=self.get_available_platforms(),
+                    platform_info=self.get_platform_info(),
                     cluster=cluster,
                     related_domains=related_domains,
+                    manual_pending=manual_pending if manual_pending else None,
                 ),
                 admin=True,
             ),
@@ -2405,7 +4405,23 @@ class DashboardServer:
                 )
             )
 
-        raise web.HTTPSeeOther(location=_build_query_link(f"/admin/domains/{did}", msg="Report submitted"))
+        # Determine which selected platforms are manual-only
+        platform_info = self.get_platform_info() if self.get_platform_info else {}
+        manual_platforms = [
+            p for p in platforms
+            if platform_info.get(p, {}).get("manual_only", False)
+        ]
+
+        # Build redirect with manual_pending param if any manual platforms
+        if manual_platforms:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(
+                    f"/admin/domains/{did}",
+                    msg="Reports submitted - action required for manual platforms",
+                    manual_pending=",".join(manual_platforms),
+                )
+            )
+        raise web.HTTPSeeOther(location=_build_query_link(f"/admin/domains/{did}", msg="Reports submitted"))
 
     async def _admin_manual_done(self, request: web.Request) -> web.Response:
         did = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)

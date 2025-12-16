@@ -8,7 +8,14 @@ and a copy/paste-ready email template.
 import logging
 from typing import Optional
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 from .rdap import lookup_registrar_via_rdap
 from .templates import ReportTemplates
 
@@ -35,6 +42,7 @@ class RegistrarReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 30
+    manual_only = True
 
     def __init__(self, reporter_email: str = ""):
         super().__init__()
@@ -99,6 +107,71 @@ class RegistrarReporter(BaseReporter):
             registrar_name=registrar_name,
         )
 
+        # Build structured data for the new UI
+        fields: list[ManualSubmissionField] = [
+            ManualSubmissionField(
+                name="url",
+                label="Phishing URL",
+                value=evidence.url,
+            ),
+            ManualSubmissionField(
+                name="domain",
+                label="Domain",
+                value=domain,
+            ),
+        ]
+
+        if abuse_email:
+            fields.extend([
+                ManualSubmissionField(
+                    name="to",
+                    label="Send email to",
+                    value=abuse_email,
+                ),
+                ManualSubmissionField(
+                    name="subject",
+                    label="Subject line",
+                    value=template["subject"],
+                ),
+                ManualSubmissionField(
+                    name="body",
+                    label="Email body",
+                    value=template["body"].strip(),
+                    multiline=True,
+                ),
+            ])
+        else:
+            fields.extend([
+                ManualSubmissionField(
+                    name="subject",
+                    label="Suggested subject",
+                    value=template["subject"],
+                ),
+                ManualSubmissionField(
+                    name="body",
+                    label="Email body",
+                    value=template["body"].strip(),
+                    multiline=True,
+                ),
+            ])
+
+        # Determine the best destination URL
+        destination_url = abuse_form or (f"mailto:{abuse_email}" if abuse_email else "")
+
+        notes = []
+        if registrar_name:
+            notes.append(f"Registrar: {registrar_name}")
+        if not abuse_email:
+            notes.append("No abuse email found; search registrar support for contact.")
+
+        manual_data = ManualSubmissionData(
+            form_url=destination_url,
+            reason=f"Registrar: {registrar_name or 'Unknown'}",
+            fields=fields,
+            notes=notes,
+        )
+
+        # Build plain text message for backwards compatibility
         parts: list[str] = []
         if registrar_name:
             parts.append(f"Registrar detected: {registrar_name}")
@@ -133,4 +206,5 @@ class RegistrarReporter(BaseReporter):
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
             message="\n".join(parts).strip(),
+            response_data={"manual_fields": manual_data.to_dict()},
         )

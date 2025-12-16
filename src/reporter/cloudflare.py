@@ -7,7 +7,15 @@ from typing import Optional
 
 import httpx
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus, APIError
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+    APIError,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -26,6 +34,7 @@ class CloudflareReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 10
+    manual_only = True  # Turnstile/CAPTCHA almost always blocks automation
 
     ABUSE_FORM_URL = "https://abuse.cloudflare.com/phishing"
     SUBMIT_URL = "https://abuse.cloudflare.com/api/v1/phishing"
@@ -104,7 +113,10 @@ class CloudflareReporter(BaseReporter):
             lines.append("Captured evidence (screenshot + HTML) available on request.")
         return "\n".join(lines).strip()
 
-    def _build_manual_payload(self, evidence: ReportEvidence, *, reason: str) -> str:
+    def _build_manual_payload(
+        self, evidence: ReportEvidence, *, reason: str
+    ) -> tuple[str, ManualSubmissionData]:
+        """Build manual submission payload with both plain text and structured data."""
         justification = self._build_public_justification(evidence)
         internal_comments = self._build_internal_comments(evidence)
 
@@ -117,6 +129,138 @@ class CloudflareReporter(BaseReporter):
         reported_country = (self.reported_country or "").strip()
         reported_user_agent = (self.reported_user_agent or "").strip()
 
+        # Build structured data for the new UI
+        fields: list[ManualSubmissionField] = [
+            ManualSubmissionField(
+                name="name",
+                label="Your full name",
+                value=name or "(fill manually)",
+            ),
+            ManualSubmissionField(
+                name="email",
+                label="Your email address",
+                value=email or "(fill manually)",
+            ),
+            ManualSubmissionField(
+                name="email2",
+                label="Confirm email address",
+                value=email or "(fill manually)",
+            ),
+        ]
+
+        if title:
+            fields.append(
+                ManualSubmissionField(name="title", label="Title (optional)", value=title)
+            )
+        if company:
+            fields.append(
+                ManualSubmissionField(
+                    name="company", label="Company name (optional)", value=company
+                )
+            )
+        if tele:
+            fields.append(
+                ManualSubmissionField(
+                    name="tele", label="Telephone (optional)", value=tele
+                )
+            )
+
+        fields.append(
+            ManualSubmissionField(
+                name="urls",
+                label="Evidence URLs (one per line)",
+                value=evidence.url,
+                multiline=True,
+            )
+        )
+        fields.append(
+            ManualSubmissionField(
+                name="justification",
+                label="Logs or other evidence of abuse (may be released publicly)",
+                value=justification,
+                multiline=True,
+            )
+        )
+
+        if targeted_brand:
+            fields.append(
+                ManualSubmissionField(
+                    name="original_work",
+                    label="Targeted Brand (optional)",
+                    value=targeted_brand,
+                )
+            )
+
+        if reported_country:
+            fields.append(
+                ManualSubmissionField(
+                    name="reported_country",
+                    label="Reporter current country (optional)",
+                    value=reported_country,
+                )
+            )
+        if reported_user_agent:
+            fields.append(
+                ManualSubmissionField(
+                    name="reported_user_agent",
+                    label="User agent (optional)",
+                    value=reported_user_agent,
+                )
+            )
+
+        if internal_comments:
+            fields.append(
+                ManualSubmissionField(
+                    name="comments",
+                    label="Comments (internal to Cloudflare)",
+                    value=internal_comments,
+                    multiline=True,
+                )
+            )
+
+        # Add notification preference guidance (checkboxes on the form)
+        fields.append(
+            ManualSubmissionField(
+                name="notification_prefs",
+                label="Who should be notified? (checkboxes)",
+                value=(
+                    "☑ Please forward my report to the website hosting provider.\n"
+                    "☐ Include my name and contact information with the report to the hosting provider.\n"
+                    "☑ Please forward my report to the website owner.\n"
+                    "☐ Include my name and contact information with the report to the website owner.\n\n"
+                    "→ Check the boxes above on the form. Uncheck 'Include my name' if you prefer anonymity."
+                ),
+                multiline=True,
+            )
+        )
+
+        # Add DSA certification reminder (required checkbox)
+        fields.append(
+            ManualSubmissionField(
+                name="dsa_certification",
+                label="DSA Certification (required checkbox)",
+                value=(
+                    "☑ I understand and agree\n\n"
+                    "→ You MUST check this box to submit the form."
+                ),
+                multiline=True,
+            )
+        )
+
+        notes = [
+            "Complete the Turnstile challenge before submitting.",
+            "The notification checkboxes determine who receives your report - check at least one forwarding option.",
+            "The DSA certification checkbox is REQUIRED to submit the form.",
+        ]
+
+        manual_data = ManualSubmissionData(
+            form_url=self.ABUSE_FORM_URL,
+            reason=reason,
+            fields=fields,
+            notes=notes,
+        )
+
+        # Build plain text message for backwards compatibility
         lines = [
             f"Manual submission required ({reason}): {self.ABUSE_FORM_URL}",
             "",
@@ -156,14 +300,23 @@ class CloudflareReporter(BaseReporter):
         lines.extend(
             [
                 "",
+                "- Who should be notified? (checkboxes on form):",
+                "  ☑ Please forward my report to the website hosting provider.",
+                "  ☐ Include my name and contact information with the report to the hosting provider.",
+                "  ☑ Please forward my report to the website owner.",
+                "  ☐ Include my name and contact information with the report to the website owner.",
+                "",
+                "- DSA Certification (required checkbox):",
+                "  ☑ I understand and agree",
+                "",
                 "Notes:",
-                "- The Cloudflare form includes Turnstile; you may need to complete it before submitting.",
-                "- Leave the 'Include my name and contact information' checkboxes unchecked if you do not want your contact details forwarded.",
-                "- You will likely need to check the 'I understand and agree' (DSA certification) box to submit.",
+                "- " + notes[0],
+                "- " + notes[1],
+                "- " + notes[2],
             ]
         )
 
-        return "\n".join(lines).strip()
+        return "\n".join(lines).strip(), manual_data
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """
@@ -199,18 +352,26 @@ class CloudflareReporter(BaseReporter):
                 # Load the form page and detect challenges/CAPTCHA.
                 form_resp = await client.get(self.ABUSE_FORM_URL)
                 if form_resp.status_code != 200:
+                    msg, manual_data = self._build_manual_payload(
+                        evidence, reason=f"HTTP {form_resp.status_code}"
+                    )
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=self._build_manual_payload(evidence, reason=f"HTTP {form_resp.status_code}"),
+                        message=msg,
+                        response_data={"manual_fields": manual_data.to_dict()},
                     )
 
                 page_lower = (form_resp.text or "").lower()
                 if any(token in page_lower for token in ("cf-turnstile", "turnstile", "captcha", "cf-challenge")):
+                    msg, manual_data = self._build_manual_payload(
+                        evidence, reason="Turnstile/CAPTCHA"
+                    )
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=self._build_manual_payload(evidence, reason="Turnstile/CAPTCHA"),
+                        message=msg,
+                        response_data={"manual_fields": manual_data.to_dict()},
                     )
 
                 csrf_token = self._extract_csrf_token_from_html(form_resp.text)
@@ -268,10 +429,14 @@ class CloudflareReporter(BaseReporter):
                         )
                     else:
                         # Don't assume success if we can't confirm.
+                        msg, manual_data = self._build_manual_payload(
+                            evidence, reason="Submission not confirmed"
+                        )
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
-                            message=self._build_manual_payload(evidence, reason="Submission not confirmed"),
+                            message=msg,
+                            response_data={"manual_fields": manual_data.to_dict()},
                         )
 
                 elif resp.status_code == 429:
@@ -301,8 +466,12 @@ class CloudflareReporter(BaseReporter):
 
             except Exception as e:
                 logger.exception("Cloudflare submission error")
+                msg, manual_data = self._build_manual_payload(
+                    evidence, reason=f"Auto-submit failed: {e}"
+                )
                 return ReportResult(
                     platform=self.platform_name,
                     status=ReportStatus.MANUAL_REQUIRED,
-                    message=self._build_manual_payload(evidence, reason=f"Auto-submit failed: {e}"),
+                    message=msg,
+                    response_data={"manual_fields": manual_data.to_dict()},
                 )

@@ -76,6 +76,43 @@ class ReportEvidence:
 
 
 @dataclass
+class ManualSubmissionField:
+    """A single field for manual form submission."""
+
+    name: str  # Internal field name (e.g., "email")
+    label: str  # Display label (e.g., "Your email address")
+    value: str  # The value to copy
+    multiline: bool = False  # Whether this is a multiline text field
+
+
+@dataclass
+class ManualSubmissionData:
+    """Structured data for manual form submission."""
+
+    form_url: str  # URL of the form to submit
+    reason: str  # Why manual submission is required (e.g., "Turnstile/CAPTCHA")
+    fields: list[ManualSubmissionField] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # Additional instructions
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "form_url": self.form_url,
+            "reason": self.reason,
+            "fields": [
+                {
+                    "name": f.name,
+                    "label": f.label,
+                    "value": f.value,
+                    "multiline": f.multiline,
+                }
+                for f in self.fields
+            ],
+            "notes": self.notes,
+        }
+
+
+@dataclass
 class ReportResult:
     """Result of a report submission attempt."""
 
@@ -100,6 +137,7 @@ class BaseReporter(ABC):
     supports_evidence: bool = False
     requires_api_key: bool = False
     rate_limit_per_minute: int = 60
+    manual_only: bool = False  # If True, always returns MANUAL_REQUIRED (no automation)
 
     def __init__(self):
         self._configured = False

@@ -8,7 +8,14 @@ available.
 
 from __future__ import annotations
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 
 
 class APWGReporter(BaseReporter):
@@ -19,6 +26,7 @@ class APWGReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 60
+    manual_only = True
 
     DESTINATION_EMAIL = "reportphishing@apwg.org"
 
@@ -36,6 +44,37 @@ class APWGReporter(BaseReporter):
             )
 
         subject = f"Phishing Report: {evidence.domain}"
+        email_body = evidence.to_summary().strip()
+
+        # Build structured data for the new UI
+        mailto_url = f"mailto:{self.DESTINATION_EMAIL}?subject={subject}"
+        manual_data = ManualSubmissionData(
+            form_url=mailto_url,
+            reason="Email submission",
+            fields=[
+                ManualSubmissionField(
+                    name="to",
+                    label="Send email to",
+                    value=self.DESTINATION_EMAIL,
+                ),
+                ManualSubmissionField(
+                    name="subject",
+                    label="Subject line",
+                    value=subject,
+                ),
+                ManualSubmissionField(
+                    name="body",
+                    label="Email body",
+                    value=email_body,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "Best practice: Forward the original phishing email as an attachment with full headers.",
+                "If no email artifact is available, send the URL and evidence summary instead.",
+            ],
+        )
+
         body_lines = [
             "APWG Report Phishing (manual helper)",
             "",
@@ -50,18 +89,19 @@ class APWGReporter(BaseReporter):
             f"- Confidence: {evidence.confidence_score}%",
             "",
             "Evidence summary:",
-            evidence.to_summary().strip(),
+            email_body,
             "",
             "Copy/paste email template:",
             f"To: {self.DESTINATION_EMAIL}",
             f"Subject: {subject}",
             "",
-            f"{evidence.to_summary().strip()}",
+            email_body,
         ]
 
         return ReportResult(
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
             message="\n".join(body_lines).strip(),
+            response_data={"manual_fields": manual_data.to_dict()},
         )
 

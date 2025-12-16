@@ -5,7 +5,15 @@ import re
 
 import httpx
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus, APIError
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+    APIError,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -27,6 +35,7 @@ class GoogleFormReporter(BaseReporter):
     supports_evidence = False
     requires_api_key = False
     rate_limit_per_minute = 10
+    manual_only = True  # reCAPTCHA almost always blocks automation
 
     REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
 
@@ -74,6 +83,27 @@ class GoogleFormReporter(BaseReporter):
                 # If the form requires CAPTCHA (common), fall back to manual submission.
                 page_lower = (form_resp.text or "").lower()
                 if any(token in page_lower for token in ("recaptcha", "g-recaptcha", "captcha", "turnstile")):
+                    manual_data = ManualSubmissionData(
+                        form_url=self.REPORT_URL,
+                        reason="reCAPTCHA detected",
+                        fields=[
+                            ManualSubmissionField(
+                                name="url",
+                                label="URL of the suspected phishing page",
+                                value=evidence.url,
+                            ),
+                            ManualSubmissionField(
+                                name="details",
+                                label="Additional details (optional)",
+                                value=additional_info,
+                                multiline=True,
+                            ),
+                        ],
+                        notes=[
+                            "Paste the URL into Google's form.",
+                            "Complete the reCAPTCHA before submitting.",
+                        ],
+                    )
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
@@ -81,6 +111,7 @@ class GoogleFormReporter(BaseReporter):
                             "Manual submission required (CAPTCHA): "
                             f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                         ),
+                        response_data={"manual_fields": manual_data.to_dict()},
                     )
 
                 # Look for form action URL and any hidden fields
@@ -144,6 +175,27 @@ class GoogleFormReporter(BaseReporter):
                         )
                     else:
                         # Don't assume success if we can't confirm.
+                        manual_data = ManualSubmissionData(
+                            form_url=self.REPORT_URL,
+                            reason="Submission not confirmed",
+                            fields=[
+                                ManualSubmissionField(
+                                    name="url",
+                                    label="URL of the suspected phishing page",
+                                    value=evidence.url,
+                                ),
+                                ManualSubmissionField(
+                                    name="details",
+                                    label="Additional details (optional)",
+                                    value=additional_info,
+                                    multiline=True,
+                                ),
+                            ],
+                            notes=[
+                                "Paste the URL into Google's form.",
+                                "Complete the reCAPTCHA before submitting.",
+                            ],
+                        )
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
@@ -151,6 +203,7 @@ class GoogleFormReporter(BaseReporter):
                                 "Submission not confirmed; manual submission recommended: "
                                 f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                             ),
+                            response_data={"manual_fields": manual_data.to_dict()},
                         )
 
                 elif resp.status_code == 429:

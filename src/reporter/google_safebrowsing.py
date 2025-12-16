@@ -2,7 +2,14 @@
 
 import logging
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +27,7 @@ class GoogleSafeBrowsingReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 10
+    manual_only = True
 
     FORM_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
 
@@ -71,8 +79,32 @@ class GoogleSafeBrowsingReporter(BaseReporter):
             )
 
         # Google uses reCAPTCHA - can't automate fully
-        # Return pending with info for manual submission
         report_text = self.get_report_text(evidence)
+
+        # Build structured data for the new UI
+        manual_data = ManualSubmissionData(
+            form_url=self.FORM_URL,
+            reason="reCAPTCHA",
+            fields=[
+                ManualSubmissionField(
+                    name="url",
+                    label="URL of the phishing page",
+                    value=evidence.url,
+                ),
+                ManualSubmissionField(
+                    name="details",
+                    label="Additional details (optional)",
+                    value=report_text,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "Paste the URL in the form's URL field.",
+                "Complete the reCAPTCHA challenge before submitting.",
+                "Additional details are optional but help Google's review.",
+            ],
+        )
+
         return ReportResult(
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
@@ -81,4 +113,5 @@ class GoogleSafeBrowsingReporter(BaseReporter):
                 f"URL: {evidence.url}\n\n"
                 f"Copy/paste details:\n{report_text}"
             ),
+            response_data={"manual_fields": manual_data.to_dict()},
         )

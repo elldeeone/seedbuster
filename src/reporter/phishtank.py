@@ -5,7 +5,15 @@ from typing import Optional
 
 import httpx
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus, APIError
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+    APIError,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -130,6 +138,27 @@ class PhishTankReporter(BaseReporter):
                         )
                     elif "login" in response_text or "sign in" in response_text:
                         # Submission requires login
+                        manual_data = ManualSubmissionData(
+                            form_url=self.SUBMIT_URL,
+                            reason="Login required",
+                            fields=[
+                                ManualSubmissionField(
+                                    name="url",
+                                    label="Phishing URL",
+                                    value=evidence.url,
+                                ),
+                                ManualSubmissionField(
+                                    name="details",
+                                    label="Details / Comments",
+                                    value=comment,
+                                    multiline=True,
+                                ),
+                            ],
+                            notes=[
+                                "PhishTank requires a login to submit reports.",
+                                "Create a free account at phishtank.org if needed.",
+                            ],
+                        )
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
@@ -138,10 +167,31 @@ class PhishTankReporter(BaseReporter):
                                 f"URL: {evidence.url}\n\n"
                                 f"Copy/paste details:\n{comment}"
                             ),
+                            response_data={"manual_fields": manual_data.to_dict()},
                         )
                     else:
                         # Don't assume success if we can't confirm.
                         logger.warning("PhishTank submission not confirmed; returning manual instructions")
+                        manual_data = ManualSubmissionData(
+                            form_url=self.SUBMIT_URL,
+                            reason="Submission not confirmed",
+                            fields=[
+                                ManualSubmissionField(
+                                    name="url",
+                                    label="Phishing URL",
+                                    value=evidence.url,
+                                ),
+                                ManualSubmissionField(
+                                    name="details",
+                                    label="Details / Comments",
+                                    value=comment,
+                                    multiline=True,
+                                ),
+                            ],
+                            notes=[
+                                "PhishTank may require a login to submit reports.",
+                            ],
+                        )
                         return ReportResult(
                             platform=self.platform_name,
                             status=ReportStatus.MANUAL_REQUIRED,
@@ -150,6 +200,7 @@ class PhishTankReporter(BaseReporter):
                                 f"URL: {evidence.url}\n\n"
                                 f"Copy/paste details:\n{comment}"
                             ),
+                            response_data={"manual_fields": manual_data.to_dict()},
                         )
 
                 else:

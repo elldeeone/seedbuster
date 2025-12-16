@@ -7,7 +7,14 @@ reporter generates manual submission instructions.
 
 from __future__ import annotations
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 
 
 class MicrosoftReporter(BaseReporter):
@@ -18,6 +25,7 @@ class MicrosoftReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 60
+    manual_only = True
 
     REPORT_URL = "https://www.microsoft.com/en-us/wdsi/support/report-unsafe-site"
 
@@ -36,6 +44,34 @@ class MicrosoftReporter(BaseReporter):
 
         details = evidence.to_summary().strip()
 
+        # Build structured data for the new UI
+        manual_data = ManualSubmissionData(
+            form_url=self.REPORT_URL,
+            reason="Microsoft form (bot protection)",
+            fields=[
+                ManualSubmissionField(
+                    name="url",
+                    label="URL to report",
+                    value=evidence.url,
+                ),
+                ManualSubmissionField(
+                    name="category",
+                    label="Suggested category",
+                    value="phishing / unsafe site",
+                ),
+                ManualSubmissionField(
+                    name="details",
+                    label="Additional details",
+                    value=details,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "Select 'Phishing' or 'Unsafe site' as the category.",
+                "The form may require sign-in to Microsoft account.",
+            ],
+        )
+
         message = "\n".join([
             "Manual submission required (Microsoft):",
             self.REPORT_URL,
@@ -52,5 +88,6 @@ class MicrosoftReporter(BaseReporter):
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
             message=message,
+            response_data={"manual_fields": manual_data.to_dict()},
         )
 

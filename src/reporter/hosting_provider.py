@@ -8,7 +8,14 @@ copy/paste-ready evidence summary.
 import logging
 from typing import Optional
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -51,6 +58,7 @@ class HostingProviderReporter(BaseReporter):
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 60
+    manual_only = True
 
     def __init__(self, reporter_email: str = ""):
         super().__init__()
@@ -114,6 +122,74 @@ class HostingProviderReporter(BaseReporter):
                 message=f"No known abuse destination for provider: {provider}",
             )
 
+        # Build structured data for the new UI
+        fields: list[ManualSubmissionField] = [
+            ManualSubmissionField(
+                name="url",
+                label="Phishing URL",
+                value=evidence.url,
+            ),
+        ]
+
+        evidence_summary = evidence.to_summary().strip()
+
+        if email:
+            try:
+                template = ReportTemplates.generic_email(
+                    evidence, self.reporter_email or "your-email@example.com"
+                )
+                fields.extend([
+                    ManualSubmissionField(
+                        name="to",
+                        label="Send email to",
+                        value=email,
+                    ),
+                    ManualSubmissionField(
+                        name="subject",
+                        label="Subject line",
+                        value=template["subject"],
+                    ),
+                    ManualSubmissionField(
+                        name="body",
+                        label="Email body",
+                        value=template["body"].strip(),
+                        multiline=True,
+                    ),
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to build email template: {e}")
+                fields.append(
+                    ManualSubmissionField(
+                        name="evidence",
+                        label="Evidence summary",
+                        value=evidence_summary,
+                        multiline=True,
+                    )
+                )
+        else:
+            fields.append(
+                ManualSubmissionField(
+                    name="evidence",
+                    label="Evidence summary",
+                    value=evidence_summary,
+                    multiline=True,
+                )
+            )
+
+        # Determine the best destination URL
+        destination_url = form_url or f"mailto:{email}" if email else ""
+
+        manual_data = ManualSubmissionData(
+            form_url=destination_url,
+            reason=f"Hosting provider: {provider}",
+            fields=fields,
+            notes=[
+                f"Detected hosting provider: {provider.upper()}",
+                "Submit via the abuse form or email the abuse contact.",
+            ],
+        )
+
+        # Build plain text message for backwards compatibility
         parts: list[str] = [
             f"Hosting provider detected: {provider}",
             "",
@@ -129,7 +205,9 @@ class HostingProviderReporter(BaseReporter):
 
         if email:
             try:
-                template = ReportTemplates.generic_email(evidence, self.reporter_email or "your-email@example.com")
+                template = ReportTemplates.generic_email(
+                    evidence, self.reporter_email or "your-email@example.com"
+                )
                 parts.extend([
                     f"Manual submission (email): {email}",
                     "",
@@ -144,7 +222,7 @@ class HostingProviderReporter(BaseReporter):
                     f"Manual submission (email): {email}",
                     "",
                     "Evidence summary:",
-                    evidence.to_summary().strip(),
+                    evidence_summary,
                     "",
                 ])
 
@@ -152,4 +230,5 @@ class HostingProviderReporter(BaseReporter):
             platform=self.platform_name,
             status=ReportStatus.MANUAL_REQUIRED,
             message="\n".join(parts).strip(),
+            response_data={"manual_fields": manual_data.to_dict()},
         )
