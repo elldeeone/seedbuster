@@ -2569,13 +2569,12 @@ class DashboardServer:
         domain_name = str(domain.get("domain") or "")
         try:
             await self.preview_domain_report_callback(did, domain_name)
-            raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/domains/{did}", msg="Preview sent to your email")
-            )
         except Exception as e:
             raise web.HTTPSeeOther(
                 location=_build_query_link(f"/admin/domains/{did}", msg=f"Preview failed: {e}", error=1)
             )
+
+        raise web.HTTPSeeOther(location=_build_query_link(f"/admin/domains/{did}", msg="Preview sent to your email"))
 
     # -------------------------------------------------------------------------
     # Campaign/Cluster Detail and Reporting Routes
@@ -2680,13 +2679,14 @@ class DashboardServer:
         full_cluster_id = cluster.get("cluster_id", cluster_id)
         try:
             await self.preview_campaign_report_callback(full_cluster_id)
-            raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview sent to your email")
-            )
         except Exception as e:
             raise web.HTTPSeeOther(
                 location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Preview failed: {e}", error=1)
             )
+
+        raise web.HTTPSeeOther(
+            location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview sent to your email")
+        )
 
     async def _admin_cluster_submit(self, request: web.Request) -> web.Response:
         """Submit campaign reports to all platforms."""
@@ -2705,10 +2705,11 @@ class DashboardServer:
         full_cluster_id = cluster.get("cluster_id", cluster_id)
         try:
             await self.submit_campaign_report_callback(full_cluster_id)
-            raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Reports submitted to all platforms")
-            )
         except Exception as e:
             raise web.HTTPSeeOther(
                 location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Submit failed: {e}", error=1)
             )
+
+        raise web.HTTPSeeOther(
+            location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Reports submitted to all platforms")
+        )

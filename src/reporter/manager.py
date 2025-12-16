@@ -1119,32 +1119,68 @@ class ReportManager:
 
     def _build_platform_report_preview(self, platform: str, evidence: ReportEvidence) -> str:
         """Build preview of what would be sent to a platform."""
+        import json
+
         from .templates import ReportTemplates
+
+        reporter_email = (self.resend_from_email or self.reporter_email or "").strip()
+        reporter_email_addr = reporter_email
+        if "<" in reporter_email_addr and ">" in reporter_email_addr:
+            reporter_email_addr = reporter_email_addr.split("<")[-1].rstrip(">").strip()
 
         # Get the template content for this platform
         if platform == "digitalocean":
-            template_data = ReportTemplates.digitalocean(evidence)
+            # Mirror the payload built by DigitalOceanReporter (Playwright form).
+            all_domains = (evidence.backend_domains or []) + (evidence.suspicious_endpoints or [])
+            do_apps: list[str] = []
+            for d in all_domains:
+                if not isinstance(d, str):
+                    continue
+                if "ondigitalocean.app" not in d.lower():
+                    continue
+                if "://" in d:
+                    parsed = urlparse(d)
+                    if parsed.netloc:
+                        do_apps.append(parsed.netloc)
+                else:
+                    do_apps.append(d)
+            do_apps = sorted(set(do_apps))
+
+            description = f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
+{chr(10).join(f'- {app}' for app in do_apps)}
+
+Attack: {evidence.domain} steals seed phrases, sends to DO apps above.
+Confidence: {evidence.confidence_score}%
+
+Evidence:
+{chr(10).join(f'- {r}' for r in evidence.detection_reasons[:3])}
+
+Detected by SeedBuster - github.com/elldeeone/seedbuster"""
+
             return f"""
 DIGITALOCEAN ABUSE REPORT PREVIEW
 =================================
 
-Form URL: https://www.digitalocean.com/company/contact/abuse/
+Form URL: https://www.digitalocean.com/company/contact/abuse#phishing
 
-Field: incident_type
-Value: {template_data.get('incident_type', 'N/A')}
-
-Field: company_name
-Value: {template_data.get('company_name', 'N/A')}
+Field: name
+Value: Kaspa Security
 
 Field: email
-Value: {template_data.get('email', 'N/A')}
+Value: {reporter_email_addr or "(not set)"}
 
-Field: message
+Field: target
+Value: Kaspa cryptocurrency wallet users
+
+Field: evidence_url
+Value: {evidence.url}
+
+Field: description
 Value:
-{template_data.get('message', 'N/A')}
+{description}
 """
         elif platform == "cloudflare":
-            template_data = ReportTemplates.cloudflare(evidence)
+            template_data = ReportTemplates.cloudflare(evidence, reporter_email_addr or "")
             return f"""
 CLOUDFLARE ABUSE REPORT PREVIEW
 ===============================
@@ -1152,26 +1188,70 @@ CLOUDFLARE ABUSE REPORT PREVIEW
 Form URL: https://abuse.cloudflare.com/phishing
 
 Field: urls
-Value: {template_data.get('urls', 'N/A')}
+Value: {evidence.url}
 
-Field: justification
+Field: abuse_type
+Value: phishing
+
+Field: comments
 Value:
-{template_data.get('justification', 'N/A')}
+{template_data.get('body', 'N/A')}
+
+Field: email (optional)
+Value: {reporter_email_addr or "(not set)"}
+
+Field: name
+Value: SeedBuster
 """
         elif platform == "google":
+            additional_info = ReportTemplates.google_safebrowsing_comment(evidence)
             return f"""
 GOOGLE SAFE BROWSING REPORT PREVIEW
 ===================================
 
 Form URL: https://safebrowsing.google.com/safebrowsing/report_phish/
 
-URL to Report: {evidence.url}
+Field: url
+Value: {evidence.url}
 
-Description:
-{evidence.to_summary()}
+Field: dq (additional details)
+Value:
+{additional_info}
+
+Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers them at submit time.
+"""
+        elif platform == "netcraft":
+            reason_parts = [
+                "Cryptocurrency seed phrase phishing site.",
+                f"Confidence: {evidence.confidence_score}%",
+            ]
+            for r in evidence.detection_reasons[:3]:
+                reason_parts.append(f"- {r}")
+            reason_parts.append("Detected by SeedBuster.")
+            reason = " ".join(reason_parts)
+
+            payload: dict[str, object] = {
+                "urls": [
+                    {
+                        "url": evidence.url,
+                        "reason": reason,
+                    }
+                ]
+            }
+            if reporter_email_addr:
+                payload["email"] = reporter_email_addr
+
+            return f"""
+NETCRAFT REPORT PREVIEW
+======================
+
+Endpoint: https://report.netcraft.com/api/v3/report/urls
+Method: POST
+Body (JSON):
+{json.dumps(payload, indent=2)}
 """
         elif platform in ("registrar", "resend", "smtp"):
-            template_data = ReportTemplates.generic_email(evidence)
+            template_data = ReportTemplates.generic_email(evidence, reporter_email or reporter_email_addr or "")
             return f"""
 EMAIL REPORT PREVIEW
 ====================
