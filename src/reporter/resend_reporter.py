@@ -3,11 +3,12 @@
 import asyncio
 import base64
 import logging
+from pathlib import Path
 from typing import Optional
 
 import httpx
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import APIError, BaseReporter, ConfigurationError, ReportEvidence, ReportResult, ReportStatus
 from .rdap import lookup_registrar_via_rdap
 from .templates import ReportTemplates
 
@@ -64,6 +65,66 @@ class ResendReporter(BaseReporter):
         self.api_key = api_key
         self.from_email = from_email
         self._configured = bool(api_key)
+
+    async def send_email(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        body: str,
+        attachments: list[Path] | None = None,
+    ) -> str:
+        """Send an email via Resend and return the email id."""
+        if not self._configured:
+            raise ConfigurationError("Resend API key not configured")
+        if not to_email:
+            raise ValueError("to_email is required")
+
+        payload: dict[str, object] = {
+            "from": self.from_email,
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+        }
+
+        encoded_attachments: list[dict[str, str]] = []
+        for filepath in attachments or []:
+            if not filepath or not filepath.exists():
+                continue
+            try:
+                raw = await asyncio.to_thread(filepath.read_bytes)
+                encoded_attachments.append(
+                    {
+                        "filename": filepath.name,
+                        "content": base64.b64encode(raw).decode("ascii"),
+                    }
+                )
+            except Exception as e:
+                logger.warning("Failed to attach %s: %s", filepath, e)
+
+        if encoded_attachments:
+            payload["attachments"] = encoded_attachments
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                self.API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+        if resp.status_code in (200, 201):
+            result = resp.json()
+            return str(result.get("id") or "")
+
+        if resp.status_code == 401:
+            raise APIError(resp.status_code, "Invalid Resend API key", resp.text or "")
+        if resp.status_code == 429:
+            raise APIError(resp.status_code, "Resend rate limit exceeded", resp.text or "")
+
+        raise APIError(resp.status_code, "Resend error", (resp.text or "")[:200])
 
     def get_abuse_contact(self, evidence: ReportEvidence) -> tuple[Optional[str], Optional[str]]:
         """

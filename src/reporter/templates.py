@@ -1,9 +1,12 @@
 """Report template generation for abuse reports."""
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from .base import ReportEvidence
+
+if TYPE_CHECKING:
+    from ..analyzer.clustering import ThreatCluster
 
 
 class ReportTemplates:
@@ -338,3 +341,269 @@ Source:   https://github.com/elldeeone/seedbuster
         if not items:
             return "  (none)"
         return "\n".join(f"{prefix}{item}" for item in items)
+
+    # -------------------------------------------------------------------------
+    # Campaign-Level Templates
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def campaign_digitalocean(
+        cls,
+        cluster: "ThreatCluster",
+        reporter_email: str,
+    ) -> dict:
+        """
+        Generate a DigitalOcean abuse report for an entire campaign.
+        Lists ALL backend apps and ALL frontends using them.
+        """
+        # Extract all DO apps from cluster backends
+        do_apps = [
+            backend for backend in cluster.shared_backends
+            if "ondigitalocean.app" in backend.lower()
+        ]
+
+        if not do_apps:
+            return {"subject": "", "body": "No DigitalOcean apps found in cluster"}
+
+        subject = f"URGENT: {len(do_apps)} App Platform Apps Used in Coordinated Phishing Campaign - {cluster.name}"
+
+        body = f"""
+================================================================================
+      URGENT: COORDINATED CRYPTOCURRENCY PHISHING CAMPAIGN
+           DigitalOcean App Platform - Multiple Apps Involved
+================================================================================
+
+ACTION REQUESTED
+----------------
+Please IMMEDIATELY suspend ALL of the following App Platform applications.
+This is a coordinated campaign with {len(cluster.members)} phishing domains
+all using these backends to receive stolen cryptocurrency seed phrases.
+
+"""
+
+        body += """APPS TO SUSPEND (PRIORITY - DISABLES ALL PHISHING SITES)
+=========================================================
+"""
+        for i, app in enumerate(do_apps, 1):
+            # Count how many frontends use this backend
+            using_count = sum(1 for m in cluster.members if app in m.backends)
+            body += f"  {i}. {app}\n"
+            body += f"     Used by {using_count} phishing domain(s)\n\n"
+
+        body += f"""
+================================================================================
+                         CAMPAIGN OVERVIEW
+================================================================================
+
+Campaign Name:   {cluster.name}
+Campaign ID:     {cluster.cluster_id}
+Total Domains:   {len(cluster.members)}
+Shared Backends: {len(do_apps)} DigitalOcean apps
+Confidence:      {cluster.confidence:.0f}%
+First Detected:  {cluster.created_at.strftime('%Y-%m-%d')}
+Last Updated:    {cluster.updated_at.strftime('%Y-%m-%d')}
+
+PHISHING DOMAINS IN THIS CAMPAIGN
+----------------------------------
+"""
+        for i, member in enumerate(cluster.members, 1):
+            body += f"  {i}. {member.domain} (score: {member.score}%)\n"
+
+        body += f"""
+================================================================================
+                         HOW THE ATTACK WORKS
+================================================================================
+
+  1. Victim visits one of {len(cluster.members)} fake wallet sites (listed above)
+  2. Site displays fake "restore wallet" form requesting 12-word seed phrase
+  3. Victim enters their seed phrase thinking it's legitimate
+  4. Data is POST'd to DigitalOcean App Platform backends (listed above)
+  5. Attacker uses seed phrase to steal all cryptocurrency from victim's wallet
+
+WHY THIS IS HIGH PRIORITY
+-------------------------
+- The backend apps are the CHOKEPOINT for the entire campaign
+- Suspending {len(do_apps)} apps immediately disables {len(cluster.members)} phishing sites
+- This is more efficient than reporting each phishing domain individually
+- The attacker is actively stealing cryptocurrency through these backends
+
+"""
+
+        if cluster.shared_kits:
+            body += f"""PHISHING KIT SIGNATURES DETECTED
+---------------------------------
+{cls._format_list(list(cluster.shared_kits))}
+
+"""
+
+        body += f"""================================================================================
+                         RECOMMENDED ACTIONS
+================================================================================
+
+1. IMMEDIATE: Suspend all {len(do_apps)} App Platform applications listed above
+2. Preserve application logs for law enforcement
+3. Check for other apps by same owner (likely same threat actor)
+4. Consider sharing threat indicators with security community
+
+================================================================================
+
+ABOUT THIS REPORT
+-----------------
+This report was generated by SeedBuster, an automated system that monitors
+for cryptocurrency phishing campaigns. This is a CAMPAIGN report showing
+the full scope of coordinated phishing infrastructure.
+
+Reporter:    {reporter_email}
+Tool:        SeedBuster - Cryptocurrency Phishing Detection
+Source:      https://github.com/elldeeone/seedbuster
+Report Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
+
+We are happy to provide additional evidence (screenshots, HAR files,
+analysis data) upon request.
+"""
+
+        return {"subject": subject, "body": body}
+
+    @classmethod
+    def campaign_registrar(
+        cls,
+        cluster: "ThreatCluster",
+        registrar_name: str,
+        domains: List[str],
+        reporter_email: str,
+    ) -> dict:
+        """
+        Generate a bulk registrar abuse report for all domains at one registrar.
+        """
+        subject = f"Bulk Abuse Report: {len(domains)} Phishing Domains - {cluster.name}"
+
+        body = f"""
+================================================================================
+              BULK DOMAIN ABUSE REPORT - {registrar_name.upper()}
+================================================================================
+
+ACTION REQUESTED
+----------------
+Please investigate and suspend the following {len(domains)} domain(s).
+These are part of a coordinated phishing campaign targeting cryptocurrency users.
+
+DOMAINS REGISTERED WITH {registrar_name.upper()}
+{"=" * (35 + len(registrar_name))}
+"""
+        for i, domain in enumerate(domains, 1):
+            body += f"  {i}. {domain}\n"
+
+        body += f"""
+================================================================================
+                         CAMPAIGN CONTEXT
+================================================================================
+
+This is not an isolated incident. These domains are part of the
+"{cluster.name}" phishing campaign with {len(cluster.members)} total domains.
+
+Campaign ID:     {cluster.cluster_id}
+Total Domains:   {len(cluster.members)} (across all registrars)
+Your Domains:    {len(domains)}
+Confidence:      {cluster.confidence:.0f}%
+First Detected:  {cluster.created_at.strftime('%Y-%m-%d')}
+
+SHARED INFRASTRUCTURE (proves coordination)
+-------------------------------------------
+All domains in this campaign share:
+"""
+
+        if cluster.shared_backends:
+            body += f"""
+Backend Servers:
+{cls._format_list(list(cluster.shared_backends)[:5])}
+"""
+
+        if cluster.shared_nameservers:
+            body += f"""
+Nameservers:
+{cls._format_list(list(cluster.shared_nameservers))}
+"""
+
+        body += f"""
+================================================================================
+                         ABUSE DESCRIPTION
+================================================================================
+
+These domains host phishing sites impersonating legitimate cryptocurrency
+wallets. They trick users into entering their seed phrases (12/24-word
+recovery phrases), which provide complete control over cryptocurrency
+wallets and enable immediate, irreversible theft of funds.
+
+================================================================================
+
+Reporter: {reporter_email}
+Tool:     SeedBuster - Automated Phishing Detection
+Source:   https://github.com/elldeeone/seedbuster
+"""
+
+        return {"subject": subject, "body": body}
+
+    @classmethod
+    def campaign_dns_provider(
+        cls,
+        cluster: "ThreatCluster",
+        provider_name: str,
+        reporter_email: str,
+    ) -> dict:
+        """
+        Generate a DNS provider abuse report for domains using their nameservers.
+        """
+        # Find domains using this provider's nameservers
+        provider_lower = provider_name.lower()
+        affected_domains = []
+        for member in cluster.members:
+            for ns in member.nameservers:
+                if provider_lower in ns.lower():
+                    affected_domains.append(member.domain)
+                    break
+
+        subject = f"DNS Abuse Report: {len(affected_domains)} Phishing Domains - {provider_name}"
+
+        body = f"""
+================================================================================
+                 DNS ABUSE REPORT - {provider_name.upper()}
+================================================================================
+
+ACTION REQUESTED
+----------------
+Please investigate the following domains using your DNS services.
+They are part of a coordinated phishing campaign targeting cryptocurrency users.
+
+AFFECTED DOMAINS
+----------------
+"""
+        for i, domain in enumerate(affected_domains, 1):
+            body += f"  {i}. {domain}\n"
+
+        body += f"""
+================================================================================
+                         CAMPAIGN CONTEXT
+================================================================================
+
+Campaign Name:   {cluster.name}
+Total Domains:   {len(cluster.members)}
+Using Your DNS:  {len(affected_domains)}
+Confidence:      {cluster.confidence:.0f}%
+
+EVIDENCE OF COORDINATION
+------------------------
+"""
+
+        if cluster.shared_backends:
+            body += f"""Shared Backend Servers:
+{cls._format_list(list(cluster.shared_backends)[:3])}
+
+"""
+
+        body += f"""================================================================================
+
+Reporter: {reporter_email}
+Tool:     SeedBuster - Automated Phishing Detection
+"""
+
+        return {"subject": subject, "body": body}

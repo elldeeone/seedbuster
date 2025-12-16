@@ -1,12 +1,16 @@
 """Report manager for coordinating abuse reports across platforms."""
 
+import asyncio
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 
 from .base import (
     BaseReporter,
+    ConfigurationError,
     ReportEvidence,
     ReportResult,
     ReportStatus,
@@ -15,6 +19,7 @@ from .base import (
 from .rate_limiter import get_rate_limiter
 
 if TYPE_CHECKING:
+    from ..analyzer.clustering import ThreatCluster, ThreatClusterManager
     from ..storage.database import Database
     from ..storage.evidence import EvidenceStore
 
@@ -585,6 +590,8 @@ class ReportManager:
         platforms: Optional[list[str]] = None,
         *,
         force: bool = False,
+        dry_run: bool = False,
+        dry_run_email: Optional[str] = None,
     ) -> dict[str, ReportResult]:
         """
         Submit reports to multiple platforms.
@@ -594,10 +601,20 @@ class ReportManager:
             domain: Domain name
             platforms: List of platforms to report to (None = all configured)
             force: When True, bypass rate-limited schedules and attempt submission immediately
+            dry_run: When True, send reports to dry_run_email instead of real platforms
+            dry_run_email: Email address to receive dry-run reports
 
         Returns:
             Dict mapping platform name to ReportResult
         """
+        # Handle dry-run mode
+        if dry_run:
+            return await self._dry_run_domain_report(
+                domain_id=domain_id,
+                domain=domain,
+                platforms=platforms,
+                dry_run_email=dry_run_email or os.environ.get("DRY_RUN_EMAIL", ""),
+            )
         # Build evidence package
         evidence = await self.build_evidence(domain_id, domain)
         if not evidence:
@@ -1008,3 +1025,467 @@ class ReportManager:
             lines.append(line)
 
         return "\n".join(lines)
+
+    # -------------------------------------------------------------------------
+    # Dry-Run Mode - Preview reports before sending
+    # -------------------------------------------------------------------------
+
+    async def _dry_run_domain_report(
+        self,
+        domain_id: int,
+        domain: str,
+        platforms: Optional[list[str]] = None,
+        dry_run_email: str = "",
+    ) -> dict[str, ReportResult]:
+        """
+        Send dry-run preview of reports to specified email instead of real platforms.
+
+        Each platform's report is sent as a separate email so you can see exactly
+        what each abuse team would receive.
+        """
+        if not dry_run_email:
+            return {
+                "error": ReportResult(
+                    platform="dry_run",
+                    status=ReportStatus.FAILED,
+                    message="No dry-run email configured. Set DRY_RUN_EMAIL or pass dry_run_email parameter.",
+                )
+            }
+
+        # Build evidence
+        evidence = await self.build_evidence(domain_id, domain)
+        if not evidence:
+            return {
+                "error": ReportResult(
+                    platform="dry_run",
+                    status=ReportStatus.FAILED,
+                    message=f"Could not build evidence for domain {domain}",
+                )
+            }
+
+        # Determine platforms
+        if platforms is None:
+            platforms = self.get_available_platforms()
+        else:
+            platforms = [p for p in platforms if p in self.reporters]
+            if self.enabled_platforms is not None:
+                platforms = [p for p in platforms if p in self.enabled_platforms]
+
+        results: dict[str, ReportResult] = {}
+
+        for platform in platforms:
+            reporter = self.reporters.get(platform)
+            if not reporter or not reporter.is_configured():
+                continue
+
+            # Build the report content that would be sent
+            try:
+                report_content = self._build_platform_report_preview(platform, evidence)
+                await self._send_dry_run_email(
+                    to_email=dry_run_email,
+                    platform=platform,
+                    domain=domain,
+                    report_content=report_content,
+                    evidence=evidence,
+                )
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.SUBMITTED,
+                    message=f"Dry-run sent to {dry_run_email}",
+                )
+            except Exception as e:
+                logger.error(f"Failed to send dry-run for {platform}: {e}")
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.FAILED,
+                    message=f"Dry-run failed: {e}",
+                )
+
+        return results
+
+    def _build_platform_report_preview(self, platform: str, evidence: ReportEvidence) -> str:
+        """Build preview of what would be sent to a platform."""
+        from .templates import ReportTemplates
+
+        # Get the template content for this platform
+        if platform == "digitalocean":
+            template_data = ReportTemplates.digitalocean(evidence)
+            return f"""
+DIGITALOCEAN ABUSE REPORT PREVIEW
+=================================
+
+Form URL: https://www.digitalocean.com/company/contact/abuse/
+
+Field: incident_type
+Value: {template_data.get('incident_type', 'N/A')}
+
+Field: company_name
+Value: {template_data.get('company_name', 'N/A')}
+
+Field: email
+Value: {template_data.get('email', 'N/A')}
+
+Field: message
+Value:
+{template_data.get('message', 'N/A')}
+"""
+        elif platform == "cloudflare":
+            template_data = ReportTemplates.cloudflare(evidence)
+            return f"""
+CLOUDFLARE ABUSE REPORT PREVIEW
+===============================
+
+Form URL: https://abuse.cloudflare.com/phishing
+
+Field: urls
+Value: {template_data.get('urls', 'N/A')}
+
+Field: justification
+Value:
+{template_data.get('justification', 'N/A')}
+"""
+        elif platform == "google":
+            return f"""
+GOOGLE SAFE BROWSING REPORT PREVIEW
+===================================
+
+Form URL: https://safebrowsing.google.com/safebrowsing/report_phish/
+
+URL to Report: {evidence.url}
+
+Description:
+{evidence.to_summary()}
+"""
+        elif platform in ("registrar", "resend", "smtp"):
+            template_data = ReportTemplates.generic_email(evidence)
+            return f"""
+EMAIL REPORT PREVIEW
+====================
+
+Would send to: [Registrar abuse contact via RDAP lookup]
+
+Subject: {template_data.get('subject', 'N/A')}
+
+Body:
+{template_data.get('body', 'N/A')}
+"""
+        else:
+            return f"""
+{platform.upper()} REPORT PREVIEW
+{'=' * (len(platform) + 16)}
+
+Platform: {platform}
+Domain: {evidence.domain}
+URL: {evidence.url}
+Confidence: {evidence.confidence_score}%
+
+Evidence Summary:
+{evidence.to_summary()}
+"""
+
+    async def _send_dry_run_email(
+        self,
+        to_email: str,
+        platform: str,
+        domain: str,
+        report_content: str,
+        evidence: ReportEvidence,
+    ):
+        """Send a dry-run preview email."""
+        attachments: list[Path] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(evidence.screenshot_path)
+
+        subject = f"[DRY-RUN] Platform: {platform} | Domain: {domain}"
+        body = f"""
+This is a DRY-RUN preview of what would be submitted to {platform}.
+
+{'=' * 60}
+REPORT PREVIEW
+{'=' * 60}
+
+{report_content}
+
+{'=' * 60}
+EVIDENCE SUMMARY
+{'=' * 60}
+
+Domain: {evidence.domain}
+URL: {evidence.url}
+Confidence: {evidence.confidence_score}%
+Detection Time: {evidence.detected_at.isoformat()}
+
+Detection Reasons:
+{chr(10).join(f'  - {r}' for r in evidence.detection_reasons)}
+
+Backend Infrastructure:
+{chr(10).join(f'  - {b}' for b in evidence.backend_domains) if evidence.backend_domains else '  (none detected)'}
+
+{'=' * 60}
+This email was generated by SeedBuster dry-run mode.
+To submit for real, run the command without --dry-run.
+"""
+
+        resend_reporter = self.reporters.get("resend")
+        if resend_reporter and resend_reporter.is_configured():
+            try:
+                send_email = getattr(resend_reporter, "send_email", None)
+                if callable(send_email):
+                    await send_email(to_email=to_email, subject=subject, body=body, attachments=attachments)
+                    return
+            except Exception as e:
+                raise ReporterError(f"Resend dry-run email failed: {e}") from e
+
+        smtp_reporter = self.reporters.get("smtp")
+        if smtp_reporter and smtp_reporter.is_configured():
+            try:
+                ok = await smtp_reporter.send_email(
+                    to_email=to_email,
+                    subject=subject,
+                    body=body,
+                    attachments=attachments,
+                )
+                if not ok:
+                    raise ReporterError("SMTP dry-run email failed")
+                return
+            except Exception as e:
+                raise ReporterError(f"SMTP dry-run email failed: {e}") from e
+
+        raise ConfigurationError(
+            "No email service configured for dry-run previews. Configure RESEND_API_KEY or SMTP settings."
+        )
+
+    # -------------------------------------------------------------------------
+    # Campaign Reporting - Report entire clusters in parallel
+    # -------------------------------------------------------------------------
+
+    async def report_campaign(
+        self,
+        cluster_id: str,
+        cluster_manager: "ThreatClusterManager",
+        platforms: Optional[list[str]] = None,
+        *,
+        dry_run: bool = False,
+        dry_run_email: Optional[str] = None,
+        generate_evidence_package: bool = True,
+    ) -> dict[str, list[ReportResult]]:
+        """
+        Report an entire campaign/cluster in parallel to all relevant targets.
+
+        Args:
+            cluster_id: ID of the cluster to report
+            cluster_manager: ThreatClusterManager instance
+            platforms: Specific platforms to report to (None = all)
+            dry_run: Send previews to dry_run_email instead of real targets
+            dry_run_email: Email for dry-run previews
+            generate_evidence_package: Whether to generate PDF/evidence archives
+
+        Returns:
+            Dict mapping target type to list of results:
+            - "backends": Results from backend provider reports (DO, Vercel)
+            - "registrars": Results from registrar reports
+            - "blocklists": Results from blocklist submissions
+            - "frontends": Results from individual domain reports
+        """
+        cluster = cluster_manager.clusters.get(cluster_id)
+        if not cluster:
+            return {
+                "error": [ReportResult(
+                    platform="campaign",
+                    status=ReportStatus.FAILED,
+                    message=f"Cluster not found: {cluster_id}",
+                )]
+            }
+
+        results: dict[str, list[ReportResult]] = {
+            "backends": [],
+            "registrars": [],
+            "blocklists": [],
+            "frontends": [],
+        }
+
+        dry_run_email = dry_run_email or os.environ.get("DRY_RUN_EMAIL", "")
+
+        # Generate evidence package if requested
+        if generate_evidence_package:
+            try:
+                from .evidence_packager import EvidencePackager
+                packager = EvidencePackager(
+                    database=self.database,
+                    evidence_store=self.evidence_store,
+                    cluster_manager=cluster_manager,
+                )
+                if dry_run:
+                    # Just generate the reports, don't archive
+                    from .report_generator import ReportGenerator
+                    generator = ReportGenerator(
+                        database=self.database,
+                        evidence_store=self.evidence_store,
+                        cluster_manager=cluster_manager,
+                    )
+                    html_path = await generator.generate_campaign_html(cluster_id)
+                    logger.info(f"Generated campaign report: {html_path}")
+                else:
+                    archive_path = await packager.create_campaign_archive(cluster_id)
+                    logger.info(f"Generated campaign archive: {archive_path}")
+            except Exception as e:
+                logger.error(f"Failed to generate evidence package: {e}")
+
+        # 1. Report to backend providers (highest priority)
+        backend_tasks = []
+        for backend in cluster.shared_backends:
+            if "digitalocean" in backend.lower():
+                backend_tasks.append(
+                    self._report_backend(
+                        backend=backend,
+                        cluster=cluster,
+                        platform="digitalocean",
+                        dry_run=dry_run,
+                        dry_run_email=dry_run_email,
+                    )
+                )
+            elif "vercel" in backend.lower():
+                # TODO: Add Vercel reporter
+                logger.info(f"Vercel backend detected but no reporter implemented: {backend}")
+
+        if backend_tasks:
+            backend_results = await asyncio.gather(*backend_tasks, return_exceptions=True)
+            for result in backend_results:
+                if isinstance(result, Exception):
+                    results["backends"].append(ReportResult(
+                        platform="backend",
+                        status=ReportStatus.FAILED,
+                        message=str(result),
+                    ))
+                else:
+                    results["backends"].append(result)
+
+        # 2. Report to blocklists (parallel)
+        blocklist_platforms = ["google", "netcraft", "phishtank"]
+        if platforms:
+            blocklist_platforms = [p for p in blocklist_platforms if p in platforms]
+
+        for member in cluster.members:
+            domain_data = await self.database.get_domain(member.domain)
+            if not domain_data:
+                continue
+
+            domain_id = domain_data.get("id")
+            if not domain_id:
+                continue
+
+            blocklist_results = await self.report_domain(
+                domain_id=domain_id,
+                domain=member.domain,
+                platforms=blocklist_platforms,
+                dry_run=dry_run,
+                dry_run_email=dry_run_email,
+            )
+            for platform, result in blocklist_results.items():
+                results["blocklists"].append(result)
+
+        # 3. Report to registrars (grouped by registrar)
+        # TODO: Group domains by registrar and send bulk reports
+
+        # 4. Report individual frontends (if not already done via blocklists)
+        frontend_platforms = [p for p in (platforms or self.get_available_platforms())
+                             if p not in blocklist_platforms]
+
+        for member in cluster.members:
+            domain_data = await self.database.get_domain(member.domain)
+            if not domain_data:
+                continue
+
+            domain_id = domain_data.get("id")
+            if not domain_id:
+                continue
+
+            frontend_results = await self.report_domain(
+                domain_id=domain_id,
+                domain=member.domain,
+                platforms=frontend_platforms,
+                dry_run=dry_run,
+                dry_run_email=dry_run_email,
+            )
+            for platform, result in frontend_results.items():
+                results["frontends"].append(result)
+
+        return results
+
+    async def _report_backend(
+        self,
+        backend: str,
+        cluster: "ThreatCluster",
+        platform: str,
+        dry_run: bool = False,
+        dry_run_email: str = "",
+    ) -> ReportResult:
+        """Report a backend server with campaign context."""
+        reporter = self.reporters.get(platform)
+        if not reporter or not reporter.is_configured():
+            return ReportResult(
+                platform=platform,
+                status=ReportStatus.FAILED,
+                message=f"Reporter not configured: {platform}",
+            )
+
+        # Build evidence for the backend report
+        # Use the first domain in the cluster as the primary evidence
+        if not cluster.members:
+            return ReportResult(
+                platform=platform,
+                status=ReportStatus.FAILED,
+                message="No domains in cluster",
+            )
+
+        primary_domain = cluster.members[0].domain
+        domain_data = await self.database.get_domain(primary_domain)
+        if not domain_data:
+            return ReportResult(
+                platform=platform,
+                status=ReportStatus.FAILED,
+                message=f"Domain not found: {primary_domain}",
+            )
+
+        evidence = await self.build_evidence(
+            domain_id=domain_data.get("id"),
+            domain=primary_domain,
+        )
+        if not evidence:
+            return ReportResult(
+                platform=platform,
+                status=ReportStatus.FAILED,
+                message="Could not build evidence",
+            )
+
+        # Enhance evidence with campaign context
+        evidence.backend_domains = list(cluster.shared_backends)
+
+        if dry_run:
+            report_content = self._build_platform_report_preview(platform, evidence)
+            report_content = f"""
+CAMPAIGN CONTEXT
+================
+This backend is part of campaign: {cluster.name}
+Total domains using this backend: {len(cluster.members)}
+Domains: {', '.join(m.domain for m in cluster.members[:10])}{'...' if len(cluster.members) > 10 else ''}
+
+{report_content}
+"""
+            await self._send_dry_run_email(
+                to_email=dry_run_email,
+                platform=f"{platform}_backend",
+                domain=backend,
+                report_content=report_content,
+                evidence=evidence,
+            )
+            return ReportResult(
+                platform=f"{platform}_backend",
+                status=ReportStatus.SUBMITTED,
+                message=f"Dry-run sent to {dry_run_email}",
+            )
+
+        # Submit real report
+        result = await reporter.submit(evidence)
+        result.platform = f"{platform}_backend"
+        return result
