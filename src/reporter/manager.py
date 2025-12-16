@@ -50,6 +50,11 @@ class ReportManager:
         return min(base * (2**exponent), cls.MAX_RATE_LIMIT_BACKOFF_SECONDS)
 
     @staticmethod
+    def _preview_only_enabled() -> bool:
+        """Return True when reporting should run in preview-only mode."""
+        return os.environ.get("REPORT_PREVIEW_ONLY", "false").lower() == "true"
+
+    @staticmethod
     def _ensure_url(target: str) -> str:
         """Ensure a scheme is present so urlparse works predictably."""
         value = (target or "").strip()
@@ -144,6 +149,10 @@ class ReportManager:
         This only retries reports in `rate_limited` status whose `next_attempt_at`
         is due (or missing). Pending/manual-required reports are not retried.
         """
+        if self._preview_only_enabled():
+            logger.info("REPORT_PREVIEW_ONLY enabled; skipping retry_due_reports")
+            return []
+
         due = await self.database.get_due_retry_reports(limit=limit)
         if not due:
             return []
@@ -607,6 +616,11 @@ class ReportManager:
         Returns:
             Dict mapping platform name to ReportResult
         """
+        if self._preview_only_enabled():
+            dry_run = True
+            if dry_run_email is None:
+                dry_run_email = os.environ.get("DRY_RUN_EMAIL", "")
+
         # Handle dry-run mode
         if dry_run:
             return await self._dry_run_domain_report(
@@ -1287,6 +1301,11 @@ To submit for real, run the command without --dry-run.
             - "blocklists": Results from blocklist submissions
             - "frontends": Results from individual domain reports
         """
+        if self._preview_only_enabled():
+            dry_run = True
+            if dry_run_email is None:
+                dry_run_email = os.environ.get("DRY_RUN_EMAIL", "")
+
         cluster = cluster_manager.clusters.get(cluster_id)
         if not cluster:
             return {
