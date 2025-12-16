@@ -1389,11 +1389,12 @@ def _render_clusters_list(clusters: list[dict], admin: bool) -> str:
         if len(members) > 5:
             domain_links.append(f'<span class="sb-muted">+{len(members) - 5} more</span>')
 
+        detail_href = f"/admin/clusters/{cluster_id}" if admin else f"/clusters/{cluster_id}"
         cluster_cards.append(f"""
           <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.2);">
             <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.15);">
               <div>
-                <span style="font-size: 16px; font-weight: 600; color: var(--text-primary);">{_escape(cluster_name)}</span>
+                <a href="{_escape(detail_href)}" style="font-size: 16px; font-weight: 600; color: var(--text-primary); text-decoration: none;">{_escape(cluster_name)}</a>
                 <span class="sb-muted" style="margin-left: 12px; font-size: 12px;">ID: <code class="sb-code">{_escape(cluster_id[:12])}...</code></span>
               </div>
               <span class="sb-badge {conf_class}">{confidence:.0f}% confidence</span>
@@ -1426,6 +1427,193 @@ def _render_clusters_list(clusters: list[dict], admin: bool) -> str:
         </div>
       </div>
       {"".join(cluster_cards)}
+    """
+
+
+def _render_cluster_detail(cluster: dict, admin: bool) -> str:
+    """Render the detailed campaign/cluster page with action buttons."""
+    cluster_id = cluster.get("cluster_id", "")
+    cluster_name = cluster.get("name", "Unknown Campaign")
+    confidence = cluster.get("confidence", 0)
+    members = cluster.get("members", [])
+    shared_backends = cluster.get("shared_backends", [])
+    shared_kits = cluster.get("shared_kits", [])
+    shared_nameservers = cluster.get("shared_nameservers", [])
+    shared_asns = cluster.get("shared_asns", [])
+    created_at = cluster.get("created_at", "")
+    updated_at = cluster.get("updated_at", "")
+    actor_id = cluster.get("actor_id", "")
+    actor_notes = cluster.get("actor_notes", "")
+
+    # Confidence badge
+    if confidence >= 70:
+        conf_class = "sb-badge-high"
+    elif confidence >= 40:
+        conf_class = "sb-badge-medium"
+    else:
+        conf_class = "sb-badge-low"
+
+    # Back button
+    back_href = "/admin/clusters" if admin else "/clusters"
+
+    # Build action buttons (admin only)
+    action_buttons = ""
+    if admin:
+        action_buttons = f"""
+          <div class="sb-panel" style="border-color: rgba(88, 166, 255, 0.3); margin-bottom: 24px;">
+            <div class="sb-panel-header" style="border-color: rgba(88, 166, 255, 0.2);">
+              <span class="sb-panel-title" style="color: var(--accent-blue);">Campaign Actions</span>
+            </div>
+            <div class="sb-row" style="flex-wrap: wrap; gap: 12px;">
+              <a class="sb-btn sb-btn-primary" href="/admin/clusters/{_escape(cluster_id)}/pdf">Download PDF Report</a>
+              <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/package">Download Evidence Archive</a>
+              <form method="post" action="/admin/clusters/{_escape(cluster_id)}/preview" style="display: inline;">
+                <input type="hidden" name="csrf" value="__SET_COOKIE__" />
+                <button type="submit" class="sb-btn">Preview Reports (Dry-Run)</button>
+              </form>
+              <form method="post" action="/admin/clusters/{_escape(cluster_id)}/submit" style="display: inline;">
+                <input type="hidden" name="csrf" value="__SET_COOKIE__" />
+                <button type="submit" class="sb-btn sb-btn-danger">Submit All Reports</button>
+              </form>
+            </div>
+          </div>
+        """
+
+    # Build shared backends list
+    backends_html = ""
+    if shared_backends:
+        backend_items = "".join(
+            f'<div class="sb-code" style="margin-bottom: 4px;">{_escape(b)}</div>'
+            for b in shared_backends
+        )
+        backends_html = f"""
+          <div class="sb-panel" style="margin-bottom: 16px;">
+            <div class="sb-label">Shared Backends ({len(shared_backends)})</div>
+            <div style="max-height: 200px; overflow-y: auto;">{backend_items}</div>
+          </div>
+        """
+
+    # Build kits list
+    kits_html = ""
+    if shared_kits:
+        kit_items = "".join(
+            f'<span class="sb-badge sb-badge-kit" style="margin-right: 8px; margin-bottom: 4px;">{_escape(k)}</span>'
+            for k in shared_kits
+        )
+        kits_html = f"""
+          <div class="sb-panel" style="margin-bottom: 16px;">
+            <div class="sb-label">Kit Signatures</div>
+            <div>{kit_items}</div>
+          </div>
+        """
+
+    # Build nameservers list
+    ns_html = ""
+    if shared_nameservers:
+        ns_items = "".join(
+            f'<div class="sb-code" style="margin-bottom: 4px;">{_escape(ns)}</div>'
+            for ns in shared_nameservers
+        )
+        ns_html = f"""
+          <div class="sb-panel" style="margin-bottom: 16px;">
+            <div class="sb-label">Shared Nameservers ({len(shared_nameservers)})</div>
+            <div>{ns_items}</div>
+          </div>
+        """
+
+    # Build ASN list
+    asn_html = ""
+    if shared_asns:
+        asn_items = ", ".join(shared_asns)
+        asn_html = f"""
+          <div class="sb-panel" style="margin-bottom: 16px;">
+            <div class="sb-label">Shared ASNs</div>
+            <div class="sb-code">{_escape(asn_items)}</div>
+          </div>
+        """
+
+    # Actor attribution
+    actor_html = ""
+    if actor_id or actor_notes:
+        actor_html = f"""
+          <div class="sb-panel" style="margin-bottom: 16px; border-color: rgba(245, 158, 11, 0.3);">
+            <div class="sb-label" style="color: var(--accent-yellow);">Threat Actor Attribution</div>
+            <div class="sb-code" style="margin-bottom: 8px;">{_escape(actor_id) if actor_id else '(unattributed)'}</div>
+            <div class="sb-muted">{_escape(actor_notes)}</div>
+          </div>
+        """
+
+    # Build member domains table
+    domain_rows = []
+    for member in members:
+        domain = member.get("domain", "")
+        score = member.get("score", 0)
+        added = member.get("added_at", "")[:10] if member.get("added_at") else "—"
+        ip = member.get("ip_address", "") or "—"
+        href = f"/admin/domains?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
+        domain_rows.append(f"""
+          <tr>
+            <td><a href="{_escape(href)}" class="sb-code">{_escape(domain)}</a></td>
+            <td class="sb-text-right">{score}</td>
+            <td>{_escape(added)}</td>
+            <td class="sb-code">{_escape(ip)}</td>
+          </tr>
+        """)
+
+    members_table = f"""
+      <div class="sb-panel">
+        <div class="sb-panel-header">
+          <span class="sb-panel-title">Member Domains ({len(members)})</span>
+        </div>
+        <div style="max-height: 400px; overflow-y: auto;">
+          <table class="sb-table" style="width: 100%;">
+            <thead><tr><th>Domain</th><th class="sb-text-right">Score</th><th>Added</th><th>IP</th></tr></thead>
+            <tbody>{"".join(domain_rows)}</tbody>
+          </table>
+        </div>
+      </div>
+    """
+
+    return f"""
+      <div class="sb-row" style="margin-bottom: 24px; align-items: center;">
+        <a class="sb-btn" href="{_escape(back_href)}">← Back to Campaigns</a>
+        <h1 style="flex: 1; margin: 0 0 0 16px; font-size: 24px;">{_escape(cluster_name)}</h1>
+        <span class="sb-badge {conf_class}" style="font-size: 14px;">{confidence:.0f}% confidence</span>
+      </div>
+
+      {action_buttons}
+
+      <div class="sb-panel" style="margin-bottom: 24px;">
+        <div class="sb-grid">
+          <div class="col-6">
+            <div class="sb-label">Campaign ID</div>
+            <div class="sb-code">{_escape(cluster_id)}</div>
+          </div>
+          <div class="col-3">
+            <div class="sb-label">First Seen</div>
+            <div>{_escape(created_at[:10] if created_at else "—")}</div>
+          </div>
+          <div class="col-3">
+            <div class="sb-label">Last Updated</div>
+            <div>{_escape(updated_at[:10] if updated_at else "—")}</div>
+          </div>
+        </div>
+      </div>
+
+      {actor_html}
+
+      <div class="sb-grid" style="margin-bottom: 24px;">
+        <div class="col-6">
+          {backends_html}
+          {ns_html}
+          {asn_html}
+        </div>
+        <div class="col-6">
+          {kits_html}
+        </div>
+      </div>
+
+      {members_table}
     """
 
 
@@ -1624,7 +1812,7 @@ def _render_domain_detail(
               <div class="col-6">
                 <div class="sb-action-card">
                   <div class="sb-action-card-title">Quick Actions</div>
-                  <div class="sb-row" style="margin-bottom: 12px;">
+                  <div class="sb-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                     <form method="post" action="/admin/domains/{_escape(did)}/rescan">
                       <input type="hidden" name="csrf" value="{_escape(csrf)}" />
                       <button class="sb-btn" type="submit">Queue Rescan</button>
@@ -1632,6 +1820,18 @@ def _render_domain_detail(
                     <form method="post" action="/admin/domains/{_escape(did)}/false_positive">
                       <input type="hidden" name="csrf" value="{_escape(csrf)}" />
                       <button class="sb-btn sb-btn-danger" type="submit">Mark False Positive</button>
+                    </form>
+                  </div>
+                </div>
+
+                <div class="sb-action-card">
+                  <div class="sb-action-card-title">Evidence & Reports</div>
+                  <div class="sb-row" style="flex-wrap: wrap; gap: 8px;">
+                    <a class="sb-btn sb-btn-primary" href="/admin/domains/{_escape(did)}/pdf">Download PDF</a>
+                    <a class="sb-btn" href="/admin/domains/{_escape(did)}/package">Evidence Archive</a>
+                    <form method="post" action="/admin/domains/{_escape(did)}/preview" style="display: inline;">
+                      <input type="hidden" name="csrf" value="{_escape(csrf)}" />
+                      <button class="sb-btn" type="submit">Preview (Dry-Run)</button>
                     </form>
                   </div>
                 </div>
@@ -1750,6 +1950,14 @@ class DashboardServer:
         report_callback: Callable[[int, str, Optional[list[str]], bool], object] | None = None,
         mark_manual_done_callback: Callable[[int, str, Optional[list[str]], str], object] | None = None,
         get_available_platforms: Callable[[], list[str]] | None = None,
+        # New callbacks for enhanced reporting
+        generate_domain_pdf_callback: Callable[[str, int | None], Path | None] | None = None,
+        generate_domain_package_callback: Callable[[str, int | None], Path | None] | None = None,
+        preview_domain_report_callback: Callable[[int, str], dict] | None = None,
+        generate_campaign_pdf_callback: Callable[[str], Path | None] | None = None,
+        generate_campaign_package_callback: Callable[[str], Path | None] | None = None,
+        preview_campaign_report_callback: Callable[[str], dict] | None = None,
+        submit_campaign_report_callback: Callable[[str], dict] | None = None,
     ):
         self.config = config
         self.database = database
@@ -1760,6 +1968,14 @@ class DashboardServer:
         self.report_callback = report_callback
         self.mark_manual_done_callback = mark_manual_done_callback
         self.get_available_platforms = get_available_platforms or (lambda: [])
+        # New callbacks
+        self.generate_domain_pdf_callback = generate_domain_pdf_callback
+        self.generate_domain_package_callback = generate_domain_package_callback
+        self.preview_domain_report_callback = preview_domain_report_callback
+        self.generate_campaign_pdf_callback = generate_campaign_pdf_callback
+        self.generate_campaign_package_callback = generate_campaign_package_callback
+        self.preview_campaign_report_callback = preview_campaign_report_callback
+        self.submit_campaign_report_callback = submit_campaign_report_callback
 
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -1829,6 +2045,16 @@ class DashboardServer:
         self._app.router.add_post("/admin/domains/{domain_id}/manual_done", self._admin_manual_done)
         self._app.router.add_post("/admin/domains/{domain_id}/rescan", self._admin_rescan)
         self._app.router.add_post("/admin/domains/{domain_id}/false_positive", self._admin_false_positive)
+        # New evidence/report generation routes
+        self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
+        self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
+        self._app.router.add_post("/admin/domains/{domain_id}/preview", self._admin_domain_preview)
+        # Campaign/cluster routes
+        self._app.router.add_get("/admin/clusters/{cluster_id}", self._admin_cluster_detail)
+        self._app.router.add_get("/admin/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
+        self._app.router.add_get("/admin/clusters/{cluster_id}/package", self._admin_cluster_package)
+        self._app.router.add_post("/admin/clusters/{cluster_id}/preview", self._admin_cluster_preview)
+        self._app.router.add_post("/admin/clusters/{cluster_id}/submit", self._admin_cluster_submit)
 
     @web.middleware
     async def _admin_auth_middleware(self, request: web.Request, handler):  # type: ignore[override]
@@ -2269,3 +2495,220 @@ class DashboardServer:
             return sorted(evidence_dir.glob("report_instructions_*.txt"))
         except Exception:
             return []
+
+    # -------------------------------------------------------------------------
+    # Domain PDF/Package/Preview Routes
+    # -------------------------------------------------------------------------
+
+    async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
+        """Generate and download PDF report for a domain."""
+        did = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        domain = await self.database.get_domain_by_id(did)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found.")
+
+        if not self.generate_domain_pdf_callback:
+            raise web.HTTPServiceUnavailable(text="PDF generation not configured.")
+
+        domain_name = str(domain.get("domain") or "")
+        try:
+            report_path = await self.generate_domain_pdf_callback(domain_name, did)
+            if not report_path or not report_path.exists():
+                raise web.HTTPServiceUnavailable(text="PDF generation failed or unavailable.")
+
+            return web.FileResponse(
+                report_path,
+                headers={
+                    "Content-Disposition": (
+                        f'attachment; filename="{domain_name.replace(".", "_")}_report{report_path.suffix}"'
+                    )
+                },
+            )
+        except Exception as e:
+            raise web.HTTPInternalServerError(text=f"PDF generation failed: {e}")
+
+    async def _admin_domain_package(self, request: web.Request) -> web.Response:
+        """Generate and download evidence archive for a domain."""
+        did = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        domain = await self.database.get_domain_by_id(did)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found.")
+
+        if not self.generate_domain_package_callback:
+            raise web.HTTPServiceUnavailable(text="Package generation not configured.")
+
+        domain_name = str(domain.get("domain") or "")
+        try:
+            archive_path = await self.generate_domain_package_callback(domain_name, did)
+            if not archive_path or not archive_path.exists():
+                raise web.HTTPServiceUnavailable(text="Archive generation failed.")
+
+            return web.FileResponse(
+                archive_path,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{archive_path.name}"'
+                },
+            )
+        except Exception as e:
+            raise web.HTTPInternalServerError(text=f"Package generation failed: {e}")
+
+    async def _admin_domain_preview(self, request: web.Request) -> web.Response:
+        """Dry-run report submission for a domain (sends to operator's email)."""
+        did = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        domain = await self.database.get_domain_by_id(did)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found.")
+
+        await self._require_csrf(request)
+
+        if not self.preview_domain_report_callback:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/domains/{did}", msg="Preview not configured", error=1)
+            )
+
+        domain_name = str(domain.get("domain") or "")
+        try:
+            await self.preview_domain_report_callback(did, domain_name)
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/domains/{did}", msg="Preview sent to your email")
+            )
+        except Exception as e:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/domains/{did}", msg=f"Preview failed: {e}", error=1)
+            )
+
+    # -------------------------------------------------------------------------
+    # Campaign/Cluster Detail and Reporting Routes
+    # -------------------------------------------------------------------------
+
+    def _get_cluster_by_id(self, cluster_id: str) -> dict | None:
+        """Get a specific cluster by ID (supports prefix matching)."""
+        clusters = self._load_clusters()
+        for cluster in clusters:
+            cid = cluster.get("cluster_id", "")
+            if cid == cluster_id or cid.startswith(cluster_id):
+                return cluster
+        return None
+
+    async def _admin_cluster_detail(self, request: web.Request) -> web.Response:
+        """Show detailed campaign/cluster view with action buttons."""
+        cluster_id = request.match_info.get("cluster_id", "")
+        cluster = self._get_cluster_by_id(cluster_id)
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        msg = request.query.get("msg")
+        error = request.query.get("error") == "1"
+
+        body = _render_cluster_detail(cluster, admin=True)
+        html_out = _layout(
+            title=f"Campaign: {cluster.get('name', 'Unknown')}",
+            body=_flash(msg, error=error) + body,
+            admin=True,
+        )
+
+        resp = web.Response(text=html_out, content_type="text/html")
+        csrf = self._get_or_set_csrf(request, resp)
+        resp.text = resp.text.replace("__SET_COOKIE__", csrf)
+        return resp
+
+    async def _admin_cluster_pdf(self, request: web.Request) -> web.Response:
+        """Generate and download PDF report for a campaign."""
+        cluster_id = request.match_info.get("cluster_id", "")
+        cluster = self._get_cluster_by_id(cluster_id)
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        if not self.generate_campaign_pdf_callback:
+            raise web.HTTPServiceUnavailable(text="PDF generation not configured.")
+
+        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        try:
+            report_path = await self.generate_campaign_pdf_callback(full_cluster_id)
+            if not report_path or not report_path.exists():
+                raise web.HTTPServiceUnavailable(text="PDF generation failed or unavailable.")
+
+            cluster_name = cluster.get("name", "campaign").replace(" ", "_")
+            return web.FileResponse(
+                report_path,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{cluster_name}_report{report_path.suffix}"'
+                },
+            )
+        except Exception as e:
+            raise web.HTTPInternalServerError(text=f"PDF generation failed: {e}")
+
+    async def _admin_cluster_package(self, request: web.Request) -> web.Response:
+        """Generate and download evidence archive for a campaign."""
+        cluster_id = request.match_info.get("cluster_id", "")
+        cluster = self._get_cluster_by_id(cluster_id)
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        if not self.generate_campaign_package_callback:
+            raise web.HTTPServiceUnavailable(text="Package generation not configured.")
+
+        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        try:
+            archive_path = await self.generate_campaign_package_callback(full_cluster_id)
+            if not archive_path or not archive_path.exists():
+                raise web.HTTPServiceUnavailable(text="Archive generation failed.")
+
+            return web.FileResponse(
+                archive_path,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{archive_path.name}"'
+                },
+            )
+        except Exception as e:
+            raise web.HTTPInternalServerError(text=f"Package generation failed: {e}")
+
+    async def _admin_cluster_preview(self, request: web.Request) -> web.Response:
+        """Dry-run campaign report submission (sends to operator's email)."""
+        cluster_id = request.match_info.get("cluster_id", "")
+        cluster = self._get_cluster_by_id(cluster_id)
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        await self._require_csrf(request)
+
+        if not self.preview_campaign_report_callback:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview not configured", error=1)
+            )
+
+        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        try:
+            await self.preview_campaign_report_callback(full_cluster_id)
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview sent to your email")
+            )
+        except Exception as e:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Preview failed: {e}", error=1)
+            )
+
+    async def _admin_cluster_submit(self, request: web.Request) -> web.Response:
+        """Submit campaign reports to all platforms."""
+        cluster_id = request.match_info.get("cluster_id", "")
+        cluster = self._get_cluster_by_id(cluster_id)
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        await self._require_csrf(request)
+
+        if not self.submit_campaign_report_callback:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Submit not configured", error=1)
+            )
+
+        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        try:
+            await self.submit_campaign_report_callback(full_cluster_id)
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Reports submitted to all platforms")
+            )
+        except Exception as e:
+            raise web.HTTPSeeOther(
+                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Submit failed: {e}", error=1)
+            )

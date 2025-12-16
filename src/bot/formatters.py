@@ -357,11 +357,22 @@ class AlertFormatter:
 *Reporting:*
 `/report <id>` - Submit to all enabled platforms
 `/report <id> status` - Show per-platform report status
+`/report <id> preview` - Dry-run (send to yourself)
+`/report <id> pdf` - Generate PDF report
+`/report <id> package` - Generate evidence archive
 `/report <id> <platform>` - Submit to a specific platform
 `/report <id> done [platform|all]` - Mark manual submissions complete
 `/report <id> retry [platform|all]` - Force retry of rate-limited reports
 `/reports [filter] [n]` - Show reporting queue (filters: pending/manual/rate)
 `/platforms` - Show enabled/available reporting platforms
+
+*Campaigns:*
+`/campaign list` - Show all campaigns/clusters
+`/campaign <id> summary` - Show campaign details
+`/campaign <id> report` - Generate PDF report
+`/campaign <id> package` - Generate evidence archive
+`/campaign <id> preview` - Dry-run reports to yourself
+`/campaign <id> submit` - Submit to all platforms
 
 *Configuration:*
 `/threshold <n>` - Set analysis threshold

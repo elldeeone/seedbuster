@@ -24,6 +24,7 @@ from .storage.database import DomainStatus, Verdict
 from .bot import SeedBusterBot
 from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
+from .reporter.evidence_packager import EvidencePackager
 
 # Configure logging
 logging.basicConfig(
@@ -96,6 +97,14 @@ class SeedBusterPipeline:
             enabled_platforms=config.report_platforms,
         )
 
+        # Evidence packager for report generation
+        self.evidence_packager = EvidencePackager(
+            database=self.database,
+            evidence_store=self.evidence_store,
+            cluster_manager=self.cluster_manager,
+            output_dir=config.data_dir / "packages",
+        )
+
         self.bot = SeedBusterBot(
             token=config.telegram_bot_token,
             chat_id=config.telegram_chat_id,
@@ -106,6 +115,8 @@ class SeedBusterPipeline:
             report_manager=self.report_manager,
             report_require_approval=config.report_require_approval,
             report_min_score=config.report_min_score,
+            cluster_manager=self.cluster_manager,
+            evidence_packager=self.evidence_packager,
         )
         self.ct_listener: AsyncCertstreamListener = None
         self.search_discovery: SearchDiscovery | None = None

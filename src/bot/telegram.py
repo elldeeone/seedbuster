@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..reporter.manager import ReportManager
+    from ..analyzer.clustering import ThreatClusterManager
+    from ..reporter.evidence_packager import EvidencePackager
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -43,6 +45,8 @@ class SeedBusterBot:
         report_manager: Optional["ReportManager"] = None,
         report_require_approval: bool = True,
         report_min_score: int = 70,
+        cluster_manager: Optional["ThreatClusterManager"] = None,
+        evidence_packager: Optional["EvidencePackager"] = None,
     ):
         self.token = token
         self.chat_id = chat_id
@@ -53,6 +57,8 @@ class SeedBusterBot:
         self.report_manager = report_manager
         self.report_require_approval = report_require_approval
         self.report_min_score = report_min_score
+        self.cluster_manager = cluster_manager
+        self.evidence_packager = evidence_packager
 
         self._app: Optional[Application] = None
         self._queue_size_callback: Optional[Callable[[], int]] = None
@@ -329,6 +335,8 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("threshold", self._cmd_threshold))
         self._app.add_handler(CommandHandler("allowlist", self._cmd_allowlist))
         self._app.add_handler(CommandHandler("reload", self._cmd_reload))
+        self._app.add_handler(CommandHandler("campaign", self._cmd_campaign))
+        self._app.add_handler(CommandHandler("clusters", self._cmd_campaign))  # Alias
 
         # Callback handlers for inline buttons
         self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
@@ -1060,6 +1068,9 @@ class SeedBusterBot:
                 "`/report <domain_id> status` - Check report status\n"
                 "`/report <domain_id> done [platform|all]` - Mark manual submissions complete\n"
                 "`/report <domain_id> retry [platform|all]` - Force retry of rate-limited reports\n"
+                "`/report <domain_id> preview` - Dry-run (send to yourself)\n"
+                "`/report <domain_id> pdf` - Generate PDF report\n"
+                "`/report <domain_id> package` - Generate evidence package\n"
                 "`/report <domain_id> <platform>` - Report to specific platform",
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -1156,6 +1167,110 @@ class SeedBusterBot:
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
             await self._send_manual_report_instructions(update.message, domain, results)
+        elif action == "preview":
+            # Dry-run: send reports to yourself instead of real abuse teams
+            import os
+            dry_run_email = os.environ.get("DRY_RUN_EMAIL")
+            if not dry_run_email:
+                await update.message.reply_text(
+                    "Dry-run not configured. Set `DRY_RUN_EMAIL` in your environment.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
+            await update.message.reply_text(
+                f"Generating preview reports for `{domain}`...\n"
+                f"Reports will be sent to `{dry_run_email}`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            results = await self.report_manager.report_domain(
+                domain_id=domain_id,
+                domain=domain,
+                dry_run=True,
+                dry_run_email=dry_run_email,
+            )
+
+            summary = self.report_manager.format_results_summary(results)
+            await update.message.reply_text(
+                f"Preview complete.\n\n{summary}\n\n"
+                f"Check `{dry_run_email}` to review reports before submitting.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        elif action == "pdf":
+            # Generate PDF report
+            if not self.evidence_packager:
+                await update.message.reply_text(
+                    "Evidence packager not configured."
+                )
+                return
+
+            await update.message.reply_text(
+                f"Generating PDF report for `{domain}`...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                attachments = await self.evidence_packager.prepare_domain_submission(domain, domain_id)
+
+                if attachments.pdf_path and attachments.pdf_path.exists():
+                    with open(attachments.pdf_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=f"{domain.replace('.', '_')}_report.pdf"),
+                            caption=f"PDF Report for `{domain}`",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+                else:
+                    # Fall back to HTML
+                    with open(attachments.html_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=f"{domain.replace('.', '_')}_report.html"),
+                            caption=f"HTML Report for `{domain}` (PDF unavailable - install weasyprint)",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+
+                if attachments.cluster_context:
+                    await update.message.reply_text(
+                        f"Note: {attachments.cluster_context}",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+            except Exception as e:
+                logger.error(f"Failed to generate PDF for {domain}: {e}")
+                await update.message.reply_text(f"Failed to generate report: {e}")
+        elif action == "package":
+            # Generate evidence package (ZIP archive)
+            if not self.evidence_packager:
+                await update.message.reply_text(
+                    "Evidence packager not configured."
+                )
+                return
+
+            await update.message.reply_text(
+                f"Creating evidence archive for `{domain}`...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                archive_path = await self.evidence_packager.create_domain_archive(domain, domain_id)
+
+                # Check file size (Telegram limit is 50MB)
+                size_mb = archive_path.stat().st_size / (1024 * 1024)
+                if size_mb > 50:
+                    await update.message.reply_text(
+                        f"Archive created but too large to send ({size_mb:.1f}MB).\n"
+                        f"Location: `{archive_path}`",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                else:
+                    with open(archive_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=archive_path.name),
+                            caption=f"Evidence archive for `{domain}`",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+            except Exception as e:
+                logger.error(f"Failed to create archive for {domain}: {e}")
+                await update.message.reply_text(f"Failed to create archive: {e}")
         else:
             analysis_score = int(target.get("analysis_score") or 0)
             if analysis_score < self.report_min_score:
@@ -1182,6 +1297,271 @@ class SeedBusterBot:
             summary = self.report_manager.format_results_summary(results)
             await update.message.reply_text(summary)
             await self._send_manual_report_instructions(update.message, domain, results)
+
+    async def _cmd_campaign(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /campaign command for cluster/campaign operations."""
+        if not self._is_authorized(update):
+            return
+
+        if not self.cluster_manager:
+            await update.message.reply_text(
+                "Cluster manager not configured."
+            )
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "*Campaign/Cluster Commands*\n\n"
+                "`/campaign list` - Show all campaigns\n"
+                "`/campaign <id> summary` - Show campaign details\n"
+                "`/campaign <id> report` - Generate PDF report\n"
+                "`/campaign <id> package` - Generate evidence archive\n"
+                "`/campaign <id> preview` - Dry-run reports to yourself\n"
+                "`/campaign <id> submit` - Submit reports to all platforms",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        action = context.args[0].lower()
+
+        if action == "list":
+            # List all clusters
+            clusters = self.cluster_manager.get_all_clusters()
+            if not clusters:
+                await update.message.reply_text(
+                    "No campaigns/clusters found yet.\n"
+                    "Clusters are created automatically when related phishing sites are detected."
+                )
+                return
+
+            lines = ["*Active Campaigns/Clusters*\n"]
+            for c in sorted(clusters, key=lambda x: x["member_count"], reverse=True):
+                cid_short = c["id"][:12]
+                lines.append(
+                    f"`{cid_short}` *{c['name']}*\n"
+                    f"  Domains: {c['member_count']} | Confidence: {c['confidence']:.0f}%"
+                )
+                if c["shared_backends"]:
+                    backends_preview = ", ".join(c["shared_backends"][:2])
+                    if len(c["shared_backends"]) > 2:
+                        backends_preview += f" +{len(c['shared_backends']) - 2}"
+                    lines.append(f"  Backends: `{backends_preview}`")
+                lines.append("")
+
+            lines.append("Use `/campaign <id> summary` for details")
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            return
+
+        # All other actions require a cluster ID
+        cluster_id_prefix = action
+        sub_action = context.args[1].lower() if len(context.args) > 1 else "summary"
+
+        # Find cluster by prefix
+        cluster = None
+        for cid, c in self.cluster_manager.clusters.items():
+            if cid.startswith(cluster_id_prefix) or cid == cluster_id_prefix:
+                cluster = c
+                break
+
+        if not cluster:
+            await update.message.reply_text(
+                f"Campaign not found: `{cluster_id_prefix}`\n"
+                "Use `/campaign list` to see available campaigns.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        if sub_action == "summary":
+            # Show detailed cluster info
+            lines = [
+                f"*Campaign: {cluster.name}*\n",
+                f"ID: `{cluster.cluster_id}`",
+                f"Confidence: {cluster.confidence:.0f}%",
+                f"Created: {cluster.created_at.strftime('%Y-%m-%d')}",
+                f"Updated: {cluster.updated_at.strftime('%Y-%m-%d')}",
+                "",
+                f"*Domains ({len(cluster.members)}):*",
+            ]
+            for m in cluster.members[:10]:
+                lines.append(f"  `{m.domain}` (score: {m.score})")
+            if len(cluster.members) > 10:
+                lines.append(f"  ... and {len(cluster.members) - 10} more")
+
+            if cluster.shared_backends:
+                lines.extend(["", "*Shared Backends:*"])
+                for b in list(cluster.shared_backends)[:5]:
+                    lines.append(f"  `{b}`")
+
+            if cluster.shared_kits:
+                lines.extend(["", "*Kit Signatures:*"])
+                for k in cluster.shared_kits:
+                    lines.append(f"  `{k}`")
+
+            if cluster.shared_nameservers:
+                lines.extend(["", "*Shared Nameservers:*"])
+                for ns in list(cluster.shared_nameservers)[:3]:
+                    lines.append(f"  `{ns}`")
+
+            lines.extend([
+                "",
+                "*Actions:*",
+                f"`/campaign {cluster_id_prefix} report` - Generate report",
+                f"`/campaign {cluster_id_prefix} preview` - Dry-run submission",
+                f"`/campaign {cluster_id_prefix} submit` - Submit reports",
+            ])
+
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+        elif sub_action == "report":
+            # Generate campaign PDF/HTML report
+            if not self.evidence_packager:
+                await update.message.reply_text("Evidence packager not configured.")
+                return
+
+            await update.message.reply_text(
+                f"Generating campaign report for *{cluster.name}*...",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                attachments = await self.evidence_packager.prepare_campaign_submission(cluster.cluster_id)
+
+                if attachments.pdf_path and attachments.pdf_path.exists():
+                    with open(attachments.pdf_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=f"campaign_{cluster.name.replace(' ', '_')}.pdf"),
+                            caption=f"Campaign Report: *{cluster.name}* ({attachments.domain_count} domains)",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+                else:
+                    with open(attachments.html_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=f"campaign_{cluster.name.replace(' ', '_')}.html"),
+                            caption=f"Campaign Report: *{cluster.name}* (PDF unavailable)",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+            except Exception as e:
+                logger.error(f"Failed to generate campaign report: {e}")
+                await update.message.reply_text(f"Failed to generate report: {e}")
+
+        elif sub_action == "package":
+            # Generate campaign evidence archive
+            if not self.evidence_packager:
+                await update.message.reply_text("Evidence packager not configured.")
+                return
+
+            await update.message.reply_text(
+                f"Creating evidence archive for *{cluster.name}* ({len(cluster.members)} domains)...\n"
+                "This may take a moment.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                archive_path = await self.evidence_packager.create_campaign_archive(cluster.cluster_id)
+
+                size_mb = archive_path.stat().st_size / (1024 * 1024)
+                if size_mb > 50:
+                    await update.message.reply_text(
+                        f"Archive created but too large to send ({size_mb:.1f}MB).\n"
+                        f"Location: `{archive_path}`",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                else:
+                    with open(archive_path, "rb") as f:
+                        await update.message.reply_document(
+                            document=InputFile(f, filename=archive_path.name),
+                            caption=f"Evidence archive for *{cluster.name}*",
+                            parse_mode=ParseMode.MARKDOWN,
+                        )
+            except Exception as e:
+                logger.error(f"Failed to create campaign archive: {e}")
+                await update.message.reply_text(f"Failed to create archive: {e}")
+
+        elif sub_action == "preview":
+            # Dry-run campaign reports
+            if not self.report_manager:
+                await update.message.reply_text("Report manager not configured.")
+                return
+
+            import os
+            dry_run_email = os.environ.get("DRY_RUN_EMAIL")
+            if not dry_run_email:
+                await update.message.reply_text(
+                    "Dry-run not configured. Set `DRY_RUN_EMAIL` in your environment.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
+            await update.message.reply_text(
+                f"Generating preview reports for *{cluster.name}*...\n"
+                f"Reports will be sent to `{dry_run_email}`\n"
+                f"This includes {len(cluster.members)} domains.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                results = await self.report_manager.report_campaign(
+                    cluster_id=cluster.cluster_id,
+                    cluster_manager=self.cluster_manager,
+                    dry_run=True,
+                    dry_run_email=dry_run_email,
+                )
+
+                # Count successes
+                total_reports = sum(len(r) for r in results.values())
+                await update.message.reply_text(
+                    f"Preview complete for *{cluster.name}*\n\n"
+                    f"Generated {total_reports} report previews.\n"
+                    f"Check `{dry_run_email}` to review before submitting.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception as e:
+                logger.error(f"Failed to generate campaign preview: {e}")
+                await update.message.reply_text(f"Failed to generate preview: {e}")
+
+        elif sub_action == "submit":
+            # Submit campaign reports to all platforms
+            if not self.report_manager:
+                await update.message.reply_text("Report manager not configured.")
+                return
+
+            await update.message.reply_text(
+                f"Submitting reports for *{cluster.name}*...\n"
+                f"This will report {len(cluster.members)} domains to all platforms.\n"
+                "This may take a few minutes.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            try:
+                results = await self.report_manager.report_campaign(
+                    cluster_id=cluster.cluster_id,
+                    cluster_manager=self.cluster_manager,
+                )
+
+                # Summarize results
+                lines = [f"*Campaign Report Results: {cluster.name}*\n"]
+
+                for target_type, target_results in results.items():
+                    if target_results:
+                        success_count = sum(
+                            1 for r in target_results
+                            if r.status in [ReportStatus.SUBMITTED, ReportStatus.CONFIRMED]
+                        )
+                        lines.append(f"*{target_type}*: {success_count}/{len(target_results)} submitted")
+
+                lines.append(f"\nTotal domains: {len(cluster.members)}")
+                lines.append("\nUse `/campaign list` to see updated cluster status.")
+
+                await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                logger.error(f"Failed to submit campaign reports: {e}")
+                await update.message.reply_text(f"Failed to submit reports: {e}")
+        else:
+            await update.message.reply_text(
+                f"Unknown action: `{sub_action}`\n"
+                "Use `/campaign` for available commands.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
 
     async def _cmd_reports(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /reports command (queue of domains needing reporting action)."""
