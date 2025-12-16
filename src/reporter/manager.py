@@ -1092,6 +1092,15 @@ class ReportManager:
             if not reporter or not reporter.is_configured():
                 continue
 
+            applicable, skip_reason = reporter.is_applicable(evidence)
+            if not applicable:
+                results[platform] = ReportResult(
+                    platform=platform,
+                    status=ReportStatus.SKIPPED,
+                    message=skip_reason or "Not applicable",
+                )
+                continue
+
             # Build the report content that would be sent
             try:
                 report_content = self._build_platform_report_preview(platform, evidence)
