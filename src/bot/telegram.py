@@ -739,23 +739,8 @@ class SeedBusterBot:
             await update.message.reply_text("Usage: `/ack <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
 
-        domain_id = context.args[0]
-        # Find domain by short ID prefix
-        domains = await self.database.get_recent_domains(limit=100)
-        target = None
-        for d in domains:
-            if self.evidence_store.get_domain_id(d["domain"]).startswith(domain_id):
-                target = d
-                break
-
-        if target:
-            await self.database.update_domain_status(target["id"], DomainStatus.ANALYZED)
-            await update.message.reply_text(
-                f"Acknowledged: `{target['domain']}`",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        else:
-            await update.message.reply_text(f"Domain not found: {domain_id}")
+        message = await self.service.acknowledge(context.args[0])
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_defer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /defer command - wait for rescans before deciding."""
@@ -764,26 +749,8 @@ class SeedBusterBot:
         if not context.args:
             await update.message.reply_text("Usage: `/defer <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
-
-        domain_id = context.args[0]
-        # Find domain by short ID prefix
-        domains = await self.database.get_recent_domains(limit=100)
-        target = None
-        for d in domains:
-            if self.evidence_store.get_domain_id(d["domain"]).startswith(domain_id):
-                target = d
-                break
-
-        if target:
-            await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
-            await update.message.reply_text(
-                f"\U0001F551 Deferred: `{target['domain']}`\n\n"
-                "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
-                "You'll receive an update when rescans complete.",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        else:
-            await update.message.reply_text(f"Domain not found: {domain_id}")
+        message = await self.service.defer(context.args[0])
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_rescan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /rescan command - manually trigger a rescan."""
@@ -810,24 +777,8 @@ class SeedBusterBot:
         if not context.args:
             await update.message.reply_text("Usage: `/fp <domain_id>`", parse_mode=ParseMode.MARKDOWN)
             return
-
-        domain_id = context.args[0]
-        domains = await self.database.get_recent_domains(limit=100)
-        target = None
-        for d in domains:
-            if self.evidence_store.get_domain_id(d["domain"]).startswith(domain_id):
-                target = d
-                break
-
-        if target:
-            await self.database.mark_false_positive(target["id"])
-            await update.message.reply_text(
-                f"Marked as false positive: `{target['domain']}`\n"
-                "Consider adding to allowlist with `/allowlist add <domain>`",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        else:
-            await update.message.reply_text(f"Domain not found: {domain_id}")
+        message = await self.service.mark_false_positive(context.args[0])
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_evidence(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /evidence command."""

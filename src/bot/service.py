@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .formatters import AlertFormatter
+from ..storage.database import DomainStatus, Verdict
 
 
 @dataclass
@@ -54,6 +55,7 @@ class BotService:
         self.queue_size_callback = queue_size_callback
         self.submit_callback = submit_callback
         self.rescan_callback = rescan_callback
+        self._recent_cache_limit = 200
 
     async def format_status(self, *, is_running: bool) -> str:
         stats = await self.database.get_stats()
@@ -101,25 +103,23 @@ class BotService:
                 ])
             rows.append([KeyboardButton(text="📊 Report Status", callback_data=f"status_{domain_id}")])
 
-            path_note = f\"\n\n_Path `{path}` not yet analyzed._\" if path and path not in existing_domain else \"\"
+            path_note = f"\n\n_Path `{path}` not yet analyzed._" if path and path not in existing_domain else ""
             message = (
-                f\"*Domain already analyzed:* `{existing_domain}`\\n\\n\"
-                f\"Score: {score}/100 ({verdict})\\n\"
-                f\"Status: {status}\\n\"
-                f\"Analyzed: {analyzed_at}{path_note}\\n\\n\"
-                \"Choose an action below:\"
+                f"*Domain already analyzed:* `{existing_domain}`\n\n"
+                f"Score: {score}/100 ({verdict})\n"
+                f"Status: {status}\n"
+                f"Analyzed: {analyzed_at}{path_note}\n\n"
+                "Choose an action below:"
             )
             return SubmitResponse(message=message, buttons=rows)
 
-        # New submission
         if self.submit_callback:
             self.submit_callback(full_url)
         display = full_url if path else domain
-        return SubmitResponse(message=f\"Submitted `{display}` for analysis.\")
+        return SubmitResponse(message=f"Submitted `{display}` for analysis.")
 
     async def bulk_submit(self, raw_text: str) -> BulkSubmitResult:
         """Handle bulk submissions; returns counts."""
-        # Parse first token per line plus whitespace-separated tokens.
         if not raw_text:
             return BulkSubmitResult()
 
@@ -128,7 +128,7 @@ class BotService:
             line = line.strip()
             if not line:
                 continue
-            if line.lower().startswith((\"url\", \"age\", \"size\", \"ips\", \"asns\")):
+            if line.lower().startswith(("url", "age", "size", "ips", "asns")):
                 continue
             first = line.split()[0]
             candidates.append(first)
@@ -136,12 +136,12 @@ class BotService:
             candidates = raw_text.split()
 
         def normalize(token: str) -> str | None:
-            t = (token or \"\").strip().strip(\"`'\\\"(),;\")
+            t = (token or "").strip().strip("`'\"(),;")
             if not t:
                 return None
-            t = t.replace(\"https://\", \"\").replace(\"http://\", \"\")
-            t = t.strip().strip(\"`'\\\"(),;\")
-            if not t or \".\" not in t:
+            t = t.replace("https://", "").replace("http://", "")
+            t = t.strip().strip("`'\"(),;")
+            if not t or "." not in t:
                 return None
             return t.lower()
 
@@ -158,7 +158,6 @@ class BotService:
             seen.add(norm)
             normalized.append(norm)
 
-        # Avoid massive bursts; UI and queueing tend to be more manageable with a cap.
         max_batch = 200
         if len(normalized) > max_batch:
             normalized = normalized[:max_batch]
@@ -180,7 +179,45 @@ class BotService:
         if self.rescan_callback:
             try:
                 self.rescan_callback(domain)
-                return f\"Rescan queued for `{domain}`\"
+                return f"Rescan queued for `{domain}`"
             except Exception as exc:  # pragma: no cover - defensive
-                return f\"Failed to queue rescan: {exc}\"
-        return \"Rescan unavailable.\"
+                return f"Failed to queue rescan: {exc}"
+        return "Rescan unavailable."
+
+    async def _find_by_short_id(self, prefix: str):
+        domains = await self.database.get_recent_domains(limit=self._recent_cache_limit)
+        for d in domains:
+            try:
+                if self.evidence_store.get_domain_id(d["domain"]).startswith(prefix):
+                    return d
+            except Exception:
+                continue
+        return None
+
+    async def mark_false_positive(self, short_id: str) -> str:
+        target = await self._find_by_short_id(short_id)
+        if not target:
+            return f"Domain not found: {short_id}"
+        await self.database.mark_false_positive(target["id"])
+        return (
+            f"Marked as false positive: `{target['domain']}`\n"
+            "Consider adding to allowlist with `/allowlist add <domain>`"
+        )
+
+    async def acknowledge(self, short_id: str) -> str:
+        target = await self._find_by_short_id(short_id)
+        if not target:
+            return f"Domain not found: {short_id}"
+        await self.database.update_domain_status(target["id"], DomainStatus.ANALYZED)
+        return f"Acknowledged: `{target['domain']}`"
+
+    async def defer(self, short_id: str) -> str:
+        target = await self._find_by_short_id(short_id)
+        if not target:
+            return f"Domain not found: {short_id}"
+        await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
+        return (
+            f"\U0001F551 Deferred: `{target['domain']}`\n\n"
+            "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
+            "You'll receive an update when rescans complete."
+        )
