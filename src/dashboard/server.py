@@ -11,6 +11,7 @@ import base64
 import html
 import json
 import os
+import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,6 +55,13 @@ def _try_relative_to(path: Path, base: Path) -> Path | None:
         return path.resolve().relative_to(base.resolve())
     except Exception:
         return None
+
+
+def _domain_dir_name(domain: str) -> str:
+    """Replicate EvidenceStore directory naming for cross-process use."""
+    domain_hash = hashlib.sha256(domain.lower().encode()).hexdigest()[:12]
+    safe_domain = "".join(c if c.isalnum() or c in ".-" else "_" for c in domain)
+    return f"{safe_domain}_{domain_hash}"
 
 
 def _format_bytes(num: int) -> str:
@@ -4117,6 +4125,47 @@ class DashboardServer:
         except Exception as exc:  # pragma: no cover - best-effort
             return {"ok": False, "error": str(exc)}
 
+    # ------------------------------------------------------------------
+    # Evidence retention/cleanup
+    # ------------------------------------------------------------------
+    async def _admin_api_cleanup_evidence(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        days = int(data.get("days") or 30)
+        if days < 1:
+            days = 1
+        removed = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._cleanup_evidence(days)
+        )
+        return web.json_response({"status": "ok", "removed_dirs": removed})
+
+    def _cleanup_evidence(self, days: int) -> int:
+        """Remove evidence older than N days. Returns number of directories removed."""
+        import shutil
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        removed = 0
+        for domain_dir in self.evidence_dir.iterdir():
+            if not domain_dir.is_dir():
+                continue
+            analysis_path = domain_dir / "analysis.json"
+            if not analysis_path.exists():
+                continue
+            try:
+                data = json.loads(analysis_path.read_text())
+                saved_at = data.get("saved_at")
+                if not saved_at:
+                    continue
+                ts = datetime.fromisoformat(saved_at)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts < cutoff:
+                    shutil.rmtree(domain_dir)
+                    removed += 1
+            except Exception:
+                continue
+        return removed
+
     def _register_routes(self) -> None:
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
@@ -4142,6 +4191,8 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
+        self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
+        self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
@@ -4354,6 +4405,19 @@ reports()
               </div>
             </form>
           </div>
+          <div class="sb-panel" style="border-color: rgba(63, 185, 80, 0.3); margin-bottom: 24px;">
+            <div class="sb-panel-header" style="border-color: rgba(63, 185, 80, 0.2);">
+              <span class="sb-panel-title" style="color: var(--accent-green);">Evidence Cleanup</span>
+              <span class="sb-muted">Remove evidence older than N days</span>
+            </div>
+            <form id="cleanup-form">
+              <div class="sb-row">
+                <input class="sb-input" type="number" name="days" value="30" min="1" style="width: 120px;" />
+                <button class="sb-btn sb-btn-secondary" type="submit">Cleanup</button>
+              </div>
+            </form>
+            <div class="sb-muted" id="cleanup-result"></div>
+          </div>
         """
 
         html_out = _layout(
@@ -4381,6 +4445,39 @@ reports()
         resp = web.Response(text=html_out, content_type="text/html")
         csrf = self._get_or_set_csrf(request, resp)
         resp.text = resp.text.replace("__SET_COOKIE__", csrf)
+        # Inline script to handle cleanup via JSON API without leaving page
+        resp.text += f"""
+        <script>
+        (function() {{
+          const form = document.getElementById('cleanup-form');
+          const result = document.getElementById('cleanup-result');
+          if (form) {{
+            form.addEventListener('submit', async (e) => {{
+              e.preventDefault();
+              result.textContent = 'Cleaning...';
+              const days = parseInt(form.elements['days'].value || '30', 10) || 30;
+              try {{
+                const res = await fetch('/admin/api/cleanup_evidence', {{
+                  method: 'POST',
+                  headers: {{ 'Content-Type': 'application/json' }},
+                  body: JSON.stringify({{ days }}),
+                }});
+                const data = await res.json();
+                if (res.ok) {{
+                  result.textContent = `Removed ${'{'}data.removed_dirs || 0{'}'} directories older than ${'{'}days{'}'} days.`;
+                }} else {{
+                  result.textContent = data.error || 'Cleanup failed';
+                }}
+              }} catch (err) {{
+                result.textContent = 'Cleanup failed: ' + err;
+              }}
+            }});
+          }}
+          // Health refresh (best effort)
+          const healthCard = document.querySelector('.sb-panel .sb-panel-title:contains("Health")');
+        }})();
+        </script>
+        """
         return resp
 
     async def _admin_submit(self, request: web.Request) -> web.Response:
@@ -4656,7 +4753,7 @@ reports()
         reports = await self.database.get_reports_for_domain(domain_id)
         evidence = {}
         try:
-            domain_dir = self.evidence_dir / self.database.get_domain_dir_name(row["domain"])
+            domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
             evidence["html"] = f"/evidence/{domain_dir.name}/page.html" if (domain_dir / "page.html").exists() else None
             evidence["analysis"] = f"/evidence/{domain_dir.name}/analysis.json" if (domain_dir / "analysis.json").exists() else None
             evidence["screenshots"] = [
@@ -4723,6 +4820,25 @@ reports()
 
         await self.report_callback(domain_id, domain, platforms, force)
         return web.json_response({"status": "report_enqueued", "domain": domain, "platforms": platforms})
+
+    async def _admin_api_evidence(self, request: web.Request) -> web.Response:
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+        row = await self.database.get_domain_by_id(domain_id)
+        if not row:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
+        files: list[dict] = []
+        if domain_dir.exists():
+            for p in sorted(domain_dir.glob("**/*")):
+                if p.is_file():
+                    files.append({
+                        "path": f"/evidence/{_domain_dir_name(row['domain'])}/{p.relative_to(domain_dir)}",
+                        "size": p.stat().st_size,
+                    })
+        return web.json_response({"files": files})
 
 
     async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
