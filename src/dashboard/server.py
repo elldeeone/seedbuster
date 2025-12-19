@@ -2630,13 +2630,13 @@ def _render_health(health_url: str, health: dict | None) -> str:
             details = _escape(health.get("error"))
 
     return f"""
-      <div class="sb-panel" style="border-color: rgba(88, 166, 255, 0.2);">
+      <div class="sb-panel" id="health-panel" data-url="{_escape(health_url)}" style="border-color: rgba(88, 166, 255, 0.2);">
         <div class="sb-panel-header" style="border-bottom: 1px solid var(--border-subtle);">
           <span class="sb-panel-title">Health</span>
           <a class="sb-link" href="{_escape(health_url)}" target="_blank" rel="noreferrer">View healthz</a>
         </div>
-        <div><b>{_escape(status_line)}</b></div>
-        <div class="sb-muted">{details or "Best-effort link to the pipeline health endpoint (if enabled)."}</div>
+        <div id="health-status"><b>{_escape(status_line)}</b></div>
+        <div class="sb-muted" id="health-details">{details or "Best-effort link to the pipeline health endpoint (if enabled)."}</div>
       </div>
     """
 
@@ -2658,6 +2658,15 @@ def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
         domain_score = d.get("domain_score")
         analysis_score = d.get("analysis_score")
 
+        actions_cell = ""
+        if admin:
+            actions_cell = (
+                f'<td class="sb-muted">'
+                f'<button class="sb-btn sb-btn-ghost js-rescan" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Rescan</button> '
+                f'<button class="sb-btn sb-btn-ghost js-report" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Report</button>'
+                f"</td>"
+            )
+
         rows.append(
             "<tr>"
             f'<td class="domain-cell" title="{_escape(domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
@@ -2667,6 +2676,7 @@ def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
             f'<td><span class="sb-score">{_escape(analysis_score) if analysis_score is not None else "—"}</span></td>'
             f'<td class="sb-muted">{_escape(d.get("source") or "—")}</td>'
             f'<td class="sb-muted">{_escape(d.get("first_seen") or "—")}</td>'
+            f"{actions_cell}"
             "</tr>"
         )
 
@@ -2687,6 +2697,7 @@ def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
                 <th>A-Score</th>
                 <th>Source</th>
                 <th>First Seen</th>
+                { '<th>Actions</th>' if admin else '' }
               </tr>
             </thead>
             <tbody>
@@ -4397,7 +4408,7 @@ reports()
               <span class="sb-panel-title" style="color: var(--accent-blue);">Manual Submission</span>
               <span class="sb-muted">Submit a domain or URL for analysis</span>
             </div>
-            <form method="post" action="/admin/submit">
+            <form method="post" action="/admin/submit" id="submit-form">
               <input type="hidden" name="csrf" value="__SET_COOKIE__" />
               <div class="sb-row">
                 <input class="sb-input" type="text" name="target" placeholder="example.com or https://example.com/path" style="flex: 1;" />
@@ -4445,17 +4456,17 @@ reports()
         resp = web.Response(text=html_out, content_type="text/html")
         csrf = self._get_or_set_csrf(request, resp)
         resp.text = resp.text.replace("__SET_COOKIE__", csrf)
-        # Inline script to handle cleanup via JSON API without leaving page
+        # Inline script to handle JSON API interactions (submit/rescan/report/cleanup/health)
         resp.text += f"""
         <script>
         (function() {{
-          const form = document.getElementById('cleanup-form');
-          const result = document.getElementById('cleanup-result');
-          if (form) {{
-            form.addEventListener('submit', async (e) => {{
+          const cleanupForm = document.getElementById('cleanup-form');
+          const cleanupResult = document.getElementById('cleanup-result');
+          if (cleanupForm) {{
+            cleanupForm.addEventListener('submit', async (e) => {{
               e.preventDefault();
-              result.textContent = 'Cleaning...';
-              const days = parseInt(form.elements['days'].value || '30', 10) || 30;
+              cleanupResult.textContent = 'Cleaning...';
+              const days = parseInt(cleanupForm.elements['days'].value || '30', 10) || 30;
               try {{
                 const res = await fetch('/admin/api/cleanup_evidence', {{
                   method: 'POST',
@@ -4464,17 +4475,108 @@ reports()
                 }});
                 const data = await res.json();
                 if (res.ok) {{
-                  result.textContent = `Removed ${'{'}data.removed_dirs || 0{'}'} directories older than ${'{'}days{'}'} days.`;
+                  cleanupResult.textContent = `Removed ${'{'}data.removed_dirs || 0{'}'} directories older than ${'{'}days{'}'} days.`;
                 }} else {{
-                  result.textContent = data.error || 'Cleanup failed';
+                  cleanupResult.textContent = data.error || 'Cleanup failed';
                 }}
               }} catch (err) {{
-                result.textContent = 'Cleanup failed: ' + err;
+                cleanupResult.textContent = 'Cleanup failed: ' + err;
               }}
             }});
           }}
+
+          // Submit form via JSON API for faster feedback
+          const submitForm = document.getElementById('submit-form');
+          if (submitForm) {{
+            submitForm.addEventListener('submit', async (e) => {{
+              e.preventDefault();
+              const target = submitForm.elements['target'].value || '';
+              if (!target.trim()) return;
+              const btn = submitForm.querySelector('button[type="submit"]');
+              btn.disabled = true;
+              btn.textContent = 'Submitting...';
+              try {{
+                const res = await fetch('/admin/api/submit', {{
+                  method: 'POST',
+                  headers: {{ 'Content-Type': 'application/json' }},
+                  body: JSON.stringify({{ target }}),
+                }});
+                const data = await res.json();
+                const msg = data.status === 'rescan_queued'
+                  ? `Rescan queued for ${'{'}data.domain{'}'}`
+                  : `Submitted ${'{'}data.domain || target{'}'}`;
+                alert(msg);
+              }} catch (err) {{
+                alert('Submit failed: ' + err);
+              }} finally {{
+                btn.disabled = false;
+                btn.textContent = 'Submit / Rescan';
+              }}
+            }});
+          }}
+
+          async function postJSON(url, payload) {{
+            const res = await fetch(url, {{
+              method: 'POST',
+              headers: {{ 'Content-Type': 'application/json' }},
+              body: JSON.stringify(payload || {{}}),
+            }});
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || res.statusText);
+            return data;
+          }
+
+          // Delegate rescan/report actions
+          document.body.addEventListener('click', async (e) => {{
+            const target = e.target.closest('.js-rescan, .js-report');
+            if (!target) return;
+            e.preventDefault();
+            const domain = target.dataset.domain;
+            const domainId = target.dataset.domainId;
+            const type = target.classList.contains('js-rescan') ? 'rescan' : 'report';
+            target.disabled = true;
+            try {{
+              if (type === 'rescan') {{
+                await postJSON(`/admin/api/domains/${'{'}domainId{'}'}/rescan`, {{ domain }});
+                alert(`Rescan queued for ${'{'}domain{'}'}`);
+              }} else {{
+                await postJSON('/admin/api/report', {{ domain_id: parseInt(domainId, 10), domain }});
+                alert(`Report enqueued for ${'{'}domain{'}'}`);
+              }}
+            }} catch (err) {{
+              alert(type + ' failed: ' + err);
+            }} finally {{
+              target.disabled = false;
+            }}
+          }});
+
           // Health refresh (best effort)
-          const healthCard = document.querySelector('.sb-panel .sb-panel-title:contains("Health")');
+          const healthPanel = document.getElementById('health-panel');
+          if (healthPanel) {{
+            const statusEl = document.getElementById('health-status');
+            const detailsEl = document.getElementById('health-details');
+            const url = healthPanel.dataset.url;
+            async function refreshHealth() {{
+              if (!url) return;
+              try {{
+                const res = await fetch(url);
+                let payload = null;
+                try {{ payload = await res.json(); }} catch (_e) {{ payload = {{ raw: await res.text() }}; }}
+                const ok = res.ok;
+                const data = payload || {{}};
+                statusEl.innerHTML = '<b>' + (ok ? 'Healthy' : 'Unhealthy') + '</b>';
+                const bits = [];
+                ['discovery_queue_size','analysis_queue_size','pending_rescans','domains_tracked'].forEach(k => {{
+                  if (data && typeof data === 'object' && k in data) bits.push(`${'{'}k.replace(/_/g, ' '){'}'}: ${'{'}data[k]{'}'}`);
+                }});
+                detailsEl.textContent = bits.join(' | ') || '';
+              }} catch (err) {{
+                detailsEl.textContent = 'Health check failed: ' + err;
+              }}
+            }}
+            refreshHealth();
+            setInterval(refreshHealth, 30000);
+          }}
         }})();
         </script>
         """
