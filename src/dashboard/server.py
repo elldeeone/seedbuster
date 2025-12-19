@@ -4141,6 +4141,7 @@ class DashboardServer:
         self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
         self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
+        self._app.router.add_post("/admin/api/report", self._admin_api_report)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
@@ -4246,6 +4247,7 @@ class DashboardServer:
             query=q or None,
         )
         pending_reports = await self.database.get_pending_reports()
+reports()
 
         body = (
             _flash(request.query.get("msg"))
@@ -4323,6 +4325,8 @@ class DashboardServer:
         offset = (page - 1) * limit
 
         stats = await self.database.get_stats()
+        stats["evidence_bytes"] = self._compute_evidence_bytes()
+        health_status = await self._fetch_health_status()
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
@@ -4331,6 +4335,7 @@ class DashboardServer:
             query=q or None,
         )
         pending_reports = await self.database.get_pending_reports()
+reports()
 
         msg = request.query.get("msg")
         error = request.query.get("error") == "1"
