@@ -1,0 +1,163 @@
+# Heuristics overrides for SeedBuster (editable without code changes).
+
+domain:
+  target_patterns:
+    - kaspa
+    - kaspanet
+    - kaspawallet
+    - kasware
+    - kaspapay
+  suspicious_tlds:
+    - xyz
+    - top
+    - click
+    - online
+    - site
+    - website
+    - link
+    - club
+    - fun
+    - icu
+    - buzz
+    - quest
+  keywords:
+    - keyword: wallet
+      points: 10
+    - keyword: recover
+      points: 15
+    - keyword: seed
+      points: 15
+    - keyword: restore
+      points: 10
+    - keyword: login
+      points: 5
+    - keyword: secure
+      points: 5
+    - keyword: official
+      points: 10
+    - keyword: verify
+      points: 10
+    - keyword: claim
+      points: 10
+    - keyword: airdrop
+      points: 10
+  substitutions:
+    "4": "a"
+    "3": "e"
+    "1": "i"
+    "0": "o"
+    "5": "s"
+    "@": "a"
+    "$": "s"
+
+detection:
+  seed_keywords:
+    - "recovery\\s*phrase"
+    - "seed\\s*phrase"
+    - "mnemonic"
+    - "secret\\s*phrase"
+    - "backup\\s*phrase"
+    - "12\\s*words?"
+    - "24\\s*words?"
+    - "enter\\s*(your\\s*)?seed"
+    - "restore\\s*wallet"
+    - "import\\s*wallet"
+    - "recover\\s*wallet"
+    - "enter\\s*mnemonic"
+    - "word\\s*#?\\d+"
+    - "recovery\\s*words?"
+  title_keywords:
+    - keyword: kaspa
+      points: 10
+      reason: Kaspa-related title
+    - keyword: wallet
+      points: 5
+      reason: Wallet-related title
+    - keyword: recovery
+      points: 10
+      reason: Recovery-related title
+    - keyword: restore
+      points: 10
+      reason: Restore-related title
+    - keyword: seed
+      points: 10
+      reason: Seed-related title
+    - keyword: claim
+      points: 5
+      reason: Claim-related title
+    - keyword: airdrop
+      points: 5
+      reason: Airdrop-related title
+
+browser:
+  exploration_targets:
+    - text: legacy wallet
+      priority: 1
+    - text: continue on legacy
+      priority: 1
+    - text: recover from seed
+      priority: 1
+    - text: kaspa ng
+      priority: 1
+    - text: go to
+      priority: 2
+    - text: continue
+      priority: 2
+    - text: wallet
+      priority: 1
+    - text: open wallet
+      priority: 1
+    - text: access wallet
+      priority: 1
+    - text: my wallet
+      priority: 1
+    - text: recover
+      priority: 1
+    - text: restore
+      priority: 1
+    - text: import
+      priority: 1
+    - text: recovery
+      priority: 1
+    - text: import existing
+      priority: 1
+    - text: create wallet
+      priority: 2
+    - text: new wallet
+      priority: 2
+    - text: create new wallet
+      priority: 2
+    - text: create
+      priority: 3
+    - text: 12-word
+      priority: 1
+    - text: 24-word
+      priority: 1
+    - text: 12 word
+      priority: 1
+    - text: 24 word
+      priority: 1
+    - text: 12 words
+      priority: 1
+    - text: 24 words
+      priority: 1
+    - text: mnemonic
+      priority: 1
+    - text: import mnemonic
+      priority: 1
+    - text: enter mnemonic
+      priority: 1
+    - text: seed phrase
+      priority: 1
+    - text: secret phrase
+      priority: 1
+    - text: next
+      priority: 2
+    - text: proceed
+      priority: 2
+    - text: connect
+      priority: 2
+    - text: connect wallet
+      priority: 1
+    - text: settings
+      priority: 3

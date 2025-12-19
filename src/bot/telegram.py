@@ -792,12 +792,7 @@ class SeedBusterBot:
             return
 
         domain_id = context.args[0]
-        domains = await self.database.get_recent_domains(limit=100)
-        target = None
-        for d in domains:
-            if self.evidence_store.get_domain_id(d["domain"]).startswith(domain_id):
-                target = d
-                break
+        target = await self.service.find_by_short_id(domain_id)
 
         if not target:
             await update.message.reply_text(f"Domain not found: {domain_id}")

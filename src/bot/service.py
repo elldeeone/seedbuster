@@ -184,7 +184,7 @@ class BotService:
                 return f"Failed to queue rescan: {exc}"
         return "Rescan unavailable."
 
-    async def _find_by_short_id(self, prefix: str):
+    async def find_by_short_id(self, prefix: str):
         domains = await self.database.get_recent_domains(limit=self._recent_cache_limit)
         for d in domains:
             try:
@@ -195,7 +195,7 @@ class BotService:
         return None
 
     async def mark_false_positive(self, short_id: str) -> str:
-        target = await self._find_by_short_id(short_id)
+        target = await self.find_by_short_id(short_id)
         if not target:
             return f"Domain not found: {short_id}"
         await self.database.mark_false_positive(target["id"])
@@ -205,14 +205,14 @@ class BotService:
         )
 
     async def acknowledge(self, short_id: str) -> str:
-        target = await self._find_by_short_id(short_id)
+        target = await self.find_by_short_id(short_id)
         if not target:
             return f"Domain not found: {short_id}"
         await self.database.update_domain_status(target["id"], DomainStatus.ANALYZED)
         return f"Acknowledged: `{target['domain']}`"
 
     async def defer(self, short_id: str) -> str:
-        target = await self._find_by_short_id(short_id)
+        target = await self.find_by_short_id(short_id)
         if not target:
             return f"Domain not found: {short_id}"
         await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
