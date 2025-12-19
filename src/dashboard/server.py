@@ -4647,7 +4647,21 @@ class DashboardServer:
         row = await self.database.get_domain_by_id(domain_id)
         if not row:
             raise web.HTTPNotFound(text="Domain not found")
-        return web.json_response({"domain": row})
+
+        reports = await self.database.get_reports_for_domain(domain_id)
+        evidence = {}
+        try:
+            domain_dir = self.evidence_dir / self.database.get_domain_dir_name(row["domain"])
+            evidence["html"] = f"/evidence/{domain_dir.name}/page.html" if (domain_dir / "page.html").exists() else None
+            evidence["analysis"] = f"/evidence/{domain_dir.name}/analysis.json" if (domain_dir / "analysis.json").exists() else None
+            evidence["screenshots"] = [
+                f"/evidence/{domain_dir.name}/{p.name}"
+                for p in sorted(domain_dir.glob("screenshot*.png"))
+            ]
+        except Exception:
+            evidence = {}
+
+        return web.json_response({"domain": row, "reports": reports, "evidence": evidence})
 
     async def _admin_api_submit(self, request: web.Request) -> web.Response:
         data = await request.json()
@@ -4681,6 +4695,29 @@ class DashboardServer:
             raise web.HTTPServiceUnavailable(text="Rescan not configured")
         self.rescan_callback(domain)
         return web.json_response({"status": "rescan_queued", "domain": domain})
+
+    async def _admin_api_report(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        domain_id = int(data.get("domain_id") or 0)
+        domain = (data.get("domain") or "").strip()
+        platforms_raw = data.get("platforms")
+        platforms = [p.strip().lower() for p in platforms_raw] if isinstance(platforms_raw, list) else None
+        force = bool(data.get("force", False))
+
+        if not domain and domain_id:
+            row = await self.database.get_domain_by_id(domain_id)
+            domain = str(row.get("domain") or "") if row else ""
+        if not domain_id and domain:
+            row = await self.database.get_domain(domain)
+            domain_id = int(row.get("id") or 0) if row else 0
+
+        if not domain_id or not domain:
+            raise web.HTTPBadRequest(text="domain_id/domain required")
+        if not self.report_callback:
+            raise web.HTTPServiceUnavailable(text="Report callback not configured")
+
+        await self.report_callback(domain_id, domain, platforms, force)
+        return web.json_response({"status": "report_enqueued", "domain": domain, "platforms": platforms})
 
 
     async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
