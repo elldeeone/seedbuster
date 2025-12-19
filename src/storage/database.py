@@ -593,7 +593,55 @@ class Database:
             )
             stats["last_24h"] = (await cursor.fetchone())["count"]
 
+            # Reporting stats
+            cursor = await self._connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM reports
+                GROUP BY status
+                """
+            )
+            report_counts = {row["status"]: row["count"] for row in await cursor.fetchall()}
+            stats["reports"] = report_counts
+
+            # Pending dashboard actions
+            cursor = await self._connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM dashboard_actions
+                GROUP BY status
+                """
+            )
+            action_counts = {row["status"]: row["count"] for row in await cursor.fetchall()}
+            stats["dashboard_actions"] = action_counts
+
             return stats
+
+    async def get_report_stats(self) -> dict:
+        """Return counts of reports by status."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM reports
+                GROUP BY status
+                """
+            )
+            rows = await cursor.fetchall()
+        return {row["status"]: row["count"] for row in rows}
+
+    async def get_dashboard_action_stats(self) -> dict:
+        """Return counts of dashboard actions by status."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM dashboard_actions
+                GROUP BY status
+                """
+            )
+            rows = await cursor.fetchall()
+        return {row["status"]: row["count"] for row in rows}
 
     async def domain_exists(self, domain: str) -> bool:
         """Check if domain already exists in database."""

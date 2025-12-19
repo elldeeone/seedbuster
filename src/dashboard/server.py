@@ -2525,6 +2525,8 @@ def _build_query_link(base: str, **params: object) -> str:
 def _render_stats(stats: dict) -> str:
     by_status = stats.get("by_status") or {}
     by_verdict = stats.get("by_verdict") or {}
+    by_reports = stats.get("reports") or {}
+    by_actions = stats.get("dashboard_actions") or {}
 
     def _breakdown(items: dict) -> str:
         if not items:
@@ -2560,9 +2562,34 @@ def _render_stats(stats: dict) -> str:
             {_breakdown(by_verdict)}
           </div>
         </div>
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Reports</div>
+            {_breakdown(by_reports)}
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Dashboard Actions</div>
+            {_breakdown(by_actions)}
+          </div>
+        </div>
+      </div>
+    "
+
+
+def _render_health(health_url: str) -> str:
+    if not health_url:
+        return ""
+    return f"""
+      <div class="sb-panel" style="border-color: rgba(88, 166, 255, 0.2);">
+        <div class="sb-panel-header" style="border-bottom: 1px solid var(--border-subtle);">
+          <span class="sb-panel-title">Health</span>
+          <a class="sb-link" href="{_escape(health_url)}" target="_blank" rel="noreferrer">View healthz</a>
+        </div>
+        <div class="sb-muted">Best-effort link to the pipeline health endpoint (if enabled).</div>
       </div>
     """
-
 
 def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
     if not domains:
@@ -3926,6 +3953,7 @@ class DashboardConfig:
     port: int = 8080
     admin_user: str = "admin"
     admin_password: str = ""
+    health_url: str = ""
 
 
 class DashboardServer:
@@ -4253,6 +4281,7 @@ class DashboardServer:
             body=(
                 _flash(msg, error=error)
                 + _render_stats(stats)
+                + _render_health(getattr(self.config, "health_url", ""))
                 + submit_panel
                 + _render_pending_reports(pending_reports, admin=True)
                 + _render_filters(status=status, verdict=verdict, q=q, admin=True, limit=limit, page=page)
