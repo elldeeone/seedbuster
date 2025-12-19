@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -59,7 +59,7 @@ class EvidenceStore:
         path = domain_dir / "analysis.json"
 
         # Add timestamp
-        analysis_data["saved_at"] = datetime.utcnow().isoformat()
+        analysis_data["saved_at"] = datetime.now(timezone.utc).isoformat()
 
         analysis_json = json.dumps(analysis_data, indent=2)
         await asyncio.to_thread(path.write_text, analysis_json, encoding="utf-8")
@@ -182,7 +182,7 @@ class EvidenceStore:
         import shutil
         from datetime import timedelta
 
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
         for domain_dir in self.evidence_dir.iterdir():
             if not domain_dir.is_dir():

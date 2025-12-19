@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
@@ -141,8 +141,8 @@ class ReportManager:
             return True
         # Compare naive timestamps in UTC-ish space (best-effort).
         if dt.tzinfo is None:
-            return dt <= datetime.utcnow()
-        return dt <= datetime.now(dt.tzinfo)
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt <= datetime.now(timezone.utc)
 
     @staticmethod
     def _build_manual_instructions_text(
@@ -1036,7 +1036,7 @@ class ReportManager:
             }
 
         results: dict[str, ReportResult] = {}
-        marker = f"{note} at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC (SeedBuster operator)"
+        marker = f"{note} at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC (SeedBuster operator)"
 
         for platform in target_platforms:
             latest = await self.database.get_latest_report(domain_id=domain_id, platform=platform)
@@ -1532,7 +1532,7 @@ To submit for real, run the command without --dry-run.
 
         out_dir = self._dry_run_email_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_platform = self._safe_filename_component(platform)
         safe_domain = self._safe_filename_component(domain)
         base = out_dir / f"{ts}_{safe_platform}_{safe_domain}"

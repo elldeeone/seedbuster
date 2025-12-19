@@ -5,7 +5,7 @@ import json
 from enum import Enum
 from pathlib import Path
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -643,9 +643,9 @@ class Database:
             if next_attempt_at is None:
                 # Store in a SQLite-friendly format so comparisons with CURRENT_TIMESTAMP
                 # behave as expected ("YYYY-MM-DD HH:MM:SS").
-                next_attempt_at = (datetime.utcnow() + timedelta(seconds=int(retry_after))).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+                next_attempt_at = (
+                    datetime.now(timezone.utc) + timedelta(seconds=int(retry_after))
+                ).strftime("%Y-%m-%d %H:%M:%S")
 
         async with self._lock:
             await self._connection.execute(
