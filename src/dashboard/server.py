@@ -1974,6 +1974,56 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         color: var(--accent-red);
       }}
 
+      /* Toasts */
+      .sb-toast-container {{
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        pointer-events: none;
+      }}
+
+      .sb-toast {{
+        pointer-events: auto;
+        min-width: 220px;
+        max-width: 360px;
+        padding: 12px 14px;
+        border-radius: var(--radius-lg);
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-default);
+        color: var(--text-primary);
+        box-shadow: var(--shadow-md);
+        font-family: var(--font-mono);
+        font-size: 13px;
+        animation: toastIn 0.2s ease;
+      }}
+
+      .sb-toast-success {{
+        background: var(--accent-green-subtle);
+        border-color: rgba(63, 185, 80, 0.4);
+        color: var(--accent-green);
+      }}
+
+      .sb-toast-error {{
+        background: var(--accent-red-subtle);
+        border-color: rgba(248, 81, 73, 0.4);
+        color: var(--accent-red);
+      }}
+
+      .sb-toast-hide {{
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 160ms ease, transform 160ms ease;
+      }}
+
+      @keyframes toastIn {{
+        from {{ opacity: 0; transform: translateY(6px); }}
+        to {{ opacity: 1; transform: translateY(0); }}
+      }}
+
       /* Utility */
       .sb-muted {{ color: var(--text-tertiary); }}
       .sb-text-secondary {{ color: var(--text-secondary); }}
@@ -2508,6 +2558,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
     </script>
   </head>
   <body>
+    <div id="sb-toast-container" class="sb-toast-container" aria-live="polite"></div>
     <div class="sb-container">
       <header class="sb-header">
         <div class="sb-brand">
@@ -4460,6 +4511,31 @@ reports()
         resp.text += f"""
         <script>
         (function() {{
+          const getToastContainer = () => {{
+            let el = document.getElementById('sb-toast-container');
+            if (!el) {{
+              el = document.createElement('div');
+              el.id = 'sb-toast-container';
+              el.className = 'sb-toast-container';
+              document.body.appendChild(el);
+            }}
+            return el;
+          }};
+
+          const showToast = (message, type = 'info') => {{
+            const container = getToastContainer();
+            const toast = document.createElement('div');
+            toast.className = 'sb-toast' + (type ? ' sb-toast-' + type : '');
+            toast.textContent = message;
+            container.appendChild(toast);
+            const dismiss = () => {{
+              toast.classList.add('sb-toast-hide');
+              setTimeout(() => toast.remove(), 220);
+            }};
+            toast.addEventListener('click', dismiss);
+            setTimeout(dismiss, 4000);
+          }};
+
           const cleanupForm = document.getElementById('cleanup-form');
           const cleanupResult = document.getElementById('cleanup-result');
           if (cleanupForm) {{
@@ -4476,11 +4552,16 @@ reports()
                 const data = await res.json();
                 if (res.ok) {{
                   cleanupResult.textContent = `Removed ${'{'}data.removed_dirs || 0{'}'} directories older than ${'{'}days{'}'} days.`;
+                  showToast(cleanupResult.textContent, 'success');
                 }} else {{
-                  cleanupResult.textContent = data.error || 'Cleanup failed';
+                  const msg = data.error || 'Cleanup failed';
+                  cleanupResult.textContent = msg;
+                  showToast(msg, 'error');
                 }}
               }} catch (err) {{
-                cleanupResult.textContent = 'Cleanup failed: ' + err;
+                const msg = 'Cleanup failed: ' + err;
+                cleanupResult.textContent = msg;
+                showToast(msg, 'error');
               }}
             }});
           }}
@@ -4505,9 +4586,9 @@ reports()
                 const msg = data.status === 'rescan_queued'
                   ? `Rescan queued for ${'{'}data.domain{'}'}`
                   : `Submitted ${'{'}data.domain || target{'}'}`;
-                alert(msg);
+                showToast(msg, 'success');
               }} catch (err) {{
-                alert('Submit failed: ' + err);
+                showToast('Submit failed: ' + err, 'error');
               }} finally {{
                 btn.disabled = false;
                 btn.textContent = 'Submit / Rescan';
@@ -4538,13 +4619,13 @@ reports()
             try {{
               if (type === 'rescan') {{
                 await postJSON(`/admin/api/domains/${'{'}domainId{'}'}/rescan`, {{ domain }});
-                alert(`Rescan queued for ${'{'}domain{'}'}`);
+                showToast(`Rescan queued for ${'{'}domain{'}'}`, 'success');
               }} else {{
                 await postJSON('/admin/api/report', {{ domain_id: parseInt(domainId, 10), domain }});
-                alert(`Report enqueued for ${'{'}domain{'}'}`);
+                showToast(`Report enqueued for ${'{'}domain{'}'}`, 'success');
               }}
             }} catch (err) {{
-              alert(type + ' failed: ' + err);
+              showToast(type + ' failed: ' + err, 'error');
             }} finally {{
               target.disabled = false;
             }}
