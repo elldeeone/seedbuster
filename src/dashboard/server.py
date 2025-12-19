@@ -2233,6 +2233,32 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       }}
     </style>
     <script>
+      // Toast helpers (shared)
+      function _sbToastContainer() {{
+        let el = document.getElementById('sb-toast-container');
+        if (!el) {{
+          el = document.createElement('div');
+          el.id = 'sb-toast-container';
+          el.className = 'sb-toast-container';
+          document.body.appendChild(el);
+        }}
+        return el;
+      }}
+
+      function sbToast(message, type) {{
+        const container = _sbToastContainer();
+        const toast = document.createElement('div');
+        toast.className = 'sb-toast' + (type ? ' sb-toast-' + type : '');
+        toast.textContent = message;
+        container.appendChild(toast);
+        const dismiss = () => {{
+          toast.classList.add('sb-toast-hide');
+          setTimeout(() => toast.remove(), 220);
+        }};
+        toast.addEventListener('click', dismiss);
+        setTimeout(dismiss, 4000);
+      }}
+
       // Copy field to clipboard
       function copyField(fieldId, btnId) {{
         const el = document.getElementById(fieldId);
@@ -2391,7 +2417,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
           updateFieldProgress();
         }}).catch(err => {{
           console.error('Copy failed:', err);
-          alert('Failed to copy. Please select and copy manually.');
+          sbToast('Failed to copy. Please select and copy manually.', 'error');
         }});
       }}
 
@@ -2482,11 +2508,11 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
               }}, 600);
             }}
           }} else {{
-            alert('Failed to mark as submitted. Please try again.');
+            sbToast('Failed to mark as submitted. Please try again.', 'error');
           }}
         }} catch (err) {{
           console.error('Error:', err);
-          alert('Failed to mark as submitted. Please try again.');
+          sbToast('Failed to mark as submitted. Please try again.', 'error');
         }} finally {{
           hideConfirmDialog(panelId);
           if (confirmBtn) {{
@@ -4511,29 +4537,10 @@ reports()
         resp.text += f"""
         <script>
         (function() {{
-          const getToastContainer = () => {{
-            let el = document.getElementById('sb-toast-container');
-            if (!el) {{
-              el = document.createElement('div');
-              el.id = 'sb-toast-container';
-              el.className = 'sb-toast-container';
-              document.body.appendChild(el);
-            }}
-            return el;
-          }};
-
           const showToast = (message, type = 'info') => {{
-            const container = getToastContainer();
-            const toast = document.createElement('div');
-            toast.className = 'sb-toast' + (type ? ' sb-toast-' + type : '');
-            toast.textContent = message;
-            container.appendChild(toast);
-            const dismiss = () => {{
-              toast.classList.add('sb-toast-hide');
-              setTimeout(() => toast.remove(), 220);
-            }};
-            toast.addEventListener('click', dismiss);
-            setTimeout(dismiss, 4000);
+            if (window.sbToast) return window.sbToast(message, type);
+            // Fallback
+            if (type === 'error') {{ console.error(message); }} else {{ console.log(message); }}
           }};
 
           const cleanupForm = document.getElementById('cleanup-form');
