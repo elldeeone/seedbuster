@@ -5,9 +5,12 @@ This is intentionally simple: server-rendered HTML, SQLite-backed, no JS framewo
 
 from __future__ import annotations
 
+import aiohttp
+import asyncio
 import base64
 import html
 import json
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,7 +18,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlencode, urlparse
 
-from aiohttp import web
+from aiohttp import web, ClientSession
 
 from ..storage.database import Database, DomainStatus, Verdict
 
@@ -51,6 +54,18 @@ def _try_relative_to(path: Path, base: Path) -> Path | None:
         return path.resolve().relative_to(base.resolve())
     except Exception:
         return None
+
+
+def _format_bytes(num: int) -> str:
+    """Human-readable bytes."""
+    step = 1024.0
+    units = ["B", "KB", "MB", "GB", "TB"]
+    n = float(num or 0)
+    for unit in units:
+        if n < step:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+        n /= step
+    return f"{n:.1f} PB"
 
 
 def _status_badge(value: str) -> str:
@@ -2574,20 +2589,46 @@ def _render_stats(stats: dict) -> str:
             {_breakdown(by_actions)}
           </div>
         </div>
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Evidence Storage</div>
+            <div class="sb-stat-value">{_escape(_format_bytes(stats.get("evidence_bytes", 0)))}</div>
+            <div class="sb-stat-meta">Approximate size of evidence directory</div>
+          </div>
+        </div>
       </div>
     "
 
 
-def _render_health(health_url: str) -> str:
+def _render_health(health_url: str, health: dict | None) -> str:
     if not health_url:
         return ""
+
+    status_line = "Unknown"
+    details = ""
+    if health:
+        if health.get("ok"):
+            status_line = "Healthy"
+        else:
+            status_line = "Unhealthy"
+        data = health.get("data") or {}
+        queue_bits = []
+        for key in ("discovery_queue_size", "analysis_queue_size", "pending_rescans", "domains_tracked"):
+            if isinstance(data, dict) and key in data:
+                queue_bits.append(f"{key.replace('_', ' ')}: {data.get(key)}")
+        if queue_bits:
+            details = "<br/>".join(_escape(bit) for bit in queue_bits)
+        elif health.get("error"):
+            details = _escape(health.get("error"))
+
     return f"""
       <div class="sb-panel" style="border-color: rgba(88, 166, 255, 0.2);">
         <div class="sb-panel-header" style="border-bottom: 1px solid var(--border-subtle);">
           <span class="sb-panel-title">Health</span>
           <a class="sb-link" href="{_escape(health_url)}" target="_blank" rel="noreferrer">View healthz</a>
         </div>
-        <div class="sb-muted">Best-effort link to the pipeline health endpoint (if enabled).</div>
+        <div><b>{_escape(status_line)}</b></div>
+        <div class="sb-muted">{details or "Best-effort link to the pipeline health endpoint (if enabled)."}</div>
       </div>
     """
 
@@ -4049,6 +4090,33 @@ class DashboardServer:
             enriched.append(enriched_member)
         return enriched
 
+    def _compute_evidence_bytes(self) -> int:
+        total = 0
+        for root, _dirs, files in os.walk(self.evidence_dir):
+            for name in files:
+                try:
+                    total += (Path(root) / name).stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    async def _fetch_health_status(self) -> dict | None:
+        url = getattr(self.config, "health_url", "") or ""
+        url = url.strip()
+        if not url:
+            return None
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    try:
+                        payload = await resp.json(content_type=None)
+                    except Exception:
+                        payload = {"body": await resp.text()}
+                    return {"ok": resp.status == 200, "status": payload.get("status") if isinstance(payload, dict) else None, "data": payload}
+        except Exception as exc:  # pragma: no cover - best-effort
+            return {"ok": False, "error": str(exc)}
+
     def _register_routes(self) -> None:
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
@@ -4069,6 +4137,11 @@ class DashboardServer:
         self._app.router.add_post("/admin/domains/{domain_id}/rescan", self._admin_rescan)
         self._app.router.add_post("/admin/domains/{domain_id}/false_positive", self._admin_false_positive)
         # New evidence/report generation routes
+        self._app.router.add_get("/admin/api/domains", self._admin_api_domains)
+        self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
+        self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
+        self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
+        
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
         self._app.router.add_post("/admin/domains/{domain_id}/preview", self._admin_domain_preview)
@@ -4163,6 +4236,8 @@ class DashboardServer:
         offset = (page - 1) * limit
 
         stats = await self.database.get_stats()
+        stats["evidence_bytes"] = self._compute_evidence_bytes()
+        health_status = await self._fetch_health_status()
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
@@ -4281,7 +4356,7 @@ class DashboardServer:
             body=(
                 _flash(msg, error=error)
                 + _render_stats(stats)
-                + _render_health(getattr(self.config, "health_url", ""))
+                + _render_health(getattr(self.config, "health_url", ""), health_status)
                 + submit_panel
                 + _render_pending_reports(pending_reports, admin=True)
                 + _render_filters(status=status, verdict=verdict, q=q, admin=True, limit=limit, page=page)
@@ -4544,6 +4619,69 @@ class DashboardServer:
     # -------------------------------------------------------------------------
     # Domain PDF/Package/Preview Routes
     # -------------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Admin API (JSON) endpoints for web-first interactions
+    # ------------------------------------------------------------------
+    async def _admin_api_domains(self, request: web.Request) -> web.Response:
+        status = (request.query.get("status") or "").strip().lower()
+        verdict = (request.query.get("verdict") or "").strip().lower()
+        q = (request.query.get("q") or "").strip().lower()
+        limit = _coerce_int(request.query.get("limit"), default=50, min_value=1, max_value=500)
+        page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
+        offset = (page - 1) * limit
+
+        domains = await self.database.list_domains(
+            limit=limit,
+            offset=offset,
+            status=status or None,
+            verdict=verdict or None,
+            query=q or None,
+        )
+        return web.json_response({"domains": domains, "page": page, "limit": limit, "count": len(domains)})
+
+    async def _admin_api_domain(self, request: web.Request) -> web.Response:
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+        row = await self.database.get_domain_by_id(domain_id)
+        if not row:
+            raise web.HTTPNotFound(text="Domain not found")
+        return web.json_response({"domain": row})
+
+    async def _admin_api_submit(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        target = (data.get("target") or "").strip()
+        domain = _extract_hostname(target)
+        if not domain:
+            raise web.HTTPBadRequest(text="Invalid domain/URL")
+
+        existing = await self.database.get_domain(domain)
+        if existing:
+            if self.rescan_callback:
+                self.rescan_callback(domain)
+            return web.json_response({"status": "rescan_queued", "domain": domain})
+
+        if not self.submit_callback:
+            raise web.HTTPServiceUnavailable(text="Submit not configured")
+
+        self.submit_callback(domain)
+        return web.json_response({"status": "submitted", "domain": domain})
+
+    async def _admin_api_rescan(self, request: web.Request) -> web.Response:
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        domain = (request.match_info.get("domain") or "").strip()
+        if not domain and domain_id:
+            row = await self.database.get_domain_by_id(domain_id)
+            domain = str(row.get("domain") or "") if row else ""
+        if not domain:
+            raise web.HTTPBadRequest(text="domain not found")
+
+        if not self.rescan_callback:
+            raise web.HTTPServiceUnavailable(text="Rescan not configured")
+        self.rescan_callback(domain)
+        return web.json_response({"status": "rescan_queued", "domain": domain})
+
 
     async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
         """Generate and download PDF report for a domain."""
