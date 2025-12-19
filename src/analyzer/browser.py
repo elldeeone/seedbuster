@@ -278,11 +278,13 @@ class BrowserAnalyzer:
         self,
         timeout: int = 30,
         headless: bool = True,
+        exploration_targets: list[dict] | None = None,
     ):
         self.timeout = timeout * 1000  # Convert to ms
         self.headless = headless
         self._playwright = None
         self._browser: Optional[Browser] = None
+        self.exploration_targets = exploration_targets or list(EXPLORATION_TARGETS)
 
     async def start(self):
         """Start the browser instance."""
@@ -786,9 +788,9 @@ class BrowserAnalyzer:
                 continue
 
             # Second pass: check remaining targets by priority
-            sorted_targets = sorted(EXPLORATION_TARGETS, key=lambda x: x["priority"])
+            sorted_targets = sorted(self.exploration_targets, key=lambda x: x.get("priority", 1))
             for target in sorted_targets:
-                target_text = target["text"].lower()
+                target_text = str(target.get("text", "")).lower()
                 if target_text in explored_texts:
                     continue
 

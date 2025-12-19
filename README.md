@@ -143,6 +143,8 @@ Paths:
 - `DATA_DIR` (default: `./data`)
 - `EVIDENCE_DIR` (default: `./data/evidence`)
 - `CONFIG_DIR` (default: `./config`)
+- Health/metrics endpoint: `HEALTH_HOST`/`HEALTH_PORT`/`HEALTH_ENABLED` (default `0.0.0.0:8081`), exposes `/healthz` and a tiny `/metrics`.
+- Heuristics tuning: copy `config/heuristics.example.yaml` to `config/heuristics.yaml` to override target patterns, keyword weights, exploration targets, etc. without code changes.
 
 Dashboard (optional):
 - Run separately via `seedbuster-dashboard` (or `python -m src.dashboard.main`)

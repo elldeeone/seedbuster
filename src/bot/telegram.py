@@ -16,6 +16,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from .formatters import AlertFormatter, AlertData
+from .service import BotService, SubmitResponse, BulkSubmitResult, KeyboardButton
 from ..storage.database import Database, DomainStatus, Verdict
 from ..storage.evidence import EvidenceStore
 from ..reporter.base import ReportStatus
@@ -67,6 +68,14 @@ class SeedBusterBot:
         self._allowlist_add_callback: Optional[Callable[[str], None]] = None
         self._allowlist_remove_callback: Optional[Callable[[str], None]] = None
         self._is_running = True
+        self.service = BotService(
+            database=database,
+            evidence_store=evidence_store,
+            report_manager=report_manager,
+            queue_size_callback=None,
+            submit_callback=submit_callback,
+            rescan_callback=None,
+        )
 
     @staticmethod
     def _extract_first_url(text: str) -> Optional[str]:
@@ -162,6 +171,16 @@ class SeedBusterBot:
                 logger.warning(f"Allowlist remove callback failed for {normalized}: {e}")
 
         return True
+
+    @staticmethod
+    def _to_markup(button_rows: list[list[KeyboardButton]] | None):
+        """Convert plain button rows into Telegram markup."""
+        if not button_rows:
+            return None
+        rows = []
+        for row in button_rows:
+            rows.append([InlineKeyboardButton(btn.text, callback_data=btn.callback_data) for btn in row])
+        return InlineKeyboardMarkup(rows)
 
     def _format_report_status_message(self, domain: str, reports: list[dict]) -> str:
         """Format report status lines with helpful retry/manual context."""
@@ -291,10 +310,12 @@ class SeedBusterBot:
     def set_queue_size_callback(self, callback: Callable[[], int]):
         """Set callback to get current queue size."""
         self._queue_size_callback = callback
+        self.service.queue_size_callback = callback
 
     def set_rescan_callback(self, callback: Callable[[str], None]):
         """Set callback to trigger manual rescan."""
         self._rescan_callback = callback
+        self.service.rescan_callback = callback
 
     def set_allowlist_callbacks(
         self,
@@ -635,14 +656,7 @@ class SeedBusterBot:
         """Handle /status command."""
         if not self._is_authorized(update):
             return
-        stats = await self.database.get_stats()
-        queue_size = self._queue_size_callback() if self._queue_size_callback else 0
-
-        message = AlertFormatter.format_status(
-            stats=stats,
-            queue_size=queue_size,
-            is_running=self._is_running,
-        )
+        message = await self.service.format_status(is_running=self._is_running)
 
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
@@ -658,8 +672,7 @@ class SeedBusterBot:
             except ValueError:
                 pass
 
-        domains = await self.database.get_recent_domains(limit=limit)
-        message = AlertFormatter.format_recent(domains, limit)
+        message = await self.service.format_recent(limit=limit)
 
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
@@ -667,8 +680,8 @@ class SeedBusterBot:
         """Handle /stats command."""
         if not self._is_authorized(update):
             return
-        # Same as status for now
-        await self._cmd_status(update, context)
+        message = await self.service.format_status(is_running=self._is_running)
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_submit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /submit command."""
@@ -685,103 +698,13 @@ class SeedBusterBot:
             )
             return
 
-        url_input = context.args[0].lower()
-        # Clean up URL - remove protocol but keep path
-        url_input = url_input.replace("https://", "").replace("http://", "")
-
-        # Split into domain and path
-        if "/" in url_input:
-            domain = url_input.split("/")[0]
-            path = "/" + "/".join(url_input.split("/")[1:])
-            full_url = f"{domain}{path}"
-        else:
-            domain = url_input
-            path = ""
-            full_url = domain
-
-        # Check if domain was already analyzed (check both domain and full URL)
-        existing = await self.database.get_domain(full_url) or await self.database.get_domain(domain)
-        if existing:
-            # Domain exists - show previous results with options
-            existing_domain = existing.get("domain", domain)
-            score = existing.get("analysis_score") or 0
-            verdict = existing.get("verdict", "unknown")
-            status = existing.get("status", "unknown")
-            analyzed_at = existing.get("analyzed_at", "unknown")
-            domain_id = self.evidence_store.get_domain_id(existing_domain)
-
-            # Build keyboard - add "Scan This Path" if path differs
-            path_note = ""
-            has_new_path = path and path not in existing_domain
-
-            if has_new_path:
-                # Path differs - offer to scan the specific path
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            f"🔍 Scan {path}",
-                            callback_data=f"scanpath_{full_url[:50]}"  # Truncate for callback limit
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Rescan Base",
-                            callback_data=f"rescan_{domain_id}"
-                        ),
-                        InlineKeyboardButton(
-                            "📁 Evidence",
-                            callback_data=f"evidence_{domain_id}"
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "📊 Report Status",
-                            callback_data=f"status_{domain_id}"
-                        ),
-                    ],
-                ])
-                path_note = f"\n\n_Path `{path}` not yet analyzed._"
-            else:
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Rescan Now",
-                            callback_data=f"rescan_{domain_id}"
-                        ),
-                        InlineKeyboardButton(
-                            "📁 Evidence",
-                            callback_data=f"evidence_{domain_id}"
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "📊 Report Status",
-                            callback_data=f"status_{domain_id}"
-                        ),
-                    ],
-                ])
-
-            await update.message.reply_text(
-                f"*Domain already analyzed:* `{existing_domain}`\n\n"
-                f"Score: {score}/100 ({verdict})\n"
-                f"Status: {status}\n"
-                f"Analyzed: {analyzed_at}{path_note}\n\n"
-                "Choose an action below:",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=keyboard,
-            )
-            return
-
-        # New domain/URL - submit for analysis (pass full URL with path)
-        if self.submit_callback:
-            self.submit_callback(full_url)
-            display = full_url if path else domain
-            await update.message.reply_text(
-                f"Submitted `{display}` for analysis.",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        else:
-            await update.message.reply_text("Submission not available.")
+        response = await self.service.submit(context.args[0])
+        markup = self._to_markup(response.buttons)
+        await update.message.reply_text(
+            response.message,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=markup,
+        )
 
     async def _cmd_bulk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /bulk command for submitting many domains at once."""
@@ -802,77 +725,10 @@ class SeedBusterBot:
             )
             return
 
-        # Parse first token per line for table pastes, plus any whitespace-separated tokens.
-        candidates: list[str] = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Skip obvious headers
-            if line.lower().startswith(("url", "age", "size", "ips", "asns")):
-                continue
-            # Take first column to support urlscan "similar pages" tables.
-            first = line.split()[0]
-            candidates.append(first)
-
-        if not candidates:
-            candidates = raw.split()
-
-        def normalize(token: str) -> str | None:
-            t = (token or "").strip().strip("`'\"(),;")
-            if not t:
-                return None
-            t = t.replace("https://", "").replace("http://", "")
-            t = t.strip().strip("`'\"(),;")
-            if not t or "." not in t:
-                return None
-            return t.lower()
-
-        normalized: list[str] = []
-        seen = set()
-        invalid = 0
-        for token in candidates:
-            norm = normalize(token)
-            if not norm:
-                invalid += 1
-                continue
-            if norm in seen:
-                continue
-            seen.add(norm)
-            normalized.append(norm)
-
-        if not normalized:
-            await update.message.reply_text(
-                "No valid domains found. Paste domains/URLs separated by spaces/newlines.",
-            )
-            return
-
-        if not self.submit_callback:
-            await update.message.reply_text("Submission not available.")
-            return
-
-        queued = 0
-        skipped_existing = 0
-        # Avoid huge spam submissions in one go; Telegram message limits will usually cap this anyway.
-        max_batch = 200
-        if len(normalized) > max_batch:
-            normalized = normalized[:max_batch]
-
-        for domain in normalized:
-            try:
-                if await self.database.domain_exists(domain):
-                    skipped_existing += 1
-                    continue
-                self.submit_callback(domain)
-                queued += 1
-            except Exception:
-                # Best-effort: continue bulk submission even if one entry errors.
-                continue
-
+        result = await self.service.bulk_submit(raw)
         await update.message.reply_text(
-            f"Queued {queued} domains for analysis.\n"
-            f"Skipped existing: {skipped_existing}\n"
-            f"Ignored invalid/empty: {invalid}",
+            "Bulk submission complete.\n\n" + result.summary(),
+            parse_mode=ParseMode.MARKDOWN,
         )
 
     async def _cmd_ack(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -944,19 +800,8 @@ class SeedBusterBot:
         # Remove protocol if included
         domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
 
-        if not self._rescan_callback:
-            await update.message.reply_text("Rescan not available - callback not configured.")
-            return
-
-        await update.message.reply_text(
-            f"\U0001F504 Triggering rescan for `{domain}`...",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-
-        try:
-            self._rescan_callback(domain)
-        except Exception as e:
-            await update.message.reply_text(f"Rescan failed: {e}")
+        message = self.service.rescan(domain)
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_fp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /fp (false positive) command."""

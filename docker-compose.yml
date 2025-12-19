@@ -38,7 +38,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "python", "-c", "import src.main; print('ok')"]
+      test: ["CMD", "python", "-c", "import os,urllib.request;url=f'http://127.0.0.1:{os.environ.get('\"'\"'HEALTH_PORT'\"'\"','\"'\"'8081'\"'\"')}/healthz';print(urllib.request.urlopen(url, timeout=5).read().decode())"]
       interval: 30s
       timeout: 10s
       retries: 3

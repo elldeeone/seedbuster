@@ -5,8 +5,9 @@ import json
 import logging
 import signal
 import sys
+from datetime import datetime, timezone
 
-from .config import load_config, Config
+from .config import load_config, Config, validate_config
 from .discovery import (
     DomainScorer,
     AsyncCertstreamListener,
@@ -25,6 +26,8 @@ from .bot import SeedBusterBot
 from .bot.formatters import AlertData, TemporalInfo, ClusterInfo, LearningInfo
 from .reporter import ReportManager
 from .reporter.evidence_packager import EvidencePackager
+from .monitoring.health import HealthServer
+from .pipeline.analysis import AnalysisEngine
 
 # Configure logging
 logging.basicConfig(
@@ -46,6 +49,7 @@ class SeedBusterPipeline:
         self._tasks: list[asyncio.Task] = []
         self._stop_lock = asyncio.Lock()
         self._stop_task: asyncio.Task | None = None
+        self._started_at = datetime.now(timezone.utc)
 
         # Queues for pipeline stages
         # Discovery queue items can be a domain string or a dict with metadata:
@@ -62,8 +66,13 @@ class SeedBusterPipeline:
             denylist=config.denylist,
             suspicious_tlds=config.suspicious_tlds,
             min_score_to_analyze=config.domain_score_threshold,
+            keyword_weights=config.domain_keyword_weights,
+            substitutions=config.substitutions,
         )
-        self.browser = BrowserAnalyzer(timeout=config.analysis_timeout)
+        self.browser = BrowserAnalyzer(
+            timeout=config.analysis_timeout,
+            exploration_targets=config.exploration_targets,
+        )
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
         self.temporal = TemporalTracker(config.data_dir / "temporal")
         self.cluster_manager = ThreatClusterManager(config.data_dir / "clusters")
@@ -76,6 +85,8 @@ class SeedBusterPipeline:
             fingerprints_dir=config.data_dir / "fingerprints",
             keywords=config.keywords,
             analysis_threshold=config.analysis_score_threshold,
+            seed_keywords=config.seed_keywords,
+            title_keywords=config.title_keywords,
         )
         self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
 
@@ -117,6 +128,26 @@ class SeedBusterPipeline:
             report_min_score=config.report_min_score,
             cluster_manager=self.cluster_manager,
             evidence_packager=self.evidence_packager,
+        )
+        self.analysis_engine = AnalysisEngine(
+            config=config,
+            database=self.database,
+            evidence_store=self.evidence_store,
+            browser=self.browser,
+            infrastructure=self.infrastructure,
+            temporal=self.temporal,
+            external_intel=self.external_intel,
+            detector=self.detector,
+            cluster_manager=self.cluster_manager,
+            threat_intel_updater=self.threat_intel_updater,
+            report_manager=self.report_manager,
+            bot=self.bot,
+        )
+        self.health_server = HealthServer(
+            host=config.health_host,
+            port=config.health_port,
+            status_provider=self._health_snapshot,
+            enabled=config.health_enabled,
         )
         self.ct_listener: AsyncCertstreamListener = None
         self.search_discovery: SearchDiscovery | None = None
@@ -186,6 +217,54 @@ class SeedBusterPipeline:
         self.config.allowlist.discard(value)
         logger.info(f"Removed from allowlist via Telegram: {value}")
 
+    async def _resume_pending_domains(self) -> None:
+        """Resume any pending domains from previous runs."""
+        try:
+            pending = await self.database.get_pending_domains(limit=None)
+        except Exception as exc:
+            logger.warning("Failed to load pending domains on startup: %s", exc)
+            return
+
+        if not pending:
+            return
+
+        resumed = 0
+        for row in pending:
+            try:
+                domain_id = int(row.get("id") or 0)
+                domain = str(row.get("domain") or "").strip()
+                domain_score = int(row.get("domain_score") or 0)
+                if not domain or not domain_id:
+                    continue
+                await self._analysis_queue.put({
+                    "id": domain_id,
+                    "domain": domain,
+                    "domain_score": domain_score,
+                    "reasons": [],
+                })
+                resumed += 1
+            except asyncio.QueueFull:
+                logger.warning("Analysis queue full while resuming pending domains")
+                break
+            except Exception:
+                continue
+
+        if resumed:
+            logger.info("Re-queued %s pending domains from previous run", resumed)
+
+    def _health_snapshot(self) -> dict:
+        """Provide a lightweight status dict for health endpoints."""
+        uptime = (datetime.now(timezone.utc) - self._started_at).total_seconds()
+        temporal_stats = self.temporal.get_stats()
+        return {
+            "status": "ok" if self._running else "stopped",
+            "uptime_seconds": round(uptime, 1),
+            "discovery_queue_size": self._discovery_queue.qsize(),
+            "analysis_queue_size": self._analysis_queue.qsize(),
+            "pending_rescans": temporal_stats.get("pending_rescans", 0),
+            "domains_tracked": temporal_stats.get("domains_tracked", 0),
+        }
+
     async def start(self):
         """Start all pipeline components."""
         logger.info("Starting SeedBuster pipeline...")
@@ -194,6 +273,8 @@ class SeedBusterPipeline:
         # Connect to database
         await self.database.connect()
         logger.info("Database connected")
+
+        await self._resume_pending_domains()
 
         # Start browser
         await self.browser.start()
@@ -272,6 +353,9 @@ class SeedBusterPipeline:
         if self.search_discovery:
             self._tasks.append(asyncio.create_task(self.search_discovery.run_loop()))
 
+        await self.health_server.start()
+        logger.info("Health server started")
+
         # Send startup notification
         startup_note = "Monitoring CT logs for suspicious domains..."
         if self.search_discovery:
@@ -312,6 +396,7 @@ class SeedBusterPipeline:
 
         await self.bot.send_message("*SeedBuster stopping*...")
         await self.bot.stop()
+        await self.health_server.stop()
         await self.browser.stop()
         await self.infrastructure.close()
         await self.database.close()
@@ -545,13 +630,13 @@ class SeedBusterPipeline:
 
                     if domain_record:
                         async with sem:
-                            await self._analyze_domain(domain_record, scan_reason=scan_reason)
+                            await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
                     else:
                         logger.warning(f"Rescan: domain not found in DB: {domain}")
                 else:
                     # Regular task from discovery
                     async with sem:
-                        await self._analyze_domain(task)
+                        await self.analysis_engine.analyze(task)
 
             except Exception as e:
                 logger.error(f"Analysis worker error: {e}")
@@ -610,563 +695,17 @@ class SeedBusterPipeline:
         logger.info("Report retry worker stopped")
 
     async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
-        """Analyze a single domain."""
-        import ipaddress
-        import socket
-        from urllib.parse import urlparse
-
-        domain_id = task["id"]
-        domain = task["domain"]
-        is_rescan = scan_reason != ScanReason.INITIAL
-        domain_score = task["domain_score"]
-        domain_reasons = task.get("reasons", [])
-
-        logger.info(f"Analyzing: {domain}")
-
-        browser_result = None
-        infra_result = None
-        external_result = None
-        detection = None
-        cluster_result = None
-        urlscan_result_url: str | None = None
-
-        try:
-            # Update status
-            await self.database.update_domain_status(domain_id, DomainStatus.ANALYZING)
-
-            # Quick DNS check first (extract hostname only, ignore path/scheme)
-            raw_target = (domain or "").strip()
-            parsed_target = urlparse(raw_target if "://" in raw_target else f"http://{raw_target}")
-            hostname = (parsed_target.hostname or raw_target.split("/")[0]).strip()
-
-            dns_resolves = True
-            resolved_ips: set[str] = set()
-            non_global_ips: set[str] = set()
-
-            try:
-                # IP literal
-                ip_obj = ipaddress.ip_address(hostname)
-                resolved_ips.add(str(ip_obj))
-            except ValueError:
-                try:
-                    addrinfos = await asyncio.to_thread(
-                        socket.getaddrinfo,
-                        hostname,
-                        None,
-                        socket.AF_UNSPEC,
-                        socket.SOCK_STREAM,
-                    )
-                    resolved_ips = {sockaddr[0] for *_rest, sockaddr in addrinfos}
-                except socket.gaierror:
-                    dns_resolves = False
-            except socket.gaierror:
-                dns_resolves = False
-                logger.info(f"Domain does not resolve: {hostname}")
-
-            if dns_resolves and resolved_ips:
-                for ip in resolved_ips:
-                    try:
-                        if not ipaddress.ip_address(ip).is_global:
-                            non_global_ips.add(ip)
-                    except ValueError:
-                        continue
-
-            if not dns_resolves or not resolved_ips:
-                # Domain doesn't exist - report based on domain score alone
-                verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
-                analysis_score = domain_score
-                reasons = domain_reasons + ["Domain does not resolve (not registered or offline)"]
-
-                # Save analysis
-                await self.evidence_store.save_analysis(domain, {
-                    "domain": domain,
-                    "score": analysis_score,
-                    "verdict": verdict.value,
-                    "reasons": reasons,
-                    "dns_resolves": False,
-                })
-                self.temporal.add_snapshot(
-                    domain=domain,
-                    score=analysis_score,
-                    verdict=verdict.value,
-                    reasons=reasons,
-                    scan_reason=scan_reason,
-                )
-            elif non_global_ips:
-                # SSRF hardening: never browse or connect to private/local targets.
-                verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
-                analysis_score = domain_score
-                reasons = domain_reasons + [
-                    (
-                        "Analysis blocked (SSRF guard): "
-                        f"{hostname} resolves to private/local IP(s): {', '.join(sorted(non_global_ips))}"
-                    )
-                ]
-
-                await self.evidence_store.save_analysis(domain, {
-                    "domain": domain,
-                    "score": analysis_score,
-                    "verdict": verdict.value,
-                    "reasons": reasons,
-                    "dns_resolves": True,
-                    "resolved_ips": sorted(resolved_ips),
-                    "blocked_for_ssrf": True,
-                })
-                self.temporal.add_snapshot(
-                    domain=domain,
-                    score=analysis_score,
-                    verdict=verdict.value,
-                    reasons=reasons,
-                    scan_reason=scan_reason,
-                )
-            else:
-                # Run browser, infrastructure, and external intel in PARALLEL
-                browser_result, infra_result, external_result = await asyncio.gather(
-                    self.browser.analyze(domain),
-                    self.infrastructure.analyze(domain),
-                    self.external_intel.query_all(domain),
-                    return_exceptions=True,
-                )
-
-                if isinstance(browser_result, Exception):
-                    browser_result = None
-                if isinstance(infra_result, Exception):
-                    logger.warning(f"Infrastructure analysis failed for {domain}: {infra_result}")
-                    infra_result = None
-                if isinstance(external_result, Exception):
-                    logger.warning(f"External intel query failed for {domain}: {external_result}")
-                    external_result = None
-
-                if infra_result:
-                    logger.info(
-                        f"Infrastructure analysis for {domain}: "
-                        f"score={infra_result.risk_score}, "
-                        f"reasons={len(infra_result.risk_reasons)}"
-                    )
-                if external_result and external_result.score > 0:
-                    logger.info(
-                        f"External intel for {domain}: "
-                        f"score={external_result.score}, "
-                        f"reasons={len(external_result.reasons)}"
-                    )
-                if external_result and external_result.urlscan and external_result.urlscan.result_url:
-                    urlscan_result_url = external_result.urlscan.result_url
-
-                if not browser_result or not browser_result.success:
-                    error = getattr(browser_result, "error", None) or "Analysis failed"
-                    logger.warning(f"Failed to analyze {domain}: {error}")
-                    verdict = Verdict.LOW
-                    analysis_score = min(
-                        100,
-                        domain_score + (external_result.score if external_result else 0),
-                    )
-                    reasons = domain_reasons + [error] + (external_result.reasons if external_result else [])
-
-                    await self.evidence_store.save_analysis(domain, {
-                        "domain": domain,
-                        "score": analysis_score,
-                        "verdict": verdict.value,
-                        "reasons": reasons,
-                        "dns_resolves": True,
-                        "resolved_ips": sorted(resolved_ips),
-                        "analysis_error": error,
-                        "external_intel": external_result.to_dict() if external_result else None,
-                    })
-                    self.temporal.add_snapshot(
-                        domain=domain,
-                        html=getattr(browser_result, "html", None),
-                        title=getattr(browser_result, "title", "") or "",
-                        screenshot=getattr(browser_result, "screenshot", None),
-                        score=analysis_score,
-                        verdict=verdict.value,
-                        reasons=reasons,
-                        external_domains=getattr(browser_result, "external_requests", None) or [],
-                        blocked_requests=len(getattr(browser_result, "blocked_requests", []) or []),
-                        tls_age_days=infra_result.tls.age_days if infra_result and infra_result.tls else -1,
-                        hosting_provider=(
-                            infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else ""
-                        ),
-                        scan_reason=scan_reason,
-                    )
-                else:
-                    # Save all screenshots for comparison
-                    has_early = (
-                        hasattr(browser_result, 'screenshot_early') and
-                        browser_result.screenshot_early
-                    )
-                    has_blocked = (
-                        hasattr(browser_result, 'blocked_requests') and
-                        browser_result.blocked_requests
-                    )
-
-                    if has_early:
-                        # Save early screenshot (before JS-based evasion)
-                        await self.evidence_store.save_screenshot(domain, browser_result.screenshot_early, suffix="_early")
-                        if has_blocked:
-                            logger.info(f"Saved early screenshot for {domain} (anti-bot blocked)")
-
-                    if browser_result.screenshot:
-                        # Save final screenshot
-                        await self.evidence_store.save_screenshot(domain, browser_result.screenshot)
-
-                    # Clear stale exploration screenshots from previous scans (directory is reused).
-                    removed = self.evidence_store.clear_exploration_screenshots(domain)
-                    if removed:
-                        logger.info(f"Cleared {removed} old exploration screenshots for {domain}")
-
-                    # Save exploration screenshots (especially ones with suspicious content)
-                    # Note: Check exploration_steps directly, not 'explored' flag
-                    # Steps are captured incrementally, but 'explored' is only set at the end
-                    # If exploration fails partway through, we still want to save captured steps
-                    if browser_result.exploration_steps:
-                        for i, step in enumerate(browser_result.exploration_steps):
-                            if step.screenshot and step.success:
-                                # Check if browser detected this as a seed form
-                                # (includes textarea with mnemonic text, not just 12+ inputs)
-                                if getattr(step, "is_seed_form", False):
-                                    suffix = f"_exploration_seedform_{i+1}"
-                                    logger.info(f"Saving seed form screenshot: {step.button_text} (mnemonic form detected)")
-                                else:
-                                    # Fallback: count text inputs
-                                    text_inputs = [
-                                        inp for inp in step.input_fields
-                                        if inp.get("type") in ("text", "password", "")
-                                    ]
-                                    if len(text_inputs) >= 12:
-                                        suffix = f"_exploration_seedform_{i+1}"
-                                        logger.info(f"Saving seed form screenshot: {step.button_text} ({len(text_inputs)} inputs)")
-                                    elif len(text_inputs) >= 6:
-                                        suffix = f"_exploration_suspicious_{i+1}"
-                                    else:
-                                        suffix = f"_exploration_{i+1}"
-                                await self.evidence_store.save_screenshot(domain, step.screenshot, suffix=suffix)
-
-                    if browser_result.html:
-                        await self.evidence_store.save_html(domain, browser_result.html)
-
-                    # Get temporal analysis (if we have previous snapshots)
-                    temporal_analysis = self.temporal.analyze(domain)
-
-                    # Detect phishing signals (including all intelligence layers)
-                    detection = self.detector.detect(
-                        browser_result,
-                        domain_score,
-                        infrastructure=infra_result,
-                        temporal=temporal_analysis,
-                    )
-
-                    # Add external intelligence results
-                    external_score = external_result.score if external_result else 0
-                    external_reasons = external_result.reasons if external_result else []
-                    analysis_score = min(100, detection.score + external_score)
-                    reasons = detection.reasons + external_reasons
-
-                    # Optional: submit a fresh urlscan.io scan when cloaking is suspected/confirmed.
-                    # This provides a different scanner vantage point, which can help validate
-                    # what content is being served when our own IP/browser fingerprint is burned.
-                    urlscan_submission = None
-                    blocked_requests = getattr(browser_result, "blocked_requests", []) or []
-                    cloaking_suspected = len(blocked_requests) > 0
-                    if (
-                        self.config.urlscan_submit_enabled
-                        and self.config.urlscan_api_key
-                        and analysis_score >= self.config.analysis_score_threshold
-                        and (cloaking_suspected or temporal_analysis.cloaking_detected)
-                    ):
-                        target_url = domain if "://" in domain else f"https://{domain}"
-                        urlscan_submission = await self.external_intel.submit_urlscan_scan(
-                            target_url,
-                            visibility=self.config.urlscan_submit_visibility,
-                            tags=["seedbuster", "cloaking"],
-                        )
-                        if urlscan_submission.submitted and urlscan_submission.result_url:
-                            reasons.append(
-                                f"EXTERNAL: urlscan.io active scan submitted: {urlscan_submission.result_url}"
-                            )
-                            urlscan_result_url = urlscan_submission.result_url
-
-                    # If urlscan also saw a decoy, an older scan may have captured the wallet UI.
-                    # Prefer the best historical scan that contains wallet/seed UI text.
-                    if analysis_score >= self.config.analysis_score_threshold and (
-                        cloaking_suspected or temporal_analysis.cloaking_detected
-                    ):
-                        best = await self.external_intel.query_urlscan_best(domain)
-                        if best.found and best.result_url and best.result_url != urlscan_result_url:
-                            reasons.append(
-                                f"EXTERNAL: urlscan.io historical scan with wallet/seed UI: {best.result_url}"
-                            )
-                            urlscan_result_url = best.result_url
-
-                    # Save temporal snapshot for future comparisons
-                    self.temporal.add_snapshot(
-                        domain=domain,
-                        html=browser_result.html,
-                        title=browser_result.title or "",
-                        screenshot=browser_result.screenshot,
-                        score=analysis_score,
-                        verdict=detection.verdict,
-                        reasons=reasons,
-                        external_domains=browser_result.external_requests,
-                        blocked_requests=len(getattr(browser_result, 'blocked_requests', []) or []),
-                        tls_age_days=infra_result.tls.age_days if infra_result and infra_result.tls else -1,
-                        hosting_provider=(
-                            infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else ""
-                        ),
-                        scan_reason=scan_reason,
-                    )
-
-                    # Cluster analysis - link related phishing sites
-                    cluster_result = analyze_for_clustering(
-                        manager=self.cluster_manager,
-                        domain=domain,
-                        detection_result={
-                            "score": analysis_score,
-                            "suspicious_endpoints": detection.suspicious_endpoints,
-                            "kit_matches": detection.kit_matches,
-                        },
-                        infrastructure={
-                            "nameservers": infra_result.domain_info.nameservers if infra_result.domain_info else [],
-                            "asn": str(infra_result.hosting.asn) if infra_result.hosting else None,
-                            "ip": infra_result.hosting.ip_address if infra_result.hosting else None,
-                        } if infra_result else None,
-                    )
-                    if cluster_result.related_domains:
-                        logger.info(f"Clustering: {domain} linked to {len(cluster_result.related_domains)} related sites")
-
-                    # Convert verdict string to enum
-                    verdict = Verdict(detection.verdict)
-
-                    # Derive reporting-friendly fields (also used by ReportManager fallbacks).
-                    hosting_provider = (
-                        infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else None
-                    )
-
-                    backend_domains: list[str] = []
-                    seen_backend_hosts: set[str] = set()
-                    for endpoint in detection.suspicious_endpoints or []:
-                        if not isinstance(endpoint, str):
-                            continue
-                        raw = endpoint.strip()
-                        if not raw:
-                            continue
-                        try:
-                            parsed = urlparse(raw if "://" in raw else f"https://{raw}")
-                            host = (parsed.hostname or "").strip().lower()
-                        except Exception:
-                            host = ""
-                        if not host or host in seen_backend_hosts:
-                            continue
-                        seen_backend_hosts.add(host)
-                        backend_domains.append(host)
-
-                    api_keys_found = [
-                        r for r in (reasons or []) if isinstance(r, str) and ("api key" in r.lower() or "apikey" in r.lower())
-                    ]
-
-                    # Save analysis results
-                    await self.evidence_store.save_analysis(domain, {
-                        "domain": domain,
-                        "final_url": getattr(browser_result, "final_url", None),
-                        "hosting_provider": hosting_provider,
-                        "backend_domains": backend_domains,
-                        "api_keys_found": api_keys_found,
-                        "score": analysis_score,
-                        "verdict": verdict.value,
-                        "reasons": reasons,
-                        "visual_match": detection.visual_match_score,
-                        "seed_form": detection.seed_form_detected,
-                        "suspicious_endpoints": detection.suspicious_endpoints,
-                        "infrastructure": {
-                            "score": detection.infrastructure_score,
-                            "reasons": detection.infrastructure_reasons,
-                            "tls_age_days": infra_result.tls.age_days if infra_result and infra_result.tls else None,
-                            "domain_age_days": (
-                                infra_result.domain_info.age_days
-                                if infra_result and infra_result.domain_info
-                                else None
-                            ),
-                            "hosting_provider": (
-                                infra_result.hosting.hosting_provider
-                                if infra_result and infra_result.hosting
-                                else None
-                            ),
-                            "uses_privacy_dns": (
-                                infra_result.domain_info.uses_privacy_dns
-                                if infra_result and infra_result.domain_info
-                                else False
-                            ),
-                        },
-                        "code_analysis": {
-                            "score": detection.code_score,
-                            "reasons": detection.code_reasons,
-                            "kit_matches": detection.kit_matches,
-                        },
-                        "temporal": {
-                            "score": detection.temporal_score,
-                            "reasons": detection.temporal_reasons,
-                            "cloaking_detected": detection.cloaking_detected,
-                            "snapshots_count": temporal_analysis.snapshots_count,
-                        },
-                        "cluster": {
-                            "cluster_id": cluster_result.cluster_id,
-                            "cluster_name": cluster_result.cluster_name,
-                            "is_new_cluster": cluster_result.is_new_cluster,
-                            "related_domains": cluster_result.related_domains,
-                            "confidence": cluster_result.confidence,
-                        },
-                        "external_intel": external_result.to_dict() if external_result else None,
-                        "urlscan_submission": (
-                            {
-                                "scan_id": urlscan_submission.scan_id,
-                                "result_url": urlscan_submission.result_url,
-                                "visibility": self.config.urlscan_submit_visibility,
-                            }
-                            if urlscan_submission and urlscan_submission.submitted
-                            else None
-                        ),
-                    })
-
-            # Update database
-            evidence_path = str(self.evidence_store.get_evidence_path(domain))
-            await self.database.update_domain_analysis(
-                domain_id=domain_id,
-                analysis_score=analysis_score,
-                verdict=verdict,
-                verdict_reasons="\n".join(reasons),
-                evidence_path=evidence_path,
-            )
-
-            # Send alert if suspicious
-            if analysis_score >= self.config.analysis_score_threshold:
-                # When reporting requires approval, pre-create pending report rows so status views
-                # show per-platform "awaiting approval" before any submission attempts.
-                if self.config.report_require_approval and analysis_score >= self.config.report_min_score:
-                    try:
-                        await self.report_manager.ensure_pending_reports(domain_id=domain_id)
-                    except Exception as e:
-                        logger.warning(f"Could not create pending report rows for {domain}: {e}")
-
-                screenshot_path = self.evidence_store.get_screenshot_path(domain)
-                screenshot_paths = self.evidence_store.get_all_screenshot_paths(domain)
-
-                # Determine if cloaking is suspected (anti-bot service blocked)
-                blocked_requests = getattr(browser_result, 'blocked_requests', []) or []
-                cloaking_suspected = len(blocked_requests) > 0
-
-                temporal_analysis = self.temporal.analyze(domain)
-
-                # Create temporal info for alert
-                # Note: After add_snapshot, snapshots_count is already incremented
-                # So we check > 1 (not <= 1) for initial scan determination
-                snapshots = self.temporal.get_snapshots(domain)
-                snapshot_count = len(snapshots)
-
-                temporal_info = TemporalInfo(
-                    is_initial_scan=not is_rescan,
-                    scan_number=snapshot_count,
-                    total_scans=5,  # Initial + 4 rescans
-                    rescans_scheduled=not is_rescan,
-                    cloaking_suspected=cloaking_suspected,
-                    cloaking_confirmed=temporal_analysis.cloaking_detected,
-                    cloaking_confidence=temporal_analysis.cloaking_confidence,
-                    previous_score=None,  # Will be set on rescans
-                )
-
-                # Get previous score for rescans
-                if is_rescan and len(snapshots) >= 2:
-                    temporal_info.previous_score = snapshots[-2].score
-
-                # Create cluster info for alert
-                cluster_info = None
-                if cluster_result:
-                    cluster_info = ClusterInfo(
-                        cluster_id=cluster_result.cluster_id,
-                        cluster_name=cluster_result.cluster_name,
-                        is_new_cluster=cluster_result.is_new_cluster,
-                        related_domains=cluster_result.related_domains,
-                        confidence=cluster_result.confidence,
-                    )
-
-                # Auto-learn BEFORE sending alert (so we can include status in alert)
-                learning_info = None
-                if detection and cluster_result:
-                    matched_backends = self.threat_intel_updater.extract_matched_backends(
-                        detection.suspicious_endpoints
-                    )
-                    matched_api_keys = self.threat_intel_updater.extract_matched_api_keys(reasons)
-
-                    if self.threat_intel_updater.should_learn(
-                        domain=domain,
-                        analysis_score=analysis_score,
-                        cluster_confidence=cluster_result.confidence,
-                        cluster_name=cluster_result.cluster_name,
-                        matched_backends=matched_backends,
-                        matched_api_keys=matched_api_keys,
-                    ):
-                        learning_result = self.threat_intel_updater.learn(
-                            domain=domain,
-                            analysis_score=analysis_score,
-                            cluster_confidence=cluster_result.confidence,
-                            cluster_name=cluster_result.cluster_name,
-                            matched_backends=matched_backends,
-                            matched_api_keys=matched_api_keys,
-                        )
-                        if learning_result.updated:
-                            logger.info(f"Threat intel auto-updated: {learning_result.message}")
-                            self.detector.reload_threat_intel()
-                            learning_info = LearningInfo(
-                                learned=True,
-                                version=learning_result.version,
-                                added_to_frontends=learning_result.added_to_frontends,
-                                added_to_api_keys=learning_result.added_to_api_keys,
-                            )
-
-                await self.bot.send_alert(AlertData(
-                    domain=domain,
-                    domain_id=self.evidence_store.get_domain_id(domain),
-                    verdict=verdict.value,
-                    score=analysis_score,
-                    reasons=reasons,
-                    screenshot_path=str(screenshot_path) if screenshot_path else None,
-                    screenshot_paths=[str(p) for p in screenshot_paths] if screenshot_paths else None,
-                    evidence_path=evidence_path,
-                    urlscan_result_url=urlscan_result_url,
-                    temporal=temporal_info,
-                    cluster=cluster_info,
-                    seed_form_found=detection.seed_form_detected if detection else False,
-                    learning=learning_info,
-                ))
-
-            # Optional: auto-report when approval is disabled.
-            if (
-                not self.config.report_require_approval
-                and scan_reason == ScanReason.INITIAL
-                and analysis_score >= self.config.report_min_score
-                and browser_result
-                and getattr(browser_result, "success", False)
-                and self.report_manager.get_available_platforms()
-            ):
-                results = await self.report_manager.report_domain(domain_id=domain_id, domain=domain)
-                summary = self.report_manager.format_results_summary(results)
-                await self.bot.send_message(f"Auto-report results for `{domain}`:\n\n{summary}")
-
-            logger.info(f"Completed: {domain} (verdict={verdict.value}, score={analysis_score})")
-
-        except Exception as e:
-            logger.error(f"Error analyzing {domain}: {e}")
-            await self.database.update_domain_status(domain_id, DomainStatus.PENDING)
-
+        """Delegate to AnalysisEngine (moved to pipeline.analysis)."""
+        await self.analysis_engine.analyze(task, scan_reason=scan_reason)
 
 async def run_pipeline():
     """Run the SeedBuster pipeline."""
     config = load_config()
 
-    # Validate config
-    if not config.telegram_bot_token:
-        logger.error("TELEGRAM_BOT_TOKEN not set")
-        sys.exit(1)
-    if not config.telegram_chat_id:
-        logger.error("TELEGRAM_CHAT_ID not set")
+    validation_errors = validate_config(config)
+    if validation_errors:
+        for err in validation_errors:
+            logger.error(err)
         sys.exit(1)
 
     pipeline = SeedBusterPipeline(config)

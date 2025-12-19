@@ -16,6 +16,7 @@ from .threat_intel import ThreatIntelLoader
 from .infrastructure import InfrastructureResult
 from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 from .temporal import TemporalAnalysis
+from .rules import DetectionRule, DetectionContext, RuleResult
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,155 @@ class DetectionResult:
     cloaking_detected: bool = False
 
 
+class VisualMatchRule:
+    name = "visual_match"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score = 0
+        reasons: list[str] = []
+        metadata: dict = {}
+
+        if context.browser_result.screenshot:
+            visual_score, matched = detector._check_visual_match(context.browser_result.screenshot)
+            metadata["visual_match_score"] = visual_score
+            metadata["matched_fingerprint"] = matched
+
+            if visual_score >= 80:
+                score += 40
+                reasons.append(f"Visual match to {matched}: {visual_score:.0f}%")
+            elif visual_score >= 60:
+                score += 20
+                reasons.append(f"Partial visual match to {matched}: {visual_score:.0f}%")
+
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
+
+
+class SeedFormRule:
+    name = "seed_form"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score, reasons = detector._detect_seed_form(context.browser_result)
+        metadata = {
+            "seed_form_detected": score > 0,
+            "seed_input_count": detector._count_seed_inputs(context.browser_result),
+        }
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
+
+
+class KeywordRule:
+    name = "keywords"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score, reasons = detector._detect_keywords(context.browser_result.html or "")
+        return RuleResult(self.name, score=score, reasons=reasons)
+
+
+class NetworkExfilRule:
+    name = "network_exfil"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score, reasons, endpoints = detector._detect_exfiltration(context.browser_result)
+        metadata = {"suspicious_endpoints": endpoints}
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
+
+
+class DomainScoreRule:
+    name = "domain_score"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score = 0
+        reasons: list[str] = []
+        domain_score = context.domain_score
+        if domain_score >= 50:
+            score += 15
+            reasons.append(f"High domain suspicion score: {domain_score}")
+        elif domain_score >= 30:
+            score += 10
+            reasons.append(f"Moderate domain suspicion score: {domain_score}")
+        return RuleResult(self.name, score=score, reasons=reasons)
+
+
+class TitleRule:
+    name = "title_keywords"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score, reasons = detector._check_title(context.browser_result.title or "")
+        return RuleResult(self.name, score=score, reasons=reasons)
+
+
+class EvasionRule:
+    name = "evasion"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score, reasons = detector._detect_evasion(context.browser_result)
+        return RuleResult(self.name, score=score, reasons=reasons)
+
+
+class InfrastructureRule:
+    name = "infrastructure"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score = 0
+        reasons: list[str] = []
+        metadata: dict = {}
+        if context.infrastructure:
+            score, reasons = detector._score_infrastructure(context.infrastructure)
+            metadata["infrastructure_score"] = score
+            metadata["infrastructure_reasons"] = reasons
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
+
+
+class CodeRule:
+    name = "code_analysis"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        code_result: CodeAnalysisResult = detector._analyze_code(context.browser_result)
+        if code_result.risk_score <= 0:
+            return RuleResult(self.name)
+
+        metadata = {
+            "code_score": code_result.risk_score,
+            "code_reasons": code_result.risk_reasons,
+            "kit_matches": [kit.kit_name for kit in code_result.kit_matches],
+        }
+        return RuleResult(
+            self.name,
+            score=code_result.risk_score,
+            reasons=list(code_result.risk_reasons),
+            metadata=metadata,
+        )
+
+
+class TemporalRule:
+    name = "temporal"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        if not context.temporal or context.temporal.temporal_risk_score <= 0:
+            return RuleResult(self.name)
+
+        metadata = {
+            "temporal_score": context.temporal.temporal_risk_score,
+            "temporal_reasons": context.temporal.temporal_reasons,
+            "cloaking_detected": context.temporal.cloaking_detected,
+        }
+        return RuleResult(
+            self.name,
+            score=context.temporal.temporal_risk_score,
+            reasons=list(context.temporal.temporal_reasons),
+            metadata=metadata,
+        )
+
+
+class ExplorationRule:
+    name = "exploration"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        if not context.browser_result.exploration_steps:
+            return RuleResult(self.name)
+        score, reasons = detector._analyze_exploration(context.browser_result)
+        return RuleResult(self.name, score=score, reasons=reasons)
+
+
 class PhishingDetector:
     """Detects phishing characteristics in analyzed websites."""
 
@@ -83,11 +233,23 @@ class PhishingDetector:
         config_dir: Optional[Path] = None,
         keywords: list[str] = None,
         analysis_threshold: int = 70,
+        seed_keywords: list[str] | None = None,
+        title_keywords: list[tuple[str, int, str]] | None = None,
     ):
         self.fingerprints_dir = fingerprints_dir
         self.fingerprints_dir.mkdir(parents=True, exist_ok=True)
         self.keywords = keywords or []
         self.analysis_threshold = analysis_threshold
+        self.seed_keywords = seed_keywords or list(self.SEED_KEYWORDS)
+        self.title_keywords = title_keywords or [
+            ("kaspa", 10, "Kaspa-related title"),
+            ("wallet", 5, "Wallet-related title"),
+            ("recovery", 10, "Recovery-related title"),
+            ("restore", 10, "Restore-related title"),
+            ("seed", 10, "Seed-related title"),
+            ("claim", 5, "Claim-related title"),
+            ("airdrop", 5, "Airdrop-related title"),
+        ]
         self._fingerprints: dict[str, imagehash.ImageHash] = {}
         self._load_fingerprints()
 
@@ -98,6 +260,19 @@ class PhishingDetector:
 
         # Code analyzer for JS/HTML analysis
         self._code_analyzer = CodeAnalyzer()
+        self._rules: list[DetectionRule] = [
+            VisualMatchRule(),
+            SeedFormRule(),
+            KeywordRule(),
+            NetworkExfilRule(),
+            DomainScoreRule(),
+            TitleRule(),
+            EvasionRule(),
+            InfrastructureRule(),
+            CodeRule(),
+            TemporalRule(),
+            ExplorationRule(),
+        ]
 
     def reload_threat_intel(self) -> str:
         """Reload threat intelligence from file (hot reload). Returns version."""
@@ -135,7 +310,7 @@ class PhishingDetector:
         infrastructure: Optional[InfrastructureResult] = None,
         temporal: Optional[TemporalAnalysis] = None,
     ) -> DetectionResult:
-        """Analyze browser results for phishing indicators."""
+        """Analyze browser results for phishing indicators via rule engine."""
         result = DetectionResult(
             domain=browser_result.domain,
             score=0,
@@ -147,90 +322,58 @@ class PhishingDetector:
             result.reasons.append(f"Analysis failed: {browser_result.error}")
             return result
 
-        # 1. Visual fingerprint comparison
-        if browser_result.screenshot:
-            visual_score, matched = self._check_visual_match(browser_result.screenshot)
-            result.visual_match_score = visual_score
-            result.matched_fingerprint = matched
+        context = DetectionContext(
+            browser_result=browser_result,
+            domain_score=domain_score,
+            infrastructure=infrastructure,
+            temporal=temporal,
+        )
 
-            if visual_score >= 80:
-                result.score += 40
-                result.reasons.append(f"Visual match to {matched}: {visual_score:.0f}%")
-            elif visual_score >= 60:
-                result.score += 20
-                result.reasons.append(f"Partial visual match to {matched}: {visual_score:.0f}%")
+        total_score = 0
+        combined_reasons: list[str] = []
+        metadata: dict = {}
 
-        # 2. Seed phrase form detection
-        seed_score, seed_reasons = self._detect_seed_form(browser_result)
-        result.score += seed_score
-        result.reasons.extend(seed_reasons)
-        result.seed_form_detected = seed_score > 0
-        result.seed_input_count = self._count_seed_inputs(browser_result)
+        for rule in self._rules:
+            try:
+                rule_result = rule.apply(self, context)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Rule %s failed for %s: %s", getattr(rule, "name", "unknown"), browser_result.domain, exc)
+                continue
 
-        # 3. Keyword detection in HTML
-        keyword_score, keyword_reasons = self._detect_keywords(browser_result.html or "")
-        result.score += keyword_score
-        result.reasons.extend(keyword_reasons)
+            total_score += rule_result.score
+            combined_reasons.extend(rule_result.reasons or [])
 
-        # 4. Network exfiltration detection
-        network_score, network_reasons, endpoints = self._detect_exfiltration(browser_result)
-        result.score += network_score
-        result.reasons.extend(network_reasons)
-        result.suspicious_endpoints = endpoints
+            for key, value in (rule_result.metadata or {}).items():
+                if value is None:
+                    continue
+                if isinstance(value, list):
+                    existing = metadata.get(key, [])
+                    if isinstance(existing, list):
+                        metadata[key] = existing + value
+                    else:
+                        metadata[key] = list(value)
+                else:
+                    metadata[key] = value
 
-        # 5. Add domain score contribution
-        if domain_score >= 50:
-            result.score += 15
-            result.reasons.append(f"High domain suspicion score: {domain_score}")
-        elif domain_score >= 30:
-            result.score += 10
-            result.reasons.append(f"Moderate domain suspicion score: {domain_score}")
-
-        # 6. Suspicious page title/content
-        title_score, title_reasons = self._check_title(browser_result.title or "")
-        result.score += title_score
-        result.reasons.extend(title_reasons)
-
-        # 7. Anti-bot evasion detection
-        evasion_score, evasion_reasons = self._detect_evasion(browser_result)
-        result.score += evasion_score
-        result.reasons.extend(evasion_reasons)
-
-        # 8. Infrastructure intelligence
-        if infrastructure:
-            infra_score, infra_reasons = self._score_infrastructure(infrastructure)
-            result.score += infra_score
-            result.infrastructure_score = infra_score
-            result.infrastructure_reasons = infra_reasons
-            result.reasons.extend(infra_reasons)
-
-        # 9. Code analysis (JS fingerprinting, obfuscation, kit signatures)
-        code_result = self._analyze_code(browser_result)
-        if code_result.risk_score > 0:
-            result.score += code_result.risk_score
-            result.code_score = code_result.risk_score
-            result.code_reasons = code_result.risk_reasons
-            result.kit_matches = [kit.kit_name for kit in code_result.kit_matches]
-            result.reasons.extend(code_result.risk_reasons)
-
-        # 10. Temporal analysis (cloaking detection, behavioral patterns)
-        if temporal and temporal.temporal_risk_score > 0:
-            result.score += temporal.temporal_risk_score
-            result.temporal_score = temporal.temporal_risk_score
-            result.temporal_reasons = temporal.temporal_reasons
-            result.cloaking_detected = temporal.cloaking_detected
-            result.reasons.extend(temporal.temporal_reasons)
-
-        # 11. Exploration results (click-through discovered forms)
-        # Note: steps may exist even if exploration didn't complete and `explored` wasn't set.
-        if browser_result.exploration_steps:
-            explore_score, explore_reasons = self._analyze_exploration(browser_result)
-            result.score += explore_score
-            result.reasons.extend(explore_reasons)
+        # Apply metadata to result
+        result.visual_match_score = metadata.get("visual_match_score") or 0.0
+        result.matched_fingerprint = metadata.get("matched_fingerprint")
+        result.seed_form_detected = bool(metadata.get("seed_form_detected", False))
+        result.seed_input_count = int(metadata.get("seed_input_count", 0) or 0)
+        result.suspicious_endpoints = metadata.get("suspicious_endpoints", []) or []
+        result.infrastructure_score = int(metadata.get("infrastructure_score", 0) or 0)
+        result.infrastructure_reasons = metadata.get("infrastructure_reasons", []) or []
+        result.code_score = int(metadata.get("code_score", 0) or 0)
+        result.code_reasons = metadata.get("code_reasons", []) or []
+        result.kit_matches = metadata.get("kit_matches", []) or []
+        result.temporal_score = int(metadata.get("temporal_score", 0) or 0)
+        result.temporal_reasons = metadata.get("temporal_reasons", []) or []
+        result.cloaking_detected = bool(metadata.get("cloaking_detected", False))
 
         # Cap and classify
-        result.score = min(result.score, 100)
+        result.score = min(total_score, 100)
         result.confidence = result.score / 100.0
+        result.reasons = combined_reasons
 
         if result.score >= 70:
             result.verdict = "high"
@@ -351,7 +494,7 @@ class PhishingDetector:
         html_lower = html.lower()
 
         found_keywords = []
-        for pattern in self.SEED_KEYWORDS:
+        for pattern in self.seed_keywords:
             if re.search(pattern, html_lower, re.I):
                 found_keywords.append(pattern.replace(r"\s*", " ").replace(r"\s+", " "))
 
@@ -516,17 +659,7 @@ class PhishingDetector:
         reasons = []
         title_lower = title.lower()
 
-        suspicious_titles = [
-            ("kaspa", 10, "Kaspa-related title"),
-            ("wallet", 5, "Wallet-related title"),
-            ("recovery", 10, "Recovery-related title"),
-            ("restore", 10, "Restore-related title"),
-            ("seed", 10, "Seed-related title"),
-            ("claim", 5, "Claim-related title"),
-            ("airdrop", 5, "Airdrop-related title"),
-        ]
-
-        for keyword, points, reason in suspicious_titles:
+        for keyword, points, reason in self.title_keywords:
             if keyword in title_lower:
                 score += points
                 reasons.append(reason)

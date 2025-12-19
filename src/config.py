@@ -1,11 +1,15 @@
 """Configuration management for SeedBuster."""
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Set
 
+import yaml
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SEARCH_EXCLUDE_DOMAINS: set[str] = {
@@ -37,6 +41,97 @@ DEFAULT_SEARCH_EXCLUDE_DOMAINS: set[str] = {
     "apple.com",
 }
 
+# Default heuristics for scoring/detection/exploration. These can be overridden
+# via config/heuristics.yaml without touching code.
+DEFAULT_DOMAIN_KEYWORDS: list[tuple[str, int]] = [
+    ("wallet", 10),
+    ("recover", 15),
+    ("seed", 15),
+    ("restore", 10),
+    ("login", 5),
+    ("secure", 5),
+    ("official", 10),
+    ("verify", 10),
+    ("claim", 10),
+    ("airdrop", 10),
+]
+
+DEFAULT_TITLE_KEYWORDS: list[tuple[str, int, str]] = [
+    ("kaspa", 10, "Kaspa-related title"),
+    ("wallet", 5, "Wallet-related title"),
+    ("recovery", 10, "Recovery-related title"),
+    ("restore", 10, "Restore-related title"),
+    ("seed", 10, "Seed-related title"),
+    ("claim", 5, "Claim-related title"),
+    ("airdrop", 5, "Airdrop-related title"),
+]
+
+DEFAULT_SEED_KEYWORDS: list[str] = [
+    r"recovery\s*phrase",
+    r"seed\s*phrase",
+    r"mnemonic",
+    r"secret\s*phrase",
+    r"backup\s*phrase",
+    r"12\s*words?",
+    r"24\s*words?",
+    r"enter\s*(your\s*)?seed",
+    r"restore\s*wallet",
+    r"import\s*wallet",
+    r"recover\s*wallet",
+    r"enter\s*mnemonic",
+    r"word\s*#?\d+",
+    r"recovery\s*words?",
+]
+
+DEFAULT_EXPLORATION_TARGETS: list[dict] = [
+    {"text": "legacy wallet", "priority": 1},
+    {"text": "continue on legacy", "priority": 1},
+    {"text": "recover from seed", "priority": 1},
+    {"text": "kaspa ng", "priority": 1},
+    {"text": "go to", "priority": 2},
+    {"text": "continue", "priority": 2},
+    {"text": "wallet", "priority": 1},
+    {"text": "open wallet", "priority": 1},
+    {"text": "access wallet", "priority": 1},
+    {"text": "my wallet", "priority": 1},
+    {"text": "recover", "priority": 1},
+    {"text": "restore", "priority": 1},
+    {"text": "import", "priority": 1},
+    {"text": "recovery", "priority": 1},
+    {"text": "import existing", "priority": 1},
+    {"text": "create wallet", "priority": 2},
+    {"text": "new wallet", "priority": 2},
+    {"text": "create new wallet", "priority": 2},
+    {"text": "create", "priority": 3},
+    {"text": "12-word", "priority": 1},
+    {"text": "24-word", "priority": 1},
+    {"text": "12 word", "priority": 1},
+    {"text": "24 word", "priority": 1},
+    {"text": "12 words", "priority": 1},
+    {"text": "24 words", "priority": 1},
+    {"text": "mnemonic", "priority": 1},
+    {"text": "import mnemonic", "priority": 1},
+    {"text": "enter mnemonic", "priority": 1},
+    {"text": "seed phrase", "priority": 1},
+    {"text": "secret phrase", "priority": 1},
+    {"text": "continue", "priority": 2},
+    {"text": "next", "priority": 2},
+    {"text": "proceed", "priority": 2},
+    {"text": "connect", "priority": 2},
+    {"text": "connect wallet", "priority": 1},
+    {"text": "settings", "priority": 3},
+]
+
+DEFAULT_SUBSTITUTIONS: dict[str, str] = {
+    "4": "a",
+    "3": "e",
+    "1": "i",
+    "0": "o",
+    "5": "s",
+    "@": "a",
+    "$": "s",
+}
+
 
 @dataclass
 class Config:
@@ -51,6 +146,9 @@ class Config:
     dashboard_port: int = 8080
     dashboard_admin_user: str = "admin"
     dashboard_admin_password: str = ""
+    health_host: str = "0.0.0.0"
+    health_port: int = 8081
+    health_enabled: bool = True
 
     # Detection thresholds
     domain_score_threshold: int = 30
@@ -126,6 +224,19 @@ class Config:
     denylist: Set[str] = field(default_factory=set)
     keywords: list[str] = field(default_factory=list)
 
+    # Heuristics (override via config/heuristics.yaml)
+    domain_keyword_weights: list[tuple[str, int]] = field(
+        default_factory=lambda: list(DEFAULT_DOMAIN_KEYWORDS)
+    )
+    substitutions: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUBSTITUTIONS))
+    seed_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_SEED_KEYWORDS))
+    title_keywords: list[tuple[str, int, str]] = field(
+        default_factory=lambda: list(DEFAULT_TITLE_KEYWORDS)
+    )
+    exploration_targets: list[dict] = field(
+        default_factory=lambda: list(DEFAULT_EXPLORATION_TARGETS)
+    )
+
     # Target patterns for domain matching
     target_patterns: list[str] = field(
         default_factory=lambda: [
@@ -193,6 +304,83 @@ class Config:
         return items
 
 
+def _load_heuristics(config_dir: Path) -> dict:
+    """Load heuristic overrides from config/heuristics.yaml (optional)."""
+    path = Path(config_dir or ".") / "heuristics.yaml"
+    if not path.exists():
+        return {}
+
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception as exc:
+        logger.warning("Failed to parse heuristics.yaml: %s", exc)
+        return {}
+
+    def _coerce_keyword_weights(raw, default):
+        items: list[tuple[str, int]] = []
+        for entry in raw or []:
+            if not isinstance(entry, dict):
+                continue
+            keyword = str(entry.get("keyword") or "").strip()
+            try:
+                points = int(entry.get("points"))
+            except Exception:
+                continue
+            if keyword:
+                items.append((keyword, points))
+        return items or default
+
+    def _coerce_title_keywords(raw, default):
+        items: list[tuple[str, int, str]] = []
+        for entry in raw or []:
+            if not isinstance(entry, dict):
+                continue
+            keyword = str(entry.get("keyword") or "").strip()
+            try:
+                points = int(entry.get("points"))
+            except Exception:
+                continue
+            reason = str(entry.get("reason") or "").strip() or f"{keyword} match"
+            if keyword:
+                items.append((keyword, points, reason))
+        return items or default
+
+    def _coerce_exploration_targets(raw, default):
+        items: list[dict] = []
+        for entry in raw or []:
+            if not isinstance(entry, dict):
+                continue
+            text = str(entry.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                priority = int(entry.get("priority", 1))
+            except Exception:
+                priority = 1
+            items.append({"text": text, "priority": priority})
+        return items or default
+
+    domain_cfg = data.get("domain", {}) if isinstance(data, dict) else {}
+    detection_cfg = data.get("detection", {}) if isinstance(data, dict) else {}
+    browser_cfg = data.get("browser", {}) if isinstance(data, dict) else {}
+
+    return {
+        "target_patterns": domain_cfg.get("target_patterns"),
+        "suspicious_tlds": domain_cfg.get("suspicious_tlds"),
+        "domain_keyword_weights": _coerce_keyword_weights(
+            domain_cfg.get("keywords"), list(DEFAULT_DOMAIN_KEYWORDS)
+        ),
+        "substitutions": domain_cfg.get("substitutions"),
+        "seed_keywords": detection_cfg.get("seed_keywords"),
+        "title_keywords": _coerce_title_keywords(
+            detection_cfg.get("title_keywords"), list(DEFAULT_TITLE_KEYWORDS)
+        ),
+        "exploration_targets": _coerce_exploration_targets(
+            browser_cfg.get("exploration_targets"), list(DEFAULT_EXPLORATION_TARGETS)
+        ),
+    }
+
+
 def load_config() -> Config:
     """Load configuration from environment variables."""
     load_dotenv()
@@ -211,6 +399,18 @@ def load_config() -> Config:
         exclude = {d.strip().lower() for d in exclude_str.split(",") if d.strip()}
         search_kwargs["search_discovery_exclude_domains"] = set(DEFAULT_SEARCH_EXCLUDE_DOMAINS) | exclude
 
+    heuristics = _load_heuristics(Path(os.getenv("CONFIG_DIR", "./config")))
+    target_patterns = (
+        heuristics.get("target_patterns")
+        if isinstance(heuristics.get("target_patterns"), list)
+        else None
+    )
+    suspicious_tlds = (
+        heuristics.get("suspicious_tlds")
+        if isinstance(heuristics.get("suspicious_tlds"), (list, set, tuple))
+        else None
+    )
+
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -218,6 +418,9 @@ def load_config() -> Config:
         dashboard_port=int(os.getenv("DASHBOARD_PORT", "8080")),
         dashboard_admin_user=os.getenv("DASHBOARD_ADMIN_USER", "admin"),
         dashboard_admin_password=os.getenv("DASHBOARD_ADMIN_PASSWORD", ""),
+        health_host=os.getenv("HEALTH_HOST", "0.0.0.0"),
+        health_port=int(os.getenv("HEALTH_PORT", "8081")),
+        health_enabled=os.getenv("HEALTH_ENABLED", "true").lower() == "true",
         domain_score_threshold=int(os.getenv("DOMAIN_SCORE_THRESHOLD", "30")),
         analysis_score_threshold=int(os.getenv("ANALYSIS_SCORE_THRESHOLD", "70")),
         phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
@@ -254,4 +457,52 @@ def load_config() -> Config:
         data_dir=Path(os.getenv("DATA_DIR", "./data")),
         evidence_dir=Path(os.getenv("EVIDENCE_DIR", "./data/evidence")),
         config_dir=Path(os.getenv("CONFIG_DIR", "./config")),
+        target_patterns=target_patterns or [
+            "kaspa",
+            "kaspanet",
+            "kaspawallet",
+            "kasware",
+            "kaspapay",
+        ],
+        suspicious_tlds=set(suspicious_tlds) if suspicious_tlds else {
+            "xyz",
+            "top",
+            "click",
+            "online",
+            "site",
+            "website",
+            "link",
+            "club",
+            "fun",
+            "icu",
+            "buzz",
+            "quest",
+        },
+        domain_keyword_weights=heuristics.get("domain_keyword_weights", list(DEFAULT_DOMAIN_KEYWORDS)),
+        substitutions=heuristics.get("substitutions", dict(DEFAULT_SUBSTITUTIONS)) or dict(DEFAULT_SUBSTITUTIONS),
+        seed_keywords=heuristics.get("seed_keywords", list(DEFAULT_SEED_KEYWORDS)) or list(DEFAULT_SEED_KEYWORDS),
+        title_keywords=heuristics.get("title_keywords", list(DEFAULT_TITLE_KEYWORDS)),
+        exploration_targets=heuristics.get("exploration_targets", list(DEFAULT_EXPLORATION_TARGETS)),
     )
+
+
+def validate_config(config: Config) -> list[str]:
+    """Validate required configuration and return list of error messages."""
+    errors: list[str] = []
+    if not (config.telegram_bot_token or "").strip():
+        errors.append("TELEGRAM_BOT_TOKEN is required")
+    if not (config.telegram_chat_id or "").strip():
+        errors.append("TELEGRAM_CHAT_ID is required")
+
+    if config.search_discovery_enabled:
+        provider = (config.search_discovery_provider or "").lower()
+        if provider == "google" and (not config.google_cse_api_key or not config.google_cse_id):
+            errors.append("Search discovery enabled but GOOGLE_CSE_API_KEY/GOOGLE_CSE_ID missing")
+        if provider == "bing" and not config.bing_search_api_key:
+            errors.append("Search discovery enabled but BING_SEARCH_API_KEY missing")
+
+    if not (config.resend_api_key or config.smtp_host):
+        # Reporting will still run in manual/preview mode, but automatic email submissions will fail.
+        logger.info("No RESEND_API_KEY or SMTP_HOST configured; email reporting will be disabled")
+
+    return errors

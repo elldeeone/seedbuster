@@ -187,6 +187,7 @@ class TemporalTracker:
     def __init__(self, storage_dir: Path):
         self.storage_dir = storage_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._rescans_file = self.storage_dir / "scheduled_rescans.json"
 
         # In-memory cache of snapshots
         self._snapshots: dict[str, list[DomainSnapshot]] = {}
@@ -199,6 +200,7 @@ class TemporalTracker:
 
         # Load existing data
         self._load_snapshots()
+        self._load_rescans()
 
     def set_rescan_callback(
         self,
@@ -225,6 +227,59 @@ class TemporalTracker:
                     ]
             except Exception as e:
                 logger.warning(f"Failed to load snapshots from {file}: {e}")
+
+    def _load_rescans(self):
+        """Load scheduled rescans from disk (best-effort)."""
+        if not self._rescans_file.exists():
+            return
+        try:
+            data = json.loads(self._rescans_file.read_text())
+        except Exception as exc:
+            logger.warning("Failed to load scheduled rescans: %s", exc)
+            return
+
+        rescans_raw = data.get("rescans") if isinstance(data, dict) else None
+        if not isinstance(rescans_raw, list):
+            return
+
+        for entry in rescans_raw:
+            try:
+                domain = str(entry.get("domain") or "").strip()
+                if not domain:
+                    continue
+                scheduled_time = datetime.fromisoformat(entry.get("scheduled_time"))
+                reason = ScanReason(entry.get("reason"))
+                attempts = int(entry.get("attempts", 0))
+                max_attempts = int(entry.get("max_attempts", 3))
+                rescan = ScheduledRescan(
+                    domain=domain,
+                    scheduled_time=scheduled_time,
+                    reason=reason,
+                    attempts=attempts,
+                    max_attempts=max_attempts,
+                )
+                if domain not in self._scheduled:
+                    self._scheduled[domain] = []
+                self._scheduled[domain].append(rescan)
+            except Exception:
+                continue
+
+    def _save_rescans(self):
+        """Persist scheduled rescans to disk."""
+        data = []
+        for domain, rescans in self._scheduled.items():
+            for rescan in rescans:
+                data.append({
+                    "domain": domain,
+                    "scheduled_time": rescan.scheduled_time.isoformat(),
+                    "reason": rescan.reason.value,
+                    "attempts": rescan.attempts,
+                    "max_attempts": rescan.max_attempts,
+                })
+        try:
+            self._rescans_file.write_text(json.dumps({"rescans": data}, indent=2))
+        except Exception as exc:
+            logger.warning("Failed to persist scheduled rescans: %s", exc)
 
     def _save_snapshots(self, domain: str):
         """Save domain snapshots to storage."""
@@ -315,10 +370,12 @@ class TemporalTracker:
             )
             self._scheduled[domain].append(rescan)
             logger.debug(f"Scheduled {reason.value} for {domain} at {scheduled_time}")
+        self._save_rescans()
 
     def cancel_rescans(self, domain: str) -> int:
         """Cancel all scheduled rescans for a domain."""
         rescans = self._scheduled.pop(domain, None)
+        self._save_rescans()
         return len(rescans) if rescans else 0
 
     def get_due_rescans(self) -> list[ScheduledRescan]:
@@ -340,6 +397,7 @@ class TemporalTracker:
                 r for r in self._scheduled[domain]
                 if r.reason != reason
             ]
+            self._save_rescans()
 
     def mark_rescan_failed(self, domain: str, reason: ScanReason):
         """Mark a rescan attempt as failed."""
@@ -351,6 +409,7 @@ class TemporalTracker:
                     rescan.scheduled_time = datetime.now(timezone.utc) + timedelta(
                         minutes=30 * rescan.attempts
                     )
+            self._save_rescans()
 
     def analyze(self, domain: str) -> TemporalAnalysis:
         """Analyze temporal patterns for a domain."""
@@ -477,6 +536,8 @@ class TemporalTracker:
                         except Exception as e:
                             logger.error(f"Rescan failed for {rescan.domain}: {e}")
                             self.mark_rescan_failed(rescan.domain, rescan.reason)
+                        finally:
+                            self._save_rescans()
 
                 # Check every 5 minutes
                 await asyncio.sleep(300)

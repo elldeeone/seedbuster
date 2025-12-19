@@ -54,12 +54,35 @@ class DomainScorer:
         denylist: Set[str],
         suspicious_tlds: Set[str],
         min_score_to_analyze: int = 30,
+        keyword_weights: list[tuple[str, int]] | None = None,
+        substitutions: dict[str, str] | None = None,
     ):
         self.target_patterns = [p.lower() for p in target_patterns]
         self.allowlist = {d.lower() for d in allowlist}
         self.denylist = {d.lower() for d in denylist}
         self.suspicious_tlds = {t.lower() for t in suspicious_tlds}
         self.min_score_to_analyze = min_score_to_analyze
+        self.keyword_weights = keyword_weights or [
+            ("wallet", 10),
+            ("recover", 15),
+            ("seed", 15),
+            ("restore", 10),
+            ("login", 5),
+            ("secure", 5),
+            ("official", 10),
+            ("verify", 10),
+            ("claim", 10),
+            ("airdrop", 10),
+        ]
+        self.substitutions = substitutions or {
+            "4": "a",
+            "3": "e",
+            "1": "i",
+            "0": "o",
+            "5": "s",
+            "@": "a",
+            "$": "s",
+        }
 
     def score_domain(self, domain: str) -> ScoringResult:
         """Score a domain for phishing likelihood."""
@@ -211,21 +234,8 @@ class DomainScorer:
         score = 0
         reasons = []
 
-        suspicious_keywords = [
-            ("wallet", 10),
-            ("recover", 15),
-            ("seed", 15),
-            ("restore", 10),
-            ("login", 5),
-            ("secure", 5),
-            ("official", 10),
-            ("verify", 10),
-            ("claim", 10),
-            ("airdrop", 10),
-        ]
-
         domain_lower = domain.lower()
-        for keyword, points in suspicious_keywords:
+        for keyword, points in self.keyword_weights:
             if keyword in domain_lower:
                 score += points
                 reasons.append(f"Contains suspicious keyword: '{keyword}'")
@@ -237,20 +247,9 @@ class DomainScorer:
         score = 0
         reasons = []
 
-        # Common substitution patterns
-        substitutions = {
-            "4": "a",
-            "3": "e",
-            "1": "i",
-            "0": "o",
-            "5": "s",
-            "@": "a",
-            "$": "s",
-        }
-
         # Normalize substitutions
         normalized = domain_name.lower()
-        for sub, char in substitutions.items():
+        for sub, char in self.substitutions.items():
             normalized = normalized.replace(sub, char)
 
         # Check if normalized version matches targets

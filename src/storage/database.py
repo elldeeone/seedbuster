@@ -234,18 +234,28 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def get_pending_domains(self, limit: int = 10) -> list[dict]:
-        """Get domains pending analysis."""
+    async def get_pending_domains(self, limit: int | None = 10) -> list[dict]:
+        """Get domains pending analysis (optionally limited)."""
         async with self._lock:
-            cursor = await self._connection.execute(
-                """
-                SELECT * FROM domains
-                WHERE status = ?
-                ORDER BY domain_score DESC, created_at ASC
-                LIMIT ?
-                """,
-                (DomainStatus.PENDING.value, limit),
-            )
+            if limit and limit > 0:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY domain_score DESC, created_at ASC
+                    LIMIT ?
+                    """,
+                    (DomainStatus.PENDING.value, limit),
+                )
+            else:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY domain_score DESC, created_at ASC
+                    """,
+                    (DomainStatus.PENDING.value,),
+                )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
