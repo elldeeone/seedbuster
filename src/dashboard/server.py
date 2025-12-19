@@ -1571,7 +1571,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       }}
 
       .sb-detail-evidence-title::before {{
-        content: "\\1F4CE";
+        content: '\U0001f4ce';
         font-size: 12px;
       }}
 
@@ -2146,7 +2146,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       }}
 
       input[type="checkbox"]:checked::after {{
-        content: "\\2713";
+        content: '&#10003;';
         position: absolute;
         top: 50%;
         left: 50%;
@@ -2408,7 +2408,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
 
           // Update button
           if (btn) {{
-            btn.innerHTML = 'Copied';
+            btn.innerHTML = '&#10003; Copied';
             setTimeout(() => {{
               btn.innerHTML = 'Copy';
             }}, 2000);
@@ -2488,7 +2488,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
               const statusEl = listItem.querySelector('.sb-platform-list-status');
               if (statusEl) statusEl.textContent = 'Submitted';
               const iconEl = listItem.querySelector('.sb-platform-list-icon');
-              if (iconEl) iconEl.textContent = 'OK';
+              if (iconEl) iconEl.textContent = '&#10003;';
             }}
 
             // Go back to list
@@ -2612,7 +2612,7 @@ def _flash(msg: str | None, *, error: bool = False) -> str:
     if not msg:
         return ""
     cls = "sb-flash sb-flash-error" if error else "sb-flash sb-flash-success"
-    icon = "x" if error else "ok"
+    icon = "&#10005;" if error else "&#10003;"
     return f'<div class="{cls}"><span>{icon}</span><span>{_escape(msg)}</span></div>'
 
 
@@ -2750,10 +2750,10 @@ def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
             f'<td class="domain-cell" title="{_escape(domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
             f"<td>{_status_badge(str(d.get('status') or ''))}</td>"
             f"<td>{_verdict_badge(d.get('verdict'))}</td>"
-            f'<td><span class="sb-score">{_escape(domain_score) if domain_score is not None else "-"}</span></td>'
-            f'<td><span class="sb-score">{_escape(analysis_score) if analysis_score is not None else "-"}</span></td>'
-            f'<td class="sb-muted">{_escape(d.get("source") or "-")}</td>'
-            f'<td class="sb-muted">{_escape(d.get("first_seen") or "-")}</td>'
+            f'<td><span class="sb-score">{_escape(domain_score) if domain_score is not None else "&mdash;"}</span></td>'
+            f'<td><span class="sb-score">{_escape(analysis_score) if analysis_score is not None else "&mdash;"}</span></td>'
+            f'<td class="sb-muted">{_escape(d.get("source") or "&mdash;")}</td>'
+            f'<td class="sb-muted">{_escape(d.get("first_seen") or "&mdash;")}</td>'
             f"{actions_cell}"
             "</tr>"
         )
@@ -2798,20 +2798,19 @@ def _render_pending_reports(pending: list[dict], *, admin: bool, limit: int = 50
         platform = r.get("platform") or ""
         status = r.get("status") or ""
         next_attempt_at = r.get("next_attempt_at") or ""
-        row = (
+        rows.append(
             "<tr>"
-            + f'<td><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
-            + f"<td>{_escape(platform)}</td>"
-            + f"<td>{_report_badge(str(status))}</td>"
-            + '<td class="sb-muted">{}</td>'.format(_escape(next_attempt_at) or "-")
-            + "</tr>"
+            f'<td><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
+            f"<td>{_escape(platform)}</td>"
+            f"<td>{_report_badge(str(status))}</td>"
+            f'<td class="sb-muted">{_escape(next_attempt_at) or "&mdash;"}</td>'
+            "</tr>"
         )
-        rows.append(row)
 
     return f"""
       <div class="sb-panel" style="border-color: rgba(240, 136, 62, 0.3); margin-bottom: 24px;">
         <div class="sb-panel-header" style="border-color: rgba(240, 136, 62, 0.2);">
-          <span class="sb-panel-title" style="color: var(--accent-orange);">Reports Needing Attention</span>
+          <span class="sb-panel-title" style="color: var(--accent-orange);">&#9888; Reports Needing Attention</span>
           <span class="sb-muted">showing {min(len(pending), limit)} of {len(pending)}</span>
         </div>
         <div class="sb-table-wrap">
@@ -2901,7 +2900,7 @@ def _render_pagination(*, status: str, verdict: str, q: str, limit: int, page: i
             limit=limit,
             page=page - 1,
         )
-        prev_link = f'<a class="sb-btn" href="{_escape(prev_link)}">Previous</a>'
+        prev_link = f'<a class="sb-btn" href="{_escape(prev_link)}">&larr; Previous</a>'
 
     next_link = ""
     if got >= limit:
@@ -2913,7 +2912,7 @@ def _render_pagination(*, status: str, verdict: str, q: str, limit: int, page: i
             limit=limit,
             page=page + 1,
         )
-        next_link = f'<a class="sb-btn" href="{_escape(next_link)}">Next</a>'
+        next_link = f'<a class="sb-btn" href="{_escape(next_link)}">Next &rarr;</a>'
 
     if not prev_link and not next_link:
         return ""
@@ -3033,15 +3032,16 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
         conf_class = "sb-badge-low"
 
     clusters_link = "/admin/clusters" if admin else "/clusters"
+    confidence_display = f"{confidence:.0f}% confidence"
 
     return f"""
       <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.3); margin-bottom: 16px;">
         <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
           <div>
             <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
-            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all clusters</a>
+            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all clusters &rarr;</a>
           </div>
-          <span class="sb-badge {conf_class}">{confidence:.0f}% confidence</span>
+          <span class="sb-badge {conf_class}">{_escape(confidence_display)}</span>
         </div>
         <div class="sb-grid">
           <div class="col-6">
@@ -3132,7 +3132,7 @@ def _render_clusters_list(clusters: list[dict], admin: bool) -> str:
                 <div class="sb-text-secondary" style="margin-bottom: 12px;">{_escape(indicators_text)}</div>
                 <div class="sb-label">Timeline</div>
                 <div class="sb-muted" style="font-size: 12px;">
-                  Created: {_escape(created_at[:10] if created_at else "-")} | Updated: {_escape(updated_at[:10] if updated_at else "-")}
+                  Created: {_escape(created_at[:10] if created_at else "&mdash;")} \xb7 Updated: {_escape(updated_at[:10] if updated_at else "&mdash;")}
                 </div>
               </div>
               <div class="col-6">
@@ -3275,8 +3275,8 @@ def _render_cluster_detail(cluster: dict, admin: bool) -> str:
     for member in members:
         domain = member.get("domain", "")
         score = member.get("score", 0)
-        added = member.get("added_at", "")[:10] if member.get("added_at") else "-"
-        ip = member.get("ip_address", "") or "-"
+        added = member.get("added_at", "")[:10] if member.get("added_at") else "&mdash;"
+        ip = member.get("ip_address", "") or "&mdash;"
         href = f"/admin/domains?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
         domain_rows.append(f"""
           <tr>
@@ -3303,7 +3303,7 @@ def _render_cluster_detail(cluster: dict, admin: bool) -> str:
 
     return f"""
       <div class="sb-row" style="margin-bottom: 24px; align-items: center;">
-        <a class="sb-btn" href="{_escape(back_href)}">Back to Campaigns</a>
+        <a class="sb-btn" href="{_escape(back_href)}">&larr; Back to Campaigns</a>
         <h1 style="flex: 1; margin: 0 0 0 16px; font-size: 24px;">{_escape(cluster_name)}</h1>
         <span class="sb-badge {conf_class}" style="font-size: 14px;">{confidence:.0f}% confidence</span>
       </div>
@@ -3318,11 +3318,11 @@ def _render_cluster_detail(cluster: dict, admin: bool) -> str:
           </div>
           <div class="col-3">
             <div class="sb-label">First Seen</div>
-            <div>{_escape(created_at[:10] if created_at else "-")}</div>
+            <div>{_escape(created_at[:10] if created_at else "&mdash;")}</div>
           </div>
           <div class="col-3">
             <div class="sb-label">Last Updated</div>
-            <div>{_escape(updated_at[:10] if updated_at else "-")}</div>
+            <div>{_escape(updated_at[:10] if updated_at else "&mdash;")}</div>
           </div>
         </div>
       </div>
@@ -3348,7 +3348,7 @@ def _render_kv_table(items: Iterable[tuple[str, object]]) -> str:
     rows = []
     for k, v in items:
         value = "" if v is None else str(v)
-        rows.append(f"<tr><th>{_escape(k)}</th><td>{_escape(value) or '-'}</td></tr>")
+        rows.append(f"<tr><th>{_escape(k)}</th><td>{_escape(value) or '&mdash;'}</td></tr>")
     return f"""
       <div class="sb-panel">
         <table class="sb-kv-table" style="width: 100%;">
@@ -3389,7 +3389,7 @@ def _render_manual_helper(report: dict, helper_id: str) -> str:
             </div>
             {f'''<div class="sb-manual-cta">
               <a class="sb-manual-cta-btn" href="{_escape(form_url)}" target="_blank" rel="noreferrer">
-                <span class="sb-manual-cta-icon">-></span>
+                <span class="sb-manual-cta-icon">&nearr;</span>
                 <span>Open Abuse Form</span>
               </a>
             </div>''' if form_url else ''}
@@ -3409,7 +3409,7 @@ def _render_manual_helper(report: dict, helper_id: str) -> str:
     # Determine if this is an email (mailto:) or web form
     is_email = form_url.startswith("mailto:")
     open_btn_text = "Open Email Client" if is_email else "Open Abuse Form"
-    open_btn_icon = "[mail]" if is_email else "->"
+    open_btn_icon = "&#9993;" if is_email else "&nearr;"
 
     # Render the CTA button
     cta_html = ""
@@ -3516,7 +3516,7 @@ def _render_platform_detail(
     # Determine button text
     is_email = form_url.startswith("mailto:") if form_url else False
     open_btn_text = "Open Email Client" if is_email else "Open Abuse Form"
-    open_btn_icon = "[mail]" if is_email else "->"
+    open_btn_icon = "&#9993;" if is_email else "&nearr;"
 
     # Render CTA button
     cta_html = ""
@@ -3585,7 +3585,7 @@ def _render_platform_detail(
 
         <div class="sb-detail-footer">
           <button type="button" class="sb-detail-done-btn" onclick="showConfirmDialog('{platform_id}', '{_escape(platform)}', {domain_id})">
-            Mark as Submitted
+            &#10003; Mark as Submitted
           </button>
         </div>
       </div>
@@ -3630,15 +3630,15 @@ def _render_action_required_panel(
 
     # Platform icons
     platform_icons = {
-        "cloudflare": "CF",
-        "google": "GOOG",
-        "microsoft": "MSFT",
-        "netcraft": "NET",
-        "apwg": "APWG",
-        "phishtank": "PT",
-        "registrar": "REG",
-        "hosting_provider": "HOST",
-        "digitalocean": "DO",
+        "cloudflare": "&#9729;",
+        "google": "\U0001f50d",
+        "microsoft": "\U0001fa9f",
+        "netcraft": "\U0001f6e1",
+        "apwg": "\U0001f3a3",
+        "phishtank": "\U0001f41f",
+        "registrar": "\U0001f4dd",
+        "hosting_provider": "\U0001f5a5",
+        "digitalocean": "\U0001f30a",
     }
 
     # Build platform list items and detail views
@@ -3649,7 +3649,7 @@ def _render_action_required_panel(
         platform = (r.get("platform") or "unknown").lower()
         platform_display = platform.upper()
         platform_id = f"{panel_id}_platform_{i}"
-        icon = platform_icons.get(platform, "SRC")
+        icon = platform_icons.get(platform, "\U0001f4cb")
 
         # List item
         list_items.append(f"""
@@ -3661,7 +3661,7 @@ def _render_action_required_panel(
                 <div class="sb-platform-list-status">Pending</div>
               </div>
             </div>
-            <span class="sb-platform-list-arrow">></span>
+            <span class="sb-platform-list-arrow">&rarr;</span>
           </div>
         """)
 
@@ -3679,7 +3679,7 @@ def _render_action_required_panel(
             <strong>Action Required:</strong> {count} {platform_word} need manual submission
           </span>
         </div>
-        <span class="sb-notify-bar-hint">Review ></span>
+        <span class="sb-notify-bar-hint">Review &rarr;</span>
       </div>
     """
 
@@ -3689,7 +3689,7 @@ def _render_action_required_panel(
       <div id="{panel_id}_modal" class="sb-modal-panel">
         <div class="sb-modal-header">
           <div class="sb-modal-header-left">
-            <button type="button" class="sb-modal-back" onclick="backToList('{panel_id}')">Back</button>
+            <button type="button" class="sb-modal-back" onclick="backToList('{panel_id}')">&larr;</button>
             <div>
               <div class="sb-modal-title" id="{panel_id}_title">Manual Submissions</div>
               <div class="sb-modal-subtitle" id="{panel_id}_progress">{count} of {count} pending</div>
@@ -3748,12 +3748,12 @@ def _render_domain_detail(
 
     # Header action buttons - no admin link in public view
     header_links = []
-    header_links.append(f'<a class="sb-btn" href="{_escape("/admin" if admin else "/")}">Back</a>')
+    header_links.append(f'<a class="sb-btn" href="{_escape("/admin" if admin else "/")}">&larr; Back</a>')
     if admin:
         header_links.append(f'<a class="sb-btn" href="{_escape(f"/domains/{did}")}">Public View</a>')
 
     open_url = f"https://{domain_name}"
-    header_links.append(f'<a class="sb-btn" href="{_escape(open_url)}" target="_blank" rel="noreferrer">Visit Site -></a>')
+    header_links.append(f'<a class="sb-btn" href="{_escape(open_url)}" target="_blank" rel="noreferrer">Visit Site &nearr;</a>')
 
     # Evidence section
     evidence_bits = ""
@@ -3786,7 +3786,7 @@ def _render_domain_detail(
           <div class="sb-panel">
             <div class="sb-panel-header">
               <span class="sb-panel-title">Evidence Files</span>
-              <span class="sb-muted"><code class="sb-code">{_escape(str(evidence_dir) if evidence_dir else "-")}</code></span>
+              <span class="sb-muted"><code class="sb-code">{_escape(str(evidence_dir) if evidence_dir else "&mdash;")}</code></span>
             </div>
             <div class="sb-row" style="gap: 8px;">
               {''.join(files) if files else '<span class="sb-muted">No evidence files found.</span>'}
@@ -3814,12 +3814,12 @@ def _render_domain_detail(
             helper_html = _render_manual_helper(r, helper_id)
             reports_rows.append(
                 f'<tr style="cursor: pointer;" onclick="toggleManualHelper(\'{row_id}\')">'
-                f'<td><span id="{row_id}_icon" class="sb-expand-icon">></span> {_escape(platform)}</td>'
+                f'<td><span id="{row_id}_icon" class="sb-expand-icon">&#9654;</span> {_escape(platform)}</td>'
                 f"<td>{_report_badge(status)}</td>"
                 f'<td class="sb-muted">{_escape(r.get("attempts") or 0)}</td>'
-                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "-")}</td>'
-                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "-")}</td>'
-                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "-")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "&mdash;")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "&mdash;")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "&mdash;")}</td>'
                 f'<td class="sb-muted" style="font-size: 11px; color: var(--accent-orange);">Click to expand</td>'
                 "</tr>"
                 f'<tr id="{row_id}" style="display: none;"><td colspan="7" style="padding: 0; border-top: none;">'
@@ -3833,9 +3833,9 @@ def _render_domain_detail(
                 f"<td>{_escape(platform)}</td>"
                 f"<td>{_report_badge(status)}</td>"
                 f'<td class="sb-muted">{_escape(r.get("attempts") or 0)}</td>'
-                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "-")}</td>'
-                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "-")}</td>'
-                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "-")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("attempted_at") or "&mdash;")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("submitted_at") or "&mdash;")}</td>'
+                f'<td class="sb-muted">{_escape(r.get("next_attempt_at") or "&mdash;")}</td>'
                 f'<td class="sb-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{_escape((r.get("response") or "")[:120])}</td>'
                 "</tr>"
             )
@@ -4020,8 +4020,8 @@ def _render_domain_detail(
         """
 
     reasons = domain.get("verdict_reasons") or ""
-    reasons_html = f'<pre class="sb-pre">{_escape(reasons)}</pre>' if reasons else '<div class="sb-muted">-</div>'
-    notes_html = f'<pre class="sb-pre">{_escape(notes)}</pre>' if notes else '<div class="sb-muted">-</div>'
+    reasons_html = f'<pre class="sb-pre">{_escape(reasons)}</pre>' if reasons else '<div class="sb-muted">&mdash;</div>'
+    notes_html = f'<pre class="sb-pre">{_escape(notes)}</pre>' if notes else '<div class="sb-muted">&mdash;</div>'
 
     info = _render_kv_table(
         [
@@ -4534,7 +4534,7 @@ class DashboardServer:
         csrf = self._get_or_set_csrf(request, resp)
         resp.text = resp.text.replace("__SET_COOKIE__", csrf)
         # Inline script to handle JSON API interactions (submit/rescan/report/cleanup/health)
-        resp.text += """
+        resp.text += f"""
         <script>
         (function() {{
           const showToast = (message, type = 'info') => {{
@@ -4558,7 +4558,7 @@ class DashboardServer:
                 }});
                 const data = await res.json();
                 if (res.ok) {{
-                  cleanupResult.textContent = `Removed ${{data.removed_dirs || 0}} directories older than ${{days}} days.`;
+                  cleanupResult.textContent = `Removed ${'{'}data.removed_dirs || 0{'}'} directories older than ${'{'}days{'}'} days.`;
                   showToast(cleanupResult.textContent, 'success');
                 }} else {{
                   const msg = data.error || 'Cleanup failed';
@@ -4591,8 +4591,8 @@ class DashboardServer:
                 }});
                 const data = await res.json();
                 const msg = data.status === 'rescan_queued'
-                  ? `Rescan queued for ${{data.domain}}`
-                  : `Submitted ${{data.domain || target}}`;
+                  ? `Rescan queued for ${'{'}data.domain{'}'}`
+                  : `Submitted ${'{'}data.domain || target{'}'}`;
                 showToast(msg, 'success');
               }} catch (err) {{
                 showToast('Submit failed: ' + err, 'error');
@@ -4612,7 +4612,7 @@ class DashboardServer:
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || res.statusText);
             return data;
-          }
+          }}
 
           // Delegate rescan/report actions
           document.body.addEventListener('click', async (e) => {{
@@ -4625,11 +4625,11 @@ class DashboardServer:
             target.disabled = true;
             try {{
               if (type === 'rescan') {{
-                await postJSON(`/admin/api/domains/${{domainId}}/rescan`, {{ domain }});
-                showToast(`Rescan queued for ${{domain}}`, 'success');
+                await postJSON(`/admin/api/domains/${'{'}domainId{'}'}/rescan`, {{ domain }});
+                showToast(`Rescan queued for ${'{'}domain{'}'}`, 'success');
               }} else {{
                 await postJSON('/admin/api/report', {{ domain_id: parseInt(domainId, 10), domain }});
-                showToast(`Report enqueued for ${{domain}}`, 'success');
+                showToast(`Report enqueued for ${'{'}domain{'}'}`, 'success');
               }}
             }} catch (err) {{
               showToast(type + ' failed: ' + err, 'error');
@@ -4655,7 +4655,7 @@ class DashboardServer:
                 statusEl.innerHTML = '<b>' + (ok ? 'Healthy' : 'Unhealthy') + '</b>';
                 const bits = [];
                 ['discovery_queue_size','analysis_queue_size','pending_rescans','domains_tracked'].forEach(k => {{
-                  if (data && typeof data === 'object' && k in data) bits.push(k.replace(/_/g, ' ') + ': ' + data[k]);
+                  if (data && typeof data === 'object' && k in data) bits.push(`${'{'}k.replace(/_/g, ' '){'}'}: ${'{'}data[k]{'}'}`);
                 }});
                 detailsEl.textContent = bits.join(' | ') || '';
               }} catch (err) {{
