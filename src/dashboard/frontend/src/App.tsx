@@ -1326,27 +1326,67 @@ export default function App() {
                       }}>Copy</button>
                     </div>
                   </div>
-                  {domainDetail?.evidence?.screenshots && domainDetail.evidence.screenshots.length > 0 && (
-                    <div className="sb-copy-field">
-                      <div className="sb-copy-field-label">Screenshot URLs (for reference)</div>
-                      <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                        {domainDetail.evidence.screenshots.slice(0, 3).join("\n")}
-                        <button className="sb-copy-btn" onClick={(e) => {
-                          const screenshots = domainDetail?.evidence?.screenshots || [];
-                          navigator.clipboard.writeText(screenshots.slice(0, 3).join("\n"));
-                          const btn = e.currentTarget;
-                          btn.textContent = "Copied!";
-                          btn.classList.add("copied");
-                          setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
-                        }}>Copy</button>
-                      </div>
+                  <div className="sb-copy-field">
+                    <div className="sb-copy-field-label">Additional Details Template</div>
+                    <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {(() => {
+                        const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                        const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
+
+                        let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+
+                        if (verdictReasons) {
+                          const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                          // Deduplicate reasons
+                          const uniqueReasons = Array.from(new Set(reasons));
+                          if (uniqueReasons.length > 0) {
+                            template += "Evidence:\n";
+                            uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                              template += `- ${reason}\n`;
+                            });
+                            template += "\n";
+                          }
+                        }
+
+                        template += "This site poses a security risk to users.";
+
+                        return template;
+                      })()}
+                      <button className="sb-copy-btn" onClick={(e) => {
+                        const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                        const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
+
+                        let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+
+                        if (verdictReasons) {
+                          const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                          // Deduplicate reasons
+                          const uniqueReasons = Array.from(new Set(reasons));
+                          if (uniqueReasons.length > 0) {
+                            template += "Evidence:\n";
+                            uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                              template += `- ${reason}\n`;
+                            });
+                            template += "\n";
+                          }
+                        }
+
+                        template += "This site poses a security risk to users.";
+
+                        navigator.clipboard.writeText(template);
+                        const btn = e.currentTarget;
+                        btn.textContent = "Copied!";
+                        btn.classList.add("copied");
+                        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                      }}>Copy</button>
                     </div>
-                  )}
+                  </div>
                   <div className="sb-manual-notes">
                     <div className="sb-manual-notes-title">Tips</div>
                     <ul>
-                      <li>Copy the URL and paste into the abuse form</li>
-                      <li>Most forms only need the URL</li>
+                      <li>Copy the URL and paste into "URL to report" field</li>
+                      <li>Copy the Additional Details template and paste into the form's description field</li>
+                      <li>Review and edit the template if needed before submitting</li>
                     </ul>
                   </div>
                   <div style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}>
