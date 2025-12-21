@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, MouseEvent } from "react";
 import "./index.css";
 import {
   cleanupEvidence,
@@ -81,17 +81,25 @@ const Toast = ({ message, tone }: { message: string; tone?: "success" | "error" 
   <div className={`sb-toast ${tone || "info"}`}>{message}</div>
 );
 
-const Breakdown = ({ items }: { items: Record<string, number> }) => {
+const Breakdown = ({ items, onSelect }: { items: Record<string, number>; onSelect?: (key: string) => void }) => {
   const keys = Object.keys(items || {}).sort();
   if (!keys.length) return <div className="sb-muted">No data</div>;
   return (
     <div className="sb-breakdown">
-      {keys.map((k) => (
-        <div key={k} className="sb-breakdown-item">
-          <span className="sb-breakdown-key">{k}</span>
-          <span className="sb-breakdown-val">{items[k]}</span>
-        </div>
-      ))}
+      {keys.map((k) => {
+        const clickable = Boolean(onSelect);
+        return (
+          <div
+            key={k}
+            className="sb-breakdown-item"
+            style={clickable ? { cursor: "pointer" } : undefined}
+            onClick={clickable ? () => onSelect && onSelect(k) : undefined}
+          >
+            <span className="sb-breakdown-key">{k}</span>
+            <span className="sb-breakdown-val">{items[k]}</span>
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -100,6 +108,7 @@ const DomainTable = ({
   domains,
   loading,
   error,
+  total,
   filters,
   onFiltersChange,
   onPage,
@@ -112,6 +121,7 @@ const DomainTable = ({
   domains: Domain[];
   loading: boolean;
   error: string | null;
+  total: number;
   filters: { status: string; verdict: string; q: string; limit: number; page: number };
   onFiltersChange: (next: Partial<{ status: string; verdict: string; q: string; limit: number; page: number }>) => void;
   onPage: (next: number) => void;
@@ -120,148 +130,163 @@ const DomainTable = ({
   onReport: (d: Domain) => void;
   onFalsePositive: (d: Domain) => void;
   actionBusy: Record<number, string | null>;
-}) => (
-  <div className="sb-panel">
-    <div className="sb-panel-header">
-      <span className="sb-panel-title">Tracked Domains</span>
-      <span className="sb-muted">{domains.length} results</span>
-    </div>
+}) => {
+  const totalPages = Math.max(1, Math.ceil((total || 0) / (filters.limit || 1)));
+  const pageDisplay = Math.min(filters.page, totalPages);
+  const canNext = pageDisplay < totalPages;
+  const canPrev = pageDisplay > 1;
+  const handlePageInput = (value: string) => {
+    const parsed = Number(value) || 1;
+    onPage(parsed);
+  };
+  return (
+    <div className="sb-panel">
+      <div className="sb-panel-header">
+        <span className="sb-panel-title">Tracked Domains</span>
+        <span className="sb-muted">
+          Showing {domains.length} / {total || domains.length} (page {pageDisplay} of {totalPages})
+        </span>
+      </div>
 
-    <div className="sb-grid" style={{ marginBottom: 12 }}>
-      <div className="col-3">
-        <label className="sb-label">Status</label>
-        <select
-          className="sb-select"
-          value={filters.status}
-          onChange={(e) => onFiltersChange({ status: e.target.value, page: 1 })}
-        >
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s || "any"} value={s}>
-              {s ? s.toUpperCase() : "All Statuses"}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="col-3">
-        <label className="sb-label">Verdict</label>
-        <select
-          className="sb-select"
-          value={filters.verdict}
-          onChange={(e) => onFiltersChange({ verdict: e.target.value, page: 1 })}
-        >
-          {VERDICT_OPTIONS.map((v) => (
-            <option key={v || "any"} value={v}>
-              {v ? v.toUpperCase() : "All Verdicts"}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="col-3">
-        <label className="sb-label">Search</label>
-        <input
-          className="sb-input"
-          placeholder="domain contains..."
-          value={filters.q}
-          onChange={(e) => onFiltersChange({ q: e.target.value, page: 1 })}
-        />
-      </div>
-      <div className="col-3">
-        <label className="sb-label">Results / Page</label>
-        <div className="sb-row" style={{ justifyContent: "space-between" }}>
+      <div className="sb-grid" style={{ marginBottom: 12 }}>
+        <div className="col-3">
+          <label className="sb-label">Status</label>
           <select
             className="sb-select"
-            value={filters.limit}
-            onChange={(e) => onFiltersChange({ limit: Number(e.target.value) || 100, page: 1 })}
+            value={filters.status}
+            onChange={(e) => onFiltersChange({ status: e.target.value, page: 1 })}
           >
-            {LIMIT_OPTIONS.map((n) => (
-              <option key={n} value={n}>{n}</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s || "any"} value={s}>
+                {s ? s.toUpperCase() : "All Statuses"}
+              </option>
             ))}
           </select>
+        </div>
+        <div className="col-3">
+          <label className="sb-label">Verdict</label>
+          <select
+            className="sb-select"
+            value={filters.verdict}
+            onChange={(e) => onFiltersChange({ verdict: e.target.value, page: 1 })}
+          >
+            {VERDICT_OPTIONS.map((v) => (
+              <option key={v || "any"} value={v}>
+                {v ? v.toUpperCase() : "All Verdicts"}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="col-3">
+          <label className="sb-label">Search</label>
           <input
             className="sb-input"
-            style={{ width: 70 }}
-            value={filters.page}
-            onChange={(e) => onFiltersChange({ page: Number(e.target.value) || 1 })}
+            placeholder="domain contains..."
+            value={filters.q}
+            onChange={(e) => onFiltersChange({ q: e.target.value, page: 1 })}
           />
         </div>
+        <div className="col-3">
+          <label className="sb-label">Results / Page</label>
+          <div className="sb-row" style={{ justifyContent: "space-between" }}>
+            <select
+              className="sb-select"
+              value={filters.limit}
+              onChange={(e) => onFiltersChange({ limit: Number(e.target.value) || 100, page: 1 })}
+            >
+              {LIMIT_OPTIONS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <input
+              className="sb-input"
+              style={{ width: 70 }}
+              value={filters.page}
+              onChange={(e) => handlePageInput(e.target.value)}
+            />
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div className="sb-table-wrap">
-      <table className="sb-table">
-        <thead>
-          <tr>
-            <th>Domain</th>
-            <th>Status</th>
-            <th>Verdict</th>
-            <th>D-Score</th>
-            <th>A-Score</th>
-            <th>Source</th>
-            <th>First Seen</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && (
-            <tr><td colSpan={8}><div className="skeleton" style={{ height: 14 }} /></td></tr>
-          )}
-          {!loading && domains.length === 0 && (
-            <tr><td colSpan={8} className="sb-muted" style={{ textAlign: "center", padding: 20 }}>No domains match these filters.</td></tr>
-          )}
-          {!loading && domains.map((d) => {
-            const busy = d.id ? actionBusy[d.id] : null;
-            const dScore = (d as any).domain_score ?? (d as any).score ?? "—";
-            const aScore = (d as any).analysis_score ?? "—";
-            return (
-              <tr key={d.id ?? d.domain}>
-                <td className="domain-cell" title={d.domain}>
-                  {d.id ? (
-                    <a className="domain-link" onClick={() => onView(d.id!)} href={`#/domains/${d.id}`}>
-                      {d.domain}
-                    </a>
-                  ) : (
-                    <span>{d.domain}</span>
-                  )}
-                  <div className="sb-muted" style={{ fontSize: 12 }}>{timeAgo(d.created_at)}</div>
-                </td>
-                <td><span className={badgeClass(d.status, "status")}>{(d.status || "unknown").toUpperCase()}</span></td>
-                <td><span className={badgeClass(d.verdict, "verdict")}>{(d.verdict || "unknown").toUpperCase()}</span></td>
-                <td><span className="sb-score">{dScore}</span></td>
-                <td><span className="sb-score">{aScore}</span></td>
-                <td className="sb-muted">{d.source || "—"}</td>
-                <td className="sb-muted">{d.first_seen || "—"}</td>
-                <td>
-                  <div className="sb-row" style={{ flexWrap: "wrap" }}>
-                    <button className="sb-btn sb-btn-primary" disabled={!d.id} onClick={() => d.id && onView(d.id)}>View</button>
-                    <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onRescan(d)}>
-                      {busy === "rescan" ? "Rescanning…" : "Rescan"}
-                    </button>
-                    <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onReport(d)}>
-                      {busy === "report" ? "Reporting…" : "Report"}
-                    </button>
-                    <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
-                      {busy === "false_positive" ? "Marking…" : "False +"}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-
-    <div className="sb-pagination">
-      <div className="sb-page-info">Page {filters.page}</div>
-      <div className="sb-row">
-        {filters.page > 1 && <button className="sb-btn" onClick={() => onPage(filters.page - 1)}>&larr; Previous</button>}
-        {domains.length >= filters.limit && <button className="sb-btn" onClick={() => onPage(filters.page + 1)}>Next &rarr;</button>}
+      <div className="sb-table-wrap">
+        <table className="sb-table">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Status</th>
+              <th>Verdict</th>
+              <th>D-Score</th>
+              <th>A-Score</th>
+              <th>Source</th>
+              <th>First Seen</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr><td colSpan={8}><div className="skeleton" style={{ height: 14 }} /></td></tr>
+            )}
+            {!loading && domains.length === 0 && (
+              <tr><td colSpan={8} className="sb-muted" style={{ textAlign: "center", padding: 20 }}>No domains match these filters.</td></tr>
+            )}
+            {!loading && domains.map((d) => {
+              const busy = d.id ? actionBusy[d.id] : null;
+              const dScore = (d as any).domain_score ?? (d as any).score ?? "—";
+              const aScore = (d as any).analysis_score ?? "—";
+              return (
+                <tr key={d.id ?? d.domain}>
+                  <td className="domain-cell" title={d.domain}>
+                    {d.id ? (
+                      <a className="domain-link" onClick={() => onView(d.id!)} href={`#/domains/${d.id}`}>
+                        {d.domain}
+                      </a>
+                    ) : (
+                      <span>{d.domain}</span>
+                    )}
+                    <div className="sb-muted" style={{ fontSize: 12 }}>{timeAgo(d.updated_at || d.created_at)}</div>
+                  </td>
+                  <td><span className={badgeClass(d.status, "status")}>{(d.status || "unknown").toUpperCase()}</span></td>
+                  <td><span className={badgeClass(d.verdict, "verdict")}>{(d.verdict || "unknown").toUpperCase()}</span></td>
+                  <td><span className="sb-score">{dScore}</span></td>
+                  <td><span className="sb-score">{aScore}</span></td>
+                  <td className="sb-muted">{d.source || "—"}</td>
+                  <td className="sb-muted">{d.first_seen || "—"}</td>
+                  <td>
+                    <details className="sb-actions">
+                      <summary className="sb-btn sb-btn-ghost">Actions ▾</summary>
+                      <div className="sb-actions-menu">
+                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => d.id && onView(d.id)}>Open</button>
+                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onRescan(d)}>
+                          {busy === "rescan" ? "Rescanning…" : "Rescan"}
+                        </button>
+                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onReport(d)}>
+                          {busy === "report" ? "Reporting…" : "Report"}
+                        </button>
+                        <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
+                          {busy === "false_positive" ? "Marking…" : "False +"}
+                        </button>
+                      </div>
+                    </details>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-    </div>
 
-    {error && <div className="sb-notice" style={{ marginTop: 8 }}>{error}</div>}
-  </div>
-);
+      <div className="sb-pagination">
+        <div className="sb-page-info">Page {pageDisplay} of {totalPages}</div>
+        <div className="sb-row">
+          {canPrev && <button className="sb-btn" onClick={() => onPage(filters.page - 1)}>&larr; Previous</button>}
+          {canNext && <button className="sb-btn" onClick={() => onPage(filters.page + 1)}>Next &rarr;</button>}
+        </div>
+      </div>
+
+      {error && <div className="sb-notice" style={{ marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+};
 
 const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
   if (!data) return null;
@@ -274,29 +299,26 @@ const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
   ].filter(Boolean) as { label: string; href: string }[];
 
   return (
-    <div className="sb-grid" style={{ gap: 12 }}>
-      <div className="col-6">
-        <div className="sb-panel">
-          <div className="sb-panel-header">
-            <span className="sb-panel-title">Evidence Files</span>
-            <span className="sb-muted">{files.length || "No files"}</span>
-          </div>
-          <div className="sb-row" style={{ flexWrap: "wrap" }}>
-            {files.length === 0 && <span className="sb-muted">No evidence files yet.</span>}
-            {files.map((f) => (
-              <a key={f.href} className="sb-btn" href={f.href} target="_blank" rel="noreferrer">{f.label}</a>
-            ))}
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="sb-panel">
+        <div className="sb-panel-header">
+          <span className="sb-panel-title">Evidence Files</span>
+          <span className="sb-muted">{files.length ? `${files.length} files` : "No files"}</span>
+        </div>
+        <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          {files.length === 0 && <span className="sb-muted">No evidence files yet.</span>}
+          {files.map((f) => (
+            <a key={f.href} className="sb-btn" href={f.href} target="_blank" rel="noreferrer">{f.label}</a>
+          ))}
         </div>
       </div>
-      <div className="col-6">
+      {shots.length > 0 && (
         <div className="sb-panel">
           <div className="sb-panel-header">
             <span className="sb-panel-title">Screenshots</span>
             <span className="sb-muted">{shots.length} captured</span>
           </div>
           <div className="sb-evidence-grid">
-            {shots.length === 0 && <div className="sb-muted">No screenshots available.</div>}
             {shots.map((s) => (
               <div key={s} className="sb-screenshot">
                 <a href={s} target="_blank" rel="noreferrer"><img src={s} alt={s} /></a>
@@ -305,7 +327,7 @@ const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
             ))}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -313,6 +335,7 @@ const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
 const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
   if (!data) return null;
   const rows = data.reports || [];
+  if (rows.length === 0) return null;
   return (
     <div className="sb-panel">
       <div className="sb-panel-header">
@@ -328,13 +351,10 @@ const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
               <th>Attempted</th>
               <th>Submitted</th>
               <th>Next Attempt</th>
-              <th>Response</th>
+              <th style={{ minWidth: 200 }}>Response</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={6} className="sb-muted" style={{ textAlign: "center", padding: 18 }}>No reports yet.</td></tr>
-            )}
             {rows.map((r) => (
               <tr key={`${r.platform}-${r.created_at || r.id || Math.random()}`}>
                 <td>{r.platform}</td>
@@ -342,7 +362,7 @@ const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
                 <td className="sb-muted">{formatDate(r.created_at)}</td>
                 <td className="sb-muted">{formatDate(r.submitted_at as any)}</td>
                 <td className="sb-muted">{formatDate((r as any).next_attempt_at)}</td>
-                <td className="sb-muted" style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>{(r as any).response || r.result || ""}</td>
+                <td className="sb-muted" style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(r as any).response || r.result || "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -417,9 +437,11 @@ export default function App() {
   const [pendingReports, setPendingReports] = useState<PendingReport[]>([]);
   const [health, setHealth] = useState<unknown>(null);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [statsUpdatedAt, setStatsUpdatedAt] = useState<Date | null>(null);
 
   const [filters, setFilters] = useState({ status: "", verdict: "", q: "", limit: 100, page: 1 });
   const [domains, setDomains] = useState<Domain[]>([]);
+  const [domainsTotal, setDomainsTotal] = useState(0);
   const [domainsLoading, setDomainsLoading] = useState(true);
   const [domainsError, setDomainsError] = useState<string | null>(null);
 
@@ -429,14 +451,21 @@ export default function App() {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [clusterDetail, setClusterDetail] = useState<{ cluster: Cluster; domains: Domain[] } | null>(null);
   const [clusterLoading, setClusterLoading] = useState(false);
+  const [clusterBulkWorking, setClusterBulkWorking] = useState<"rescan" | "report" | null>(null);
+  const [clusterSearch, setClusterSearch] = useState("");
 
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
   const [submitValue, setSubmitValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ status: string; domain: string } | null>(null);
   const [cleanupDays, setCleanupDays] = useState(30);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<string | null>(null);
+  const [cleanupPreview, setCleanupPreview] = useState<{ count: number; bytes: number } | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<Record<number, string | null>>({});
+  const [reportFilters, setReportFilters] = useState<{ status: string; platform: string }>({ status: "", platform: "" });
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -459,6 +488,7 @@ export default function App() {
       setStats(data.stats);
       setPendingReports(data.pending_reports || []);
       setHealth(data.health || null);
+      setStatsUpdatedAt(new Date());
     } catch (err) {
       showToast((err as Error).message || "Failed to load stats", "error");
     } finally {
@@ -472,6 +502,12 @@ export default function App() {
     try {
       const res = await fetchDomains(filters);
       setDomains(res.domains);
+      const total = res.total ?? res.count ?? res.domains.length;
+      setDomainsTotal(total);
+      const maxPage = Math.max(1, Math.ceil(total / (filters.limit || 1)));
+      if (filters.page > maxPage) {
+        setFilters((prev) => ({ ...prev, page: maxPage }));
+      }
     } catch (err) {
       setDomainsError((err as Error).message || "Failed to load domains");
     } finally {
@@ -541,17 +577,31 @@ export default function App() {
     }
   }, [route, loadDomainDetail, loadClusters, loadClusterDetail]);
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent | MouseEvent, mode: "submit" | "rescan" = "submit") => {
     e.preventDefault();
-    if (!submitValue.trim()) return;
+    setSubmitError(null);
+    setSubmitResult(null);
+    if (!submitValue.trim()) {
+      setSubmitError("Enter a domain or URL to submit.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await submitTarget(submitValue.trim());
-      showToast(`Submitted ${res.domain}`, "success");
-      setSubmitValue("");
+      const message =
+        res.status === "rescan_queued"
+          ? `Rescan queued for ${res.domain}`
+          : `Submitted ${res.domain}`;
+      showToast(message, "success");
+      setSubmitResult(res);
+      if (mode === "submit") {
+        setSubmitValue("");
+      }
       loadDomains();
     } catch (err) {
-      showToast((err as Error).message || "Submit failed", "error");
+      const msg = (err as Error).message || "Submit failed";
+      setSubmitError(msg);
+      showToast(msg, "error");
     } finally {
       setSubmitting(false);
     }
@@ -559,14 +609,40 @@ export default function App() {
 
   const handleCleanup = async (e: FormEvent) => {
     e.preventDefault();
+    setCleanupError(null);
     setCleanupBusy(true);
     try {
-      const res = await cleanupEvidence(cleanupDays || 30);
-      const msg = `Removed ${res.removed_dirs} evidence directories older than ${cleanupDays} days.`;
+      const days = cleanupDays || 30;
+      const confirm = window.confirm(`Remove evidence older than ${days} days? This cannot be undone.`);
+      if (!confirm) {
+        setCleanupBusy(false);
+        return;
+      }
+      const res = await cleanupEvidence(days);
+      const removedBytes = res.removed_bytes ? ` (~${formatBytes(res.removed_bytes)})` : "";
+      const msg = `Removed ${res.removed_dirs} evidence directories older than ${days} days${removedBytes}.`;
       setCleanupResult(msg);
+      setCleanupPreview(null);
       showToast(msg, "success");
     } catch (err) {
-      showToast((err as Error).message || "Cleanup failed", "error");
+      const msg = (err as Error).message || "Cleanup failed";
+      setCleanupError(msg);
+      showToast(msg, "error");
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+  const handleCleanupPreview = async () => {
+    setCleanupError(null);
+    setCleanupBusy(true);
+    try {
+      const res = await cleanupEvidence(cleanupDays || 30, { preview: true });
+      setCleanupPreview({ count: res.would_remove || 0, bytes: res.would_bytes || 0 });
+    } catch (err) {
+      const msg = (err as Error).message || "Preview failed";
+      setCleanupError(msg);
+      showToast(msg, "error");
     } finally {
       setCleanupBusy(false);
     }
@@ -577,6 +653,18 @@ export default function App() {
     if (!id) {
       showToast("Domain id is missing for this record", "error");
       return;
+    }
+    if (type === "report" && ["reported", "false_positive", "allowlisted"].includes((domain.status || "").toLowerCase())) {
+      showToast("Reporting is not applicable for this domain state", "error");
+      return;
+    }
+    if (type === "false_positive" && (domain.status || "").toLowerCase() === "false_positive") {
+      showToast("Already marked as false positive", "info");
+      return;
+    }
+    if (type === "false_positive") {
+      const ok = window.confirm(`Mark ${domain.domain} as false positive? This will affect reporting and stats.`);
+      if (!ok) return;
     }
     setActionBusy((prev) => ({ ...prev, [id]: type }));
     try {
@@ -599,31 +687,91 @@ export default function App() {
     }
   };
 
+  const bulkTriggerCluster = async (type: "rescan" | "report") => {
+    if (!clusterDetail) return;
+    const domains = (clusterDetail.domains || []).filter((d) => d.id) as Domain[];
+    if (!domains.length) {
+      showToast("No domains with IDs to process in this cluster", "error");
+      return;
+    }
+    const ok = window.confirm(`Queue ${type} for ${domains.length} domains in this cluster?`);
+    if (!ok) return;
+    setClusterBulkWorking(type);
+    try {
+      for (const d of domains) {
+        await triggerAction(d, type);
+      }
+      showToast(`Queued ${type} for ${domains.length} domains`, "success");
+    } finally {
+      setClusterBulkWorking(null);
+    }
+  };
+
   const healthLabel = useMemo(() => {
     if (!health || typeof health !== "object") return "Unknown";
     if ((health as any).ok) return "Healthy";
     return "Unhealthy";
   }, [health]);
 
+  const pendingPlatforms = useMemo(
+    () => Array.from(new Set(pendingReports.map((p) => p.platform).filter(Boolean))),
+    [pendingReports],
+  );
+
+  const filteredPendingReports = useMemo(() => {
+    const list = pendingReports.filter((r) => {
+      const statusOk = !reportFilters.status || (r.status || "").toLowerCase() === reportFilters.status;
+      const platformOk = !reportFilters.platform || r.platform === reportFilters.platform;
+      return statusOk && platformOk;
+    });
+    return [...list].sort((a, b) => {
+      const aDate = new Date(a.next_attempt_at || a.created_at || 0).getTime();
+      const bDate = new Date(b.next_attempt_at || b.created_at || 0).getTime();
+      return aDate - bDate;
+    });
+  }, [pendingReports, reportFilters]);
+
+  const filteredClusters = useMemo(() => {
+    const term = clusterSearch.trim().toLowerCase();
+    if (!term) return clusters;
+    return clusters.filter((c) => {
+      const haystack = `${c.name || ""} ${c.cluster_id || ""} ${(c.members || []).map((m) => m.domain).join(" ")}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [clusters, clusterSearch]);
+
+  const nextReportAttempt = useMemo(() => {
+    if (!domainDetail?.reports) return null;
+    const times = domainDetail.reports
+      .map((r) => r.next_attempt_at)
+      .filter(Boolean) as string[];
+    if (!times.length) return null;
+    return times.sort()[0];
+  }, [domainDetail]);
+
   const statsBlocks = useMemo(() => {
     if (!stats) return null;
+    const refreshed = statsUpdatedAt ? `Refreshed ${timeAgo(statsUpdatedAt.toISOString())}` : "Awaiting data";
     return (
-      <div className="sb-grid" style={{ marginBottom: 12 }}>
-        <div className="col-4">
-          <div className="sb-stat">
-            <div className="sb-stat-label">Total Domains</div>
-            <div className="sb-stat-value">{stats.total}</div>
-            <div className="sb-stat-meta">Last 24h: <b>{stats.last_24h}</b></div>
+      <>
+        <div className="sb-grid" style={{ marginBottom: 12 }}>
+          <div className="col-4">
+            <div className="sb-stat">
+              <div className="sb-stat-label">Total Domains</div>
+              <div className="sb-stat-value">{stats.total}</div>
+              <div className="sb-stat-meta">Last 24h: <b>{stats.last_24h}</b></div>
+            </div>
           </div>
+          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Status</div><Breakdown items={stats.by_status || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, status: key === "all" ? "" : key, page: 1 }))} /></div></div>
+          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Verdict</div><Breakdown items={stats.by_verdict || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, verdict: key === "all" ? "" : key, page: 1 }))} /></div></div>
+          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Reports</div><Breakdown items={stats.reports || {}} /></div></div>
+          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Dashboard Actions</div><Breakdown items={stats.dashboard_actions || {}} /></div></div>
+          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Evidence Storage</div><div className="sb-stat-value">{formatBytes(stats.evidence_bytes)}</div><div className="sb-stat-meta">Approximate evidence size</div></div></div>
         </div>
-        <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Status</div><Breakdown items={stats.by_status || {}} /></div></div>
-        <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Verdict</div><Breakdown items={stats.by_verdict || {}} /></div></div>
-        <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Reports</div><Breakdown items={stats.reports || {}} /></div></div>
-        <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Dashboard Actions</div><Breakdown items={stats.dashboard_actions || {}} /></div></div>
-        <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Evidence Storage</div><div className="sb-stat-value">{formatBytes(stats.evidence_bytes)}</div><div className="sb-stat-meta">Approximate evidence size</div></div></div>
-      </div>
+        <div className="sb-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 12 }}>{refreshed}</div>
+      </>
     );
-  }, [stats]);
+  }, [stats, statsUpdatedAt, setFilters]);
 
   const healthPanel = (stats?.evidence_bytes !== undefined || stats?.total !== undefined) && (
     <div className="sb-panel" id="health-panel" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
@@ -641,78 +789,125 @@ export default function App() {
   const dashboardView = (
     <>
       {statsBlocks}
-      <div className="sb-grid">
-        <div className="col-8">
+
+      {/* Action panels row - full width, side by side */}
+      <div className="sb-grid" style={{ marginBottom: 16 }}>
+        <div className="col-4">
           {healthPanel}
-          <DomainTable
-            domains={domains}
-            loading={domainsLoading}
-            error={domainsError}
-            filters={filters}
-            onFiltersChange={(next) => setFilters((prev) => ({ ...prev, ...next }))}
-            onPage={(nextPage) => setFilters((prev) => ({ ...prev, page: nextPage }))}
-            onView={(id) => { window.location.hash = `#/domains/${id}`; }}
-            onRescan={(d) => triggerAction(d, "rescan")}
-            onReport={(d) => triggerAction(d, "report")}
-            onFalsePositive={(d) => triggerAction(d, "false_positive")}
-            actionBusy={actionBusy}
-          />
         </div>
         <div className="col-4">
-          <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)" }}>
+          <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", height: "100%" }}>
             <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
               <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
-              <span className="sb-muted">Submit or rescan</span>
             </div>
-            <form onSubmit={handleSubmit} className="sb-grid" style={{ gap: 10 }}>
-              <div className="col-12">
-                <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} />
+            <form onSubmit={(e) => handleSubmit(e, "submit")}>
+              <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ marginBottom: 10 }} />
+              <div className="sb-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+                <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
+                  {submitting ? "Working…" : "Force Rescan"}
+                </button>
+                <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
               </div>
-              <div className="col-12" style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit / Rescan"}</button>
-              </div>
+              {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
+              {submitResult && (
+                <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
+                  {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
+                </div>
+              )}
             </form>
           </div>
-
-          <div className="sb-panel" style={{ borderColor: "rgba(63, 185, 80, 0.3)" }}>
+        </div>
+        <div className="col-4">
+          <div className="sb-panel" style={{ borderColor: "rgba(63, 185, 80, 0.3)", height: "100%" }}>
             <div className="sb-panel-header" style={{ borderColor: "rgba(63, 185, 80, 0.2)" }}>
               <span className="sb-panel-title" style={{ color: "var(--accent-green)" }}>Evidence Cleanup</span>
-              <span className="sb-muted">Remove older evidence</span>
             </div>
-            <form onSubmit={handleCleanup} className="sb-row">
-              <input className="sb-input" type="number" min={1} value={cleanupDays} onChange={(e) => setCleanupDays(Number(e.target.value) || 1)} style={{ width: 120 }} />
-              <button className="sb-btn" type="submit" disabled={cleanupBusy}>{cleanupBusy ? "Cleaning…" : "Cleanup"}</button>
-            </form>
+            <div className="sb-row" style={{ alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+              <input className="sb-input" type="number" min={1} value={cleanupDays} onChange={(e) => setCleanupDays(Number(e.target.value) || 1)} style={{ width: 80 }} />
+              <span className="sb-muted">days old</span>
+              <button className="sb-btn" type="button" disabled={cleanupBusy} onClick={handleCleanupPreview}>{cleanupBusy ? "Working…" : "Preview"}</button>
+              <button className="sb-btn sb-btn-danger" type="button" disabled={cleanupBusy} onClick={handleCleanup}>{cleanupBusy ? "Cleaning…" : "Cleanup"}</button>
+            </div>
+            {cleanupPreview && (
+              <div className="sb-notice" style={{ marginTop: 8 }}>
+                Would remove <b>{cleanupPreview.count}</b> directories (~{formatBytes(cleanupPreview.bytes)})
+              </div>
+            )}
             {cleanupResult && <div className="sb-muted" style={{ marginTop: 8 }}>{cleanupResult}</div>}
+            {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{cleanupError}</div>}
           </div>
-
-          {pendingReports.length > 0 && (
-            <div className="sb-panel" style={{ borderColor: "rgba(240, 136, 62, 0.3)" }}>
-              <div className="sb-panel-header" style={{ borderColor: "rgba(240, 136, 62, 0.2)" }}>
-                <span className="sb-panel-title" style={{ color: "var(--accent-orange)" }}>Reports Needing Attention</span>
-                <span className="sb-muted">showing up to 50</span>
-              </div>
-              <div className="sb-table-wrap">
-                <table className="sb-table">
-                  <thead>
-                    <tr><th>Domain</th><th>Platform</th><th>Status</th><th>Next Attempt</th></tr>
-                  </thead>
-                  <tbody>
-                    {pendingReports.slice(0, 50).map((r) => (
-                      <tr key={`${r.domain}-${r.platform}`}>
-                        <td><a className="domain-link" href={r.domain_id ? `#/domains/${r.domain_id}` : undefined}>{r.domain}</a></td>
-                        <td>{r.platform}</td>
-                        <td><span className={badgeClass(r.status, "report")}>{(r.status || "").toUpperCase()}</span></td>
-                        <td className="sb-muted">{(r as any).next_attempt_at || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Reports Needing Attention - full width when present */}
+      {pendingReports.length > 0 && (
+        <div className="sb-panel" style={{ borderColor: "rgba(240, 136, 62, 0.3)", marginBottom: 16 }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(240, 136, 62, 0.2)" }}>
+            <span className="sb-panel-title" style={{ color: "var(--accent-orange)" }}>Reports Needing Attention ({filteredPendingReports.length})</span>
+            <div className="sb-row" style={{ gap: 8 }}>
+              <select
+                className="sb-select"
+                value={reportFilters.status}
+                onChange={(e) => setReportFilters((prev) => ({ ...prev, status: e.target.value }))}
+              >
+                <option value="">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="manual_required">Manual</option>
+                <option value="rate_limited">Rate Limited</option>
+              </select>
+              <select
+                className="sb-select"
+                value={reportFilters.platform}
+                onChange={(e) => setReportFilters((prev) => ({ ...prev, platform: e.target.value }))}
+              >
+                <option value="">All Platforms</option>
+                {pendingPlatforms.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="sb-table-wrap">
+            <table className="sb-table">
+              <thead>
+                <tr><th>Domain</th><th>Platform</th><th>Status</th><th>Attempts</th><th>Next Attempt</th><th>Last Response</th></tr>
+              </thead>
+              <tbody>
+                {filteredPendingReports.slice(0, 20).map((r) => (
+                  <tr key={`${r.domain}-${r.platform}`}>
+                    <td><a className="domain-link" href={r.domain_id ? `#/domains/${r.domain_id}` : undefined}>{r.domain}</a></td>
+                    <td>{r.platform}</td>
+                    <td><span className={badgeClass(r.status, "report")}>{(r.status || "").toUpperCase()}</span></td>
+                    <td className="sb-muted">{r.attempts ?? "—"}</td>
+                    <td className="sb-muted">{r.next_attempt_at ? timeAgo(r.next_attempt_at) : "—"}</td>
+                    <td className="sb-muted" style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.response || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Domain table - full width */}
+      <DomainTable
+        domains={domains}
+        loading={domainsLoading}
+        error={domainsError}
+        total={domainsTotal}
+        filters={filters}
+        onFiltersChange={(next) => setFilters((prev) => ({ ...prev, ...next }))}
+        onPage={(nextPage) => {
+          setFilters((prev) => {
+            const maxPage = Math.max(1, Math.ceil((domainsTotal || 0) / (prev.limit || 1)) || 1);
+            const clamped = Math.min(Math.max(1, nextPage), maxPage);
+            return { ...prev, page: clamped };
+          });
+        }}
+        onView={(id) => { window.location.hash = `#/domains/${id}`; }}
+        onRescan={(d) => triggerAction(d, "rescan")}
+        onReport={(d) => triggerAction(d, "report")}
+        onFalsePositive={(d) => triggerAction(d, "false_positive")}
+        actionBusy={actionBusy}
+      />
     </>
   );
 
@@ -720,23 +915,54 @@ export default function App() {
     <div className="sb-panel">
       <div className="sb-panel-header">
         <span className="sb-panel-title">Threat Clusters</span>
-        <span className="sb-muted">{clusters.length} clusters</span>
+        <div className="sb-row" style={{ gap: 12 }}>
+          <input
+            className="sb-input"
+            placeholder="Search clusters or domains"
+            value={clusterSearch}
+            onChange={(e) => setClusterSearch(e.target.value)}
+            style={{ width: 280 }}
+          />
+          <span className="sb-muted">{filteredClusters.length} clusters</span>
+        </div>
       </div>
       {clusterLoading && <div className="sb-muted">Loading clusters…</div>}
-      {!clusterLoading && clusters.length === 0 && <div className="sb-muted">No clusters yet.</div>}
-      {!clusterLoading && clusters.length > 0 && (
-        <div className="sb-grid" style={{ gap: 12 }}>
-          {clusters.map((c) => (
-            <div key={c.cluster_id} className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)" }}>
-              <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
-                <div>
-                  <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.cluster_id}</div>
-                  <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
+      {!clusterLoading && filteredClusters.length === 0 && <div className="sb-muted">No clusters yet.</div>}
+      {!clusterLoading && filteredClusters.length > 0 && (
+        <div className="sb-grid" style={{ gap: 16 }}>
+          {filteredClusters.map((c) => {
+            const indicators = [
+              ...(c.shared_backends || []),
+              ...(c.shared_nameservers || []),
+              ...(c.shared_kits || []),
+            ].slice(0, 3);
+            return (
+              <div key={c.cluster_id} className="col-6">
+                <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", margin: 0 }}>
+                  <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
+                    <div>
+                      <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.cluster_id}</div>
+                      <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
+                    </div>
+                    <a className="sb-btn" href={`#/clusters/${c.cluster_id}`}>View</a>
+                  </div>
+                  <div className="sb-breakdown">
+                    {(c.members || []).slice(0, 3).map((m) => (
+                      <div key={m.domain} className="sb-breakdown-item">
+                        <span className="sb-breakdown-key">{m.domain}</span>
+                        <span className="sb-muted">{m.added_at || ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {indicators.length > 0 && (
+                    <div className="sb-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                      {indicators.map((ind) => <code key={ind as string} className="sb-code">{ind as string}</code>)}
+                    </div>
+                  )}
                 </div>
-                <a className="sb-btn" href={`#/clusters/${c.cluster_id}`}>View</a>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -745,80 +971,118 @@ export default function App() {
   const clusterDetailView = (
     <div className="sb-grid" style={{ gap: 12 }}>
       <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back</a></div>
+      {clusterDetail?.cluster && (
+        <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
+            {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
+          </button>
+          <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
+            {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
+          </button>
+          <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Cluster PDF</a>
+          <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Cluster Package</a>
+        </div>
+      )}
       {clusterLoading && <div className="sb-muted">Loading cluster…</div>}
       {!clusterLoading && <ClusterCard cluster={clusterDetail?.cluster} related={clusterDetail?.domains || []} />}
     </div>
   );
 
   const domainDetailView = (
-    <div className="sb-grid" style={{ gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="sb-row"><a className="sb-btn" href="#/">&larr; Back</a></div>
       {domainDetailLoading && (
         <div className="sb-panel"><div className="skeleton" style={{ height: 24, marginBottom: 10 }} /><div className="skeleton" style={{ height: 12 }} /></div>
       )}
       {!domainDetailLoading && domainDetail && (
         <>
+          {(domainDetail.domain.action_required || domainDetail.domain.operator_notes) && (
+            <div className={`sb-flash ${domainDetail.domain.action_required ? "sb-flash-error" : "sb-flash-success"}`}>
+              {domainDetail.domain.action_required || domainDetail.domain.operator_notes}
+            </div>
+          )}
+
+          {/* Main domain info panel */}
           <div className="sb-panel">
-            <div className="sb-row sb-space-between" style={{ alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 700 }}>{domainDetail.domain.domain}</div>
+            <div className="sb-row sb-space-between" style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>{domainDetail.domain.domain}</div>
                 <div className="sb-row" style={{ gap: 8, flexWrap: "wrap" }}>
                   <span className={badgeClass(domainDetail.domain.status, "status")}>{(domainDetail.domain.status || "unknown").toUpperCase()}</span>
                   <span className={badgeClass(domainDetail.domain.verdict, "verdict")}>{(domainDetail.domain.verdict || "unknown").toUpperCase()}</span>
                   <span className="sb-muted">ID: {domainDetail.domain.id ?? "N/A"}</span>
+                  {domainDetail.domain.last_checked_at && <span className="sb-muted">Last checked {timeAgo(domainDetail.domain.last_checked_at)}</span>}
                 </div>
               </div>
-              <div className="sb-row" style={{ flexWrap: "wrap" }}>
+              <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
                 <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning…" : "Rescan"}
+                  {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning\u2026" : "Rescan"}
                 </button>
                 <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting…" : "Report"}
+                  {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting\u2026" : "Report"}
                 </button>
                 <button className="sb-btn sb-btn-danger" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "false_positive")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "false_positive" ? "Marking…" : "False Positive"}
+                  {actionBusy[domainDetail.domain.id || 0] === "false_positive" ? "Marking\u2026" : "False Positive"}
                 </button>
               </div>
             </div>
-            <div className="sb-grid" style={{ marginTop: 12 }}>
+
+            {/* Metadata grid */}
+            <div className="sb-grid" style={{ marginTop: 16, gap: 12 }}>
               {[
-                ["Domain score", (domainDetail.domain as any).domain_score ?? (domainDetail.domain as any).score ?? "—"],
-                ["Analysis score", (domainDetail.domain as any).analysis_score ?? "—"],
-                ["Source", domainDetail.domain.source || "—"],
-                ["First seen", domainDetail.domain.first_seen || "—"],
-                ["Analyzed at", domainDetail.domain.analyzed_at || "—"],
-                ["Reported at", (domainDetail.domain as any).reported_at || "—"],
-                ["Updated", domainDetail.domain.updated_at || "—"],
+                ["Domain score", (domainDetail.domain as any).domain_score ?? (domainDetail.domain as any).score ?? "\u2014"],
+                ["Analysis score", (domainDetail.domain as any).analysis_score ?? "\u2014"],
+                ["Source", domainDetail.domain.source || "\u2014"],
+                ["First seen", domainDetail.domain.first_seen || "\u2014"],
+                ["Analyzed at", domainDetail.domain.analyzed_at || "\u2014"],
+                ["Reported at", (domainDetail.domain as any).reported_at || "\u2014"],
+                ["Updated", domainDetail.domain.updated_at || "\u2014"],
               ].map(([label, value]) => (
-                <div key={label as string} className="col-4">
+                <div key={label as string} className="col-3">
                   <div className="sb-label">{label as string}</div>
                   <div className="sb-muted">{value as string}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Download links */}
+            <div className="sb-row" style={{ flexWrap: "wrap", marginTop: 16, gap: 8 }}>
+              {domainDetail.domain.id && (
+                <>
+                  <a className="sb-btn" href={`/admin/domains/${domainDetail.domain.id}/pdf`} target="_blank" rel="noreferrer">Download PDF</a>
+                  <a className="sb-btn" href={`/admin/domains/${domainDetail.domain.id}/package`} target="_blank" rel="noreferrer">Download Package</a>
+                </>
+              )}
+              {domainDetail.reports && domainDetail.reports.length > 0 && (
+                <span className="sb-muted">
+                  Next report attempt: {nextReportAttempt || "\u2014"}
+                </span>
+              )}
             </div>
           </div>
 
           <EvidenceSection data={domainDetail} />
           <ReportsTable data={domainDetail} />
 
-          <div className="sb-grid">
+          {/* Verdict and Notes panels */}
+          <div className="sb-grid" style={{ gap: 16 }}>
             <div className="col-6">
-              <div className="sb-panel">
+              <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Verdict Reasons</span></div>
                 {domainDetail.domain.verdict_reasons ? (
                   <pre className="sb-pre">{domainDetail.domain.verdict_reasons as any}</pre>
                 ) : (
-                  <div className="sb-muted">—</div>
+                  <div className="sb-muted">\u2014</div>
                 )}
               </div>
             </div>
             <div className="col-6">
-              <div className="sb-panel">
+              <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Operator Notes</span></div>
                 {domainDetail.domain.operator_notes ? (
                   <pre className="sb-pre">{domainDetail.domain.operator_notes as any}</pre>
                 ) : (
-                  <div className="sb-muted">—</div>
+                  <div className="sb-muted">\u2014</div>
                 )}
               </div>
             </div>
@@ -829,6 +1093,7 @@ export default function App() {
       )}
     </div>
   );
+
 
   const content = (() => {
     if (route.name === "domain") return domainDetailView;
