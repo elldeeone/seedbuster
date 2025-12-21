@@ -4093,6 +4093,7 @@ class DashboardConfig:
     admin_user: str = "admin"
     admin_password: str = ""
     health_url: str = ""
+    frontend_dir: Path | None = None
 
 
 class DashboardServer:
@@ -4124,6 +4125,12 @@ class DashboardServer:
         self.database = database
         self.evidence_dir = evidence_dir
         self.clusters_dir = clusters_dir
+        self.frontend_dir = Path(
+            config.frontend_dir
+            or os.environ.get("DASHBOARD_FRONTEND_DIST")
+            or Path(__file__).parent / "frontend" / "dist"
+        )
+        self._frontend_available = (self.frontend_dir / "index.html").exists()
         self.submit_callback = submit_callback
         self.rescan_callback = rescan_callback
         self.report_callback = report_callback
@@ -4257,6 +4264,7 @@ class DashboardServer:
         return removed
 
     def _register_routes(self) -> None:
+        # Public (legacy server-rendered) routes remain for now
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
         self._app.router.add_get("/clusters", self._public_clusters)
@@ -4265,34 +4273,69 @@ class DashboardServer:
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
 
-        # Admin
-        self._app.router.add_get("/admin", self._admin_index)
-        self._app.router.add_get("/admin/clusters", self._admin_clusters)
+        # Legacy admin form endpoints (kept for backward compatibility)
         self._app.router.add_post("/admin/submit", self._admin_submit)
-        self._app.router.add_get("/admin/domains/{domain_id}", self._admin_domain)
         self._app.router.add_post("/admin/domains/{domain_id}/update", self._admin_update_domain)
         self._app.router.add_post("/admin/domains/{domain_id}/report", self._admin_report_domain)
         self._app.router.add_post("/admin/domains/{domain_id}/manual_done", self._admin_manual_done)
         self._app.router.add_post("/admin/domains/{domain_id}/rescan", self._admin_rescan)
         self._app.router.add_post("/admin/domains/{domain_id}/false_positive", self._admin_false_positive)
+
         # New evidence/report generation routes
+        self._app.router.add_get("/admin/api/stats", self._admin_api_stats)
         self._app.router.add_get("/admin/api/domains", self._admin_api_domains)
         self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
         self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
+        self._app.router.add_post("/admin/api/domains/{domain_id}/false_positive", self._admin_api_false_positive)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
+        self._app.router.add_get("/admin/api/clusters", self._admin_api_clusters)
+        self._app.router.add_get("/admin/api/clusters/{cluster_id}", self._admin_api_cluster)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
         self._app.router.add_post("/admin/domains/{domain_id}/preview", self._admin_domain_preview)
         # Campaign/cluster routes
-        self._app.router.add_get("/admin/clusters/{cluster_id}", self._admin_cluster_detail)
         self._app.router.add_get("/admin/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
         self._app.router.add_get("/admin/clusters/{cluster_id}/package", self._admin_cluster_package)
         self._app.router.add_post("/admin/clusters/{cluster_id}/preview", self._admin_cluster_preview)
         self._app.router.add_post("/admin/clusters/{cluster_id}/submit", self._admin_cluster_submit)
+
+        # UI routes: prefer SPA when built; fall back to server-rendered HTML otherwise
+        if self._frontend_available:
+            assets_dir = self.frontend_dir / "assets"
+            if assets_dir.exists():
+                self._app.router.add_static("/admin/assets", str(assets_dir), show_index=False)
+            # Legacy HTML fallback (for features not yet ported)
+            self._app.router.add_get("/admin/legacy", self._admin_index)
+            self._app.router.add_get("/admin/legacy/domains/{domain_id}", self._admin_domain)
+            self._app.router.add_get("/admin/legacy/clusters", self._admin_clusters)
+            self._app.router.add_get("/admin/legacy/clusters/{cluster_id}", self._admin_cluster_detail)
+            self._app.router.add_get("/admin", self._serve_frontend)
+            self._app.router.add_get("/admin/", self._serve_frontend)
+            self._app.router.add_get("/admin/{tail:.*}", self._serve_frontend)
+        else:
+            self._app.router.add_get("/admin", self._admin_index)
+            self._app.router.add_get("/admin/clusters", self._admin_clusters)
+            self._app.router.add_get("/admin/domains/{domain_id}", self._admin_domain)
+            self._app.router.add_get("/admin/clusters/{cluster_id}", self._admin_cluster_detail)
+
+    async def _serve_frontend(self, request: web.Request) -> web.Response:
+        """Serve built SPA assets for the admin dashboard."""
+        index_path = self.frontend_dir / "index.html"
+        if not index_path.exists():
+            raise web.HTTPNotFound(text="Frontend not built (run npm run build in frontend/)")
+        try:
+            html_out = index_path.read_text(encoding="utf-8")
+        except Exception:
+            raise web.HTTPInternalServerError(text="Failed to read frontend bundle.")
+        return web.Response(
+            text=html_out,
+            content_type="text/html",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @web.middleware
     async def _admin_auth_middleware(self, request: web.Request, handler):  # type: ignore[override]
@@ -4659,7 +4702,8 @@ class DashboardServer:
                 }});
                 detailsEl.textContent = bits.join(' | ') || '';
               }} catch (err) {{
-                detailsEl.textContent = 'Health check failed: ' + err;
+                statusEl.innerHTML = '<b>Unavailable</b>';
+                detailsEl.textContent = 'Pipeline health endpoint not reachable (is the main pipeline running?)';
               }}
             }}
             refreshHealth();
@@ -4780,55 +4824,8 @@ class DashboardServer:
             }).catch(err => showToast('Copy failed: ' + err, 'error'));
           };
 
-          // Manual Modal Logic
-          window.openManualModal = (panelId) => {
-            const overlay = document.getElementById(panelId + '_overlay');
-            const modal = document.getElementById(panelId + '_modal');
-            if (overlay) overlay.classList.add('visible');
-            if (modal) modal.classList.add('visible');
-          };
-
-          window.closeManualModal = (panelId) => {
-            const overlay = document.getElementById(panelId + '_overlay');
-            const modal = document.getElementById(panelId + '_modal');
-            if (overlay) overlay.classList.remove('visible');
-            if (modal) modal.classList.remove('visible');
-          };
-
-          window.showPlatformDetail = (panelId, platformId) => {
-            // Hide list, show detail
-            const list = document.querySelector(`#${panelId}_modal .sb-platform-list`);
-            if (list) list.style.display = 'none';
-            document.querySelectorAll(`#${panelId}_modal .sb-platform-detail`).forEach(el => el.style.display = 'none');
-            const detail = document.getElementById(platformId + '_detail');
-            if (detail) detail.style.display = 'block';
-            
-            // Update header
-            const backBtn = document.querySelector(`#${panelId}_modal .sb-modal-back`);
-            if (backBtn) backBtn.style.display = 'block';
-            
-            const title = document.getElementById(panelId + '_title');
-            if (title && detail) title.textContent = detail.dataset.platform;
-            
-            const progress = document.getElementById(panelId + '_progress');
-            if (progress) progress.style.display = 'none';
-          };
-
-          window.backToList = (panelId) => {
-            const list = document.querySelector(`#${panelId}_modal .sb-platform-list`);
-            if (list) list.style.display = 'block';
-            document.querySelectorAll(`#${panelId}_modal .sb-platform-detail`).forEach(el => el.style.display = 'none');
-            
-            // Reset header
-            const backBtn = document.querySelector(`#${panelId}_modal .sb-modal-back`);
-            if (backBtn) backBtn.style.display = 'none';
-             
-            const title = document.getElementById(panelId + '_title');
-            if (title) title.textContent = 'Manual Submissions';
-            
-            const progress = document.getElementById(panelId + '_progress');
-            if (progress) progress.style.display = 'block';
-          };
+          // Manual Modal Logic - uses functions defined in layout head (openManualModal, etc.)
+          // These are already defined globally with correct 'open' class handling
 
           let currentConfirm = null;
           window.showConfirmDialog = (platformId, platformName, domainId) => {
@@ -5068,6 +5065,15 @@ class DashboardServer:
     # ------------------------------------------------------------------
     # Admin API (JSON) endpoints for web-first interactions
     # ------------------------------------------------------------------
+    async def _admin_api_stats(self, request: web.Request) -> web.Response:
+        stats = await self.database.get_stats()
+        stats["evidence_bytes"] = self._compute_evidence_bytes()
+        pending_reports = await self.database.get_pending_reports()
+        health_status = await self._fetch_health_status()
+        return web.json_response(
+            {"stats": stats, "pending_reports": pending_reports, "health": health_status}
+        )
+
     async def _admin_api_domains(self, request: web.Request) -> web.Response:
         status = (request.query.get("status") or "").strip().lower()
         verdict = (request.query.get("verdict") or "").strip().lower()
@@ -5095,6 +5101,11 @@ class DashboardServer:
 
         reports = await self.database.get_reports_for_domain(domain_id)
         evidence = {}
+        instruction_files: list[str] = []
+        cluster = self._get_cluster_for_domain(row["domain"])
+        related_domains = await self._enrich_related_domains_with_ids(
+            self._get_related_domains(row["domain"], cluster)
+        )
         try:
             domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
             evidence["html"] = f"/evidence/{domain_dir.name}/page.html" if (domain_dir / "page.html").exists() else None
@@ -5103,10 +5114,23 @@ class DashboardServer:
                 f"/evidence/{domain_dir.name}/{p.name}"
                 for p in sorted(domain_dir.glob("screenshot*.png"))
             ]
+            instruction_files = [
+                f"/evidence/{domain_dir.name}/{p.name}"
+                for p in self._get_instruction_files(domain_dir)
+            ]
         except Exception:
             evidence = {}
 
-        return web.json_response({"domain": row, "reports": reports, "evidence": evidence})
+        return web.json_response(
+            {
+                "domain": row,
+                "reports": reports,
+                "evidence": evidence,
+                "cluster": cluster,
+                "related_domains": related_domains,
+                "instruction_files": instruction_files,
+            }
+        )
 
     async def _admin_api_submit(self, request: web.Request) -> web.Response:
         data = await request.json()
@@ -5164,6 +5188,13 @@ class DashboardServer:
         await self.report_callback(domain_id, domain, platforms, force)
         return web.json_response({"status": "report_enqueued", "domain": domain, "platforms": platforms})
 
+    async def _admin_api_false_positive(self, request: web.Request) -> web.Response:
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+        await self.database.mark_false_positive(domain_id)
+        return web.json_response({"status": "ok"})
+
     async def _admin_api_evidence(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
@@ -5183,6 +5214,23 @@ class DashboardServer:
                     })
         return web.json_response({"files": files})
 
+    async def _admin_api_clusters(self, request: web.Request) -> web.Response:
+        clusters = self._load_clusters()
+        return web.json_response({"clusters": clusters})
+
+    async def _admin_api_cluster(self, request: web.Request) -> web.Response:
+        cluster_id = (request.match_info.get("cluster_id") or "").strip()
+        if not cluster_id:
+            raise web.HTTPBadRequest(text="cluster_id required")
+        clusters = self._load_clusters()
+        cluster = next((c for c in clusters if str(c.get("cluster_id")) == cluster_id), None)
+        if not cluster:
+            raise web.HTTPNotFound(text="Cluster not found")
+        domains = [m.get("domain") for m in cluster.get("members", []) if m.get("domain")]
+        enriched = await self._enrich_related_domains_with_ids(
+            [{"domain": d} for d in domains if d]
+        )
+        return web.json_response({"cluster": cluster, "domains": enriched})
 
     async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
         """Generate and download PDF report for a domain."""

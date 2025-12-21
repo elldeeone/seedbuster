@@ -1,3 +1,10 @@
+FROM node:20-slim AS frontend-build
+WORKDIR /app
+COPY src/dashboard/frontend/package*.json ./
+RUN npm ci
+COPY src/dashboard/frontend/ ./
+RUN npm run build
+
 FROM python:3.11-slim
 
 # Install system dependencies for Playwright
@@ -32,6 +39,7 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY src/ ./src/
 COPY config/ ./config/
+COPY --from=frontend-build /app/dist ./src/dashboard/frontend/dist
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .

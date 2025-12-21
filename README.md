@@ -67,6 +67,16 @@ seedbuster-dashboard
 # or: python -m src.dashboard.main
 ```
 
+**Frontend dev (hot reload):**
+```bash
+cd src/dashboard/frontend
+npm install  # first run
+VITE_ADMIN_AUTH=admin:your_password npm run dev -- --host
+```
+- Visit `http://localhost:5173/admin/` for the React/Vite dashboard with HMR. API calls are proxied to the Python server on `:8080`; set `VITE_ADMIN_AUTH` so dev requests include Basic auth.
+- Build static assets with `npm run build` (output to `src/dashboard/frontend/dist`). The aiohttp server will serve `/admin` from this `dist` folder automatically if it exists, and the Docker image now bundles the built frontend.
+- The legacy server-rendered admin remains reachable at `/admin/legacy` if you need the old view.
+
 ## Telegram Commands
 
 | Command | Description |
