@@ -15,6 +15,9 @@ export interface PendingReport {
   domain_id?: number;
   score?: number;
   created_at?: string;
+   next_attempt_at?: string;
+   attempts?: number;
+   response?: string | null;
 }
 
 export interface Domain {
@@ -36,6 +39,14 @@ export interface Domain {
   operator_notes?: string | null;
   verdict_reasons?: string | null;
   [key: string]: unknown;
+}
+
+export interface DomainsResponse {
+  domains: Domain[];
+  page: number;
+  limit: number;
+  count: number;
+  total?: number;
 }
 
 export interface Report {

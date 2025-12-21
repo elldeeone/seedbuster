@@ -2,6 +2,7 @@ import type {
   Cluster,
   Domain,
   DomainDetailResponse,
+  DomainsResponse,
   PendingReport,
   Stats,
 } from "./types";
@@ -65,7 +66,7 @@ export async function fetchDomains(params: {
   q?: string;
   page?: number;
   limit?: number;
-}): Promise<{ domains: Domain[]; page: number; limit: number; count: number }>
+}): Promise<DomainsResponse>
 {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
@@ -73,7 +74,7 @@ export async function fetchDomains(params: {
   if (params.q) qs.set("q", params.q);
   qs.set("page", String(params.page || 1));
   qs.set("limit", String(params.limit || 100));
-  return request<{ domains: Domain[]; page: number; limit: number; count: number }>(`/domains?${qs.toString()}`);
+  return request<DomainsResponse>(`/domains?${qs.toString()}`);
 }
 
 export async function fetchDomainDetail(domainId: number): Promise<DomainDetailResponse> {
@@ -116,11 +117,14 @@ export async function markFalsePositive(domainId: number): Promise<void> {
   });
 }
 
-export async function cleanupEvidence(days: number): Promise<{ removed_dirs: number }>
+export async function cleanupEvidence(
+  days: number,
+  opts: { preview?: boolean } = {},
+): Promise<{ status: string; removed_dirs?: number; removed_bytes?: number; would_remove?: number; would_bytes?: number; preview?: boolean }>
 {
   return request("/cleanup_evidence", {
     method: "POST",
-    body: JSON.stringify({ days }),
+    body: JSON.stringify({ days, preview: opts.preview }),
   });
 }
 

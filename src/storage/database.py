@@ -466,6 +466,36 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def count_domains(
+        self,
+        *,
+        status: str | None = None,
+        verdict: str | None = None,
+        query: str | None = None,
+    ) -> int:
+        """Return total domains matching filters (for pagination)."""
+        where: list[str] = []
+        params: list[object] = []
+
+        if status:
+            where.append("status = ?")
+            params.append(status.strip().lower())
+        if verdict:
+            where.append("verdict = ?")
+            params.append(verdict.strip().lower())
+        if query:
+            where.append("domain LIKE ?")
+            params.append(f"%{query.strip().lower()}%")
+
+        sql = "SELECT COUNT(*) as count FROM domains"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+
+        async with self._lock:
+            cursor = await self._connection.execute(sql, params)
+            row = await cursor.fetchone()
+            return int(row["count"] or 0)
+
     async def enqueue_dashboard_action(self, kind: str, payload: dict) -> int:
         """Add an admin action requested by the dashboard (processed by the pipeline)."""
         record = {
