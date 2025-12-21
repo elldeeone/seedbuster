@@ -23,11 +23,18 @@ export interface Domain {
   status: string;
   verdict?: string | null;
   score?: number | null;
+  domain_score?: number | null;
+  analysis_score?: number | null;
+  source?: string | null;
+  first_seen?: string | null;
+  analyzed_at?: string | null;
+  reported_at?: string | null;
   created_at?: string;
   updated_at?: string;
   last_checked_at?: string;
   action_required?: string | null;
   operator_notes?: string | null;
+  verdict_reasons?: string | null;
   [key: string]: unknown;
 }
 
@@ -37,6 +44,10 @@ export interface Report {
   status: string;
   result?: string | null;
   created_at?: string;
+  submitted_at?: string;
+  next_attempt_at?: string;
+  attempts?: number;
+  response?: string;
 }
 
 export interface EvidenceSummary {
