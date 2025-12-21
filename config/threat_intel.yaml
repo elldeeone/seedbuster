@@ -1,5 +1,5 @@
-version: '1.17'
-last_updated: '2025-12-14'
+version: '1.19'
+last_updated: '2025-12-19'
 malicious_domains:
 - domain: walrus-app-o5hvw.ondigitalocean.app
   type: exfiltration
@@ -117,6 +117,18 @@ malicious_domains:
   first_seen: '2025-12-14'
   source: seedbuster_auto
   notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+- domain: www.kaspafaq.com/step-1-get-a-kaspa-wallet/
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-19'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+- domain: aboutkaspa.com/how-to-set-up-a-kaspa-wallet-in-5-easy-steps/
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-19'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
 malicious_patterns:
 - pattern: /log-ip
   type: ip_logging

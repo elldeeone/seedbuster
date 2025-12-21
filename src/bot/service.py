@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .formatters import AlertFormatter
-from ..storage.database import DomainStatus, Verdict
+from ..storage.database import DomainStatus
 
 
 @dataclass

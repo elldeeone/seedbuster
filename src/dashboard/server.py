@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlencode, urlparse
 
-from aiohttp import web, ClientSession
+from aiohttp import web
 
 from ..storage.database import Database, DomainStatus, Verdict
 
@@ -4231,7 +4231,7 @@ class DashboardServer:
     def _cleanup_evidence(self, days: int) -> int:
         """Remove evidence older than N days. Returns number of directories removed."""
         import shutil
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta, timezone
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         removed = 0
@@ -4379,7 +4379,7 @@ class DashboardServer:
 
         stats = await self.database.get_stats()
         stats["evidence_bytes"] = self._compute_evidence_bytes()
-        health_status = await self._fetch_health_status()
+        await self._fetch_health_status()
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
@@ -4746,6 +4746,159 @@ class DashboardServer:
 
         # Patch in csrf token without templating engine.
         resp.text = resp.text.replace("__SET_COOKIE__", csrf)
+
+        # Inject Detail Page Scripts
+        resp.text += """
+        <script>
+        (function() {
+          const showToast = (message, type = 'info') => {
+            if (window.sbToast) return window.sbToast(message, type);
+            const t = document.createElement('div');
+            t.className = `sb-toast sb-toast-${type}`;
+            t.textContent = message;
+            document.body.appendChild(t);
+            setTimeout(() => t.classList.add('visible'), 10);
+            setTimeout(() => {
+              t.classList.remove('visible');
+              setTimeout(() => t.remove(), 300);
+            }, 3000);
+          };
+
+          window.copyFieldValue = (fieldId, btnId) => {
+            const el = document.getElementById(fieldId);
+            const btn = document.getElementById(btnId);
+            if (!el || !btn) return;
+            const text = el.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+              const orig = btn.textContent;
+              btn.textContent = 'Copied!';
+              btn.classList.add('copied');
+              setTimeout(() => {
+                btn.textContent = orig;
+                btn.classList.remove('copied');
+              }, 2000);
+            }).catch(err => showToast('Copy failed: ' + err, 'error'));
+          };
+
+          // Manual Modal Logic
+          window.openManualModal = (panelId) => {
+            const overlay = document.getElementById(panelId + '_overlay');
+            const modal = document.getElementById(panelId + '_modal');
+            if (overlay) overlay.classList.add('visible');
+            if (modal) modal.classList.add('visible');
+          };
+
+          window.closeManualModal = (panelId) => {
+            const overlay = document.getElementById(panelId + '_overlay');
+            const modal = document.getElementById(panelId + '_modal');
+            if (overlay) overlay.classList.remove('visible');
+            if (modal) modal.classList.remove('visible');
+          };
+
+          window.showPlatformDetail = (panelId, platformId) => {
+            // Hide list, show detail
+            const list = document.querySelector(`#${panelId}_modal .sb-platform-list`);
+            if (list) list.style.display = 'none';
+            document.querySelectorAll(`#${panelId}_modal .sb-platform-detail`).forEach(el => el.style.display = 'none');
+            const detail = document.getElementById(platformId + '_detail');
+            if (detail) detail.style.display = 'block';
+            
+            // Update header
+            const backBtn = document.querySelector(`#${panelId}_modal .sb-modal-back`);
+            if (backBtn) backBtn.style.display = 'block';
+            
+            const title = document.getElementById(panelId + '_title');
+            if (title && detail) title.textContent = detail.dataset.platform;
+            
+            const progress = document.getElementById(panelId + '_progress');
+            if (progress) progress.style.display = 'none';
+          };
+
+          window.backToList = (panelId) => {
+            const list = document.querySelector(`#${panelId}_modal .sb-platform-list`);
+            if (list) list.style.display = 'block';
+            document.querySelectorAll(`#${panelId}_modal .sb-platform-detail`).forEach(el => el.style.display = 'none');
+            
+            // Reset header
+            const backBtn = document.querySelector(`#${panelId}_modal .sb-modal-back`);
+            if (backBtn) backBtn.style.display = 'none';
+             
+            const title = document.getElementById(panelId + '_title');
+            if (title) title.textContent = 'Manual Submissions';
+            
+            const progress = document.getElementById(panelId + '_progress');
+            if (progress) progress.style.display = 'block';
+          };
+
+          let currentConfirm = null;
+          window.showConfirmDialog = (platformId, platformName, domainId) => {
+             const panelId = `action_required_${domainId}`;
+             const dialog = document.getElementById(panelId + '_confirm');
+             if (!dialog) return;
+             
+             const platformSpan = document.getElementById(panelId + '_confirm_platform');
+             if (platformSpan) platformSpan.textContent = platformName;
+             dialog.classList.add('visible');
+             
+             currentConfirm = { platformId, domainId, panelId };
+          };
+
+          window.hideConfirmDialog = (panelId) => {
+             const dialog = document.getElementById(panelId + '_confirm');
+             if (dialog) dialog.classList.remove('visible');
+             currentConfirm = null;
+          };
+
+          window.confirmMarkDone = async (panelId) => {
+             if (!currentConfirm) return;
+             const { domainId } = currentConfirm;
+             const btn = document.querySelector(`#${currentConfirm.platformId}_detail .sb-detail-done-btn`);
+             
+             if (btn) {
+                 btn.disabled = true;
+                 btn.textContent = 'Marking...';
+             }
+
+             try {
+               // Use FORM submission to match the existing handler expectation if needed, or stick to fetch
+               // The handler _admin_manual_done reads from `await request.post()` or JSON?
+               // It calls `_require_csrf` which reads `request.post()`. 
+               // So we must send form-encoded data or use a hidden form submit.
+               // Let's use a hidden form or fetch with body URLSearchParams.
+               
+               const formData = new URLSearchParams();
+               formData.append('csrf', getCookie('sb_admin_csrf'));
+               formData.append('note', 'Marked via modal');
+               
+               const res = await fetch(`/admin/domains/${domainId}/manual_done`, {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                 body: formData
+               });
+               
+               if (res.ok || res.redirected) {
+                 showToast('Marked as done', 'success');
+                 window.location.reload();
+               } else {
+                 showToast('Failed to mark done', 'error');
+                 if (btn) { btn.disabled = false; btn.textContent = 'Failed'; }
+               }
+             } catch (e) {
+               showToast('Error: ' + e, 'error');
+               if (btn) { btn.disabled = false; btn.textContent = 'Error'; }
+             }
+             
+             hideConfirmDialog(panelId);
+          };
+          
+          function getCookie(name) {
+            const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+            return v ? v[2] : null;
+          }
+
+        })();
+        </script>
+        """
         return resp
 
     async def _admin_update_domain(self, request: web.Request) -> web.Response:
@@ -4957,10 +5110,10 @@ class DashboardServer:
 
     async def _admin_api_submit(self, request: web.Request) -> web.Response:
         data = await request.json()
-        target = (data.get("target") or "").strip()
+        target = (data.get("target") or data.get("domain") or "").strip()
         domain = _extract_hostname(target)
         if not domain:
-            raise web.HTTPBadRequest(text="Invalid domain/URL")
+            return web.json_response({"error": "Invalid domain/URL"}, status=400)
 
         existing = await self.database.get_domain(domain)
         if existing:

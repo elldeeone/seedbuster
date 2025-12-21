@@ -180,7 +180,6 @@ class EvidenceStore:
     def cleanup_old_evidence(self, days: int = 30):
         """Remove evidence older than specified days."""
         import shutil
-        from datetime import timedelta
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 

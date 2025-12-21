@@ -7,18 +7,16 @@ Supports two scopes:
 """
 
 import base64
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from ..analyzer.clustering import ThreatCluster, ThreatClusterManager
+    from ..analyzer.clustering import ThreatClusterManager
     from ..storage.database import Database
     from ..storage.evidence import EvidenceStore
-    from .base import ReportEvidence
 
 logger = logging.getLogger(__name__)
 

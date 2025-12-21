@@ -16,7 +16,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from .formatters import AlertFormatter, AlertData
-from .service import BotService, SubmitResponse, BulkSubmitResult, KeyboardButton
+from .service import BotService, KeyboardButton
 from ..storage.database import Database, DomainStatus, Verdict
 from ..storage.evidence import EvidenceStore
 from ..reporter.base import ReportStatus
