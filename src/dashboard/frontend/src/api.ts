@@ -66,8 +66,7 @@ export async function fetchDomains(params: {
   q?: string;
   page?: number;
   limit?: number;
-}): Promise<DomainsResponse>
-{
+}): Promise<DomainsResponse> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.verdict) qs.set("verdict", params.verdict);
@@ -81,8 +80,7 @@ export async function fetchDomainDetail(domainId: number): Promise<DomainDetailR
   return request<DomainDetailResponse>(`/domains/${domainId}`);
 }
 
-export async function submitTarget(target: string): Promise<{ status: string; domain: string }>
-{
+export async function submitTarget(target: string): Promise<{ status: string; domain: string }> {
   return request("/submit", {
     method: "POST",
     body: JSON.stringify({ target }),
@@ -120,8 +118,7 @@ export async function markFalsePositive(domainId: number): Promise<void> {
 export async function cleanupEvidence(
   days: number,
   opts: { preview?: boolean } = {},
-): Promise<{ status: string; removed_dirs?: number; removed_bytes?: number; would_remove?: number; would_bytes?: number; preview?: boolean }>
-{
+): Promise<{ status: string; removed_dirs?: number; removed_bytes?: number; would_remove?: number; would_bytes?: number; preview?: boolean }> {
   return request("/cleanup_evidence", {
     method: "POST",
     body: JSON.stringify({ days, preview: opts.preview }),
@@ -132,7 +129,29 @@ export async function fetchClusters(): Promise<{ clusters: Cluster[] }> {
   return request("/clusters");
 }
 
-export async function fetchCluster(clusterId: string): Promise<{ cluster: Cluster; domains: Domain[] }>
-{
+export async function fetchCluster(clusterId: string): Promise<{ cluster: Cluster; domains: Domain[] }> {
   return request(`/clusters/${encodeURIComponent(clusterId)}`);
+}
+
+export async function updateDomainStatus(
+  domainId: number,
+  status: string,
+): Promise<void> {
+  await request(`/domains/${domainId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+    skipJson: true,
+  });
+}
+
+export interface PlatformInfo {
+  manual_only: boolean;
+  url: string;
+}
+
+export async function fetchPlatformInfo(): Promise<{
+  platforms: string[];
+  info: Record<string, PlatformInfo>;
+}> {
+  return request("/platforms");
 }

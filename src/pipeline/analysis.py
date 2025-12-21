@@ -457,8 +457,54 @@ class AnalysisEngine:
                 evidence_path=evidence_path,
             )
 
-            # Send alert if suspicious
-            if analysis_score >= self.config.analysis_score_threshold:
+            # Determine if we should send an alert
+            # For monthly rescans of deferred domains, only alert if findings increased
+            should_alert = analysis_score >= self.config.analysis_score_threshold
+            is_watchlist_update = False
+            
+            if scan_reason == ScanReason.RESCAN_MONTHLY:
+                # Get previous snapshot for comparison
+                snapshots = self.temporal.get_snapshots(domain)
+                previous_snapshot = snapshots[-2] if len(snapshots) >= 2 else None
+                
+                if previous_snapshot:
+                    score_increase = analysis_score - previous_snapshot.score
+                    previous_verdict = previous_snapshot.verdict.lower() if previous_snapshot.verdict else "low"
+                    current_verdict = verdict.value.lower()
+                    
+                    # Verdict escalation check
+                    verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
+                    verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(previous_verdict, 0)
+                    
+                    # Seed form is a smoking gun - always alert
+                    seed_form_now_detected = detection.seed_form_detected if detection else False
+                    
+                    # Only alert if meaningful change detected
+                    should_alert = (
+                        should_alert and (
+                            score_increase >= 10 or
+                            verdict_escalated or
+                            seed_form_now_detected
+                        )
+                    )
+                    
+                    if should_alert:
+                        is_watchlist_update = True
+                        logger.info(
+                            f"Watchlist update for {domain}: score change {previous_snapshot.score}→{analysis_score}, "
+                            f"verdict {previous_verdict}→{current_verdict}, seed_form={seed_form_now_detected}"
+                        )
+                    else:
+                        logger.info(
+                            f"No significant change for deferred domain {domain}: "
+                            f"score {previous_snapshot.score}→{analysis_score}, skipping notification"
+                        )
+                else:
+                    # First rescan, treat it as a watchlist update if alerting
+                    is_watchlist_update = should_alert
+            
+            # Send alert if criteria met
+            if should_alert:
                 if self.config.report_require_approval and analysis_score >= self.config.report_min_score:
                     try:
                         await self.report_manager.ensure_pending_reports(domain_id=domain_id)
@@ -547,6 +593,7 @@ class AnalysisEngine:
                     cluster=cluster_info,
                     seed_form_found=detection.seed_form_detected if detection else False,
                     learning=learning_info,
+                    is_watchlist_update=is_watchlist_update,
                 ))
 
             if (

@@ -496,6 +496,32 @@ class Database:
             row = await cursor.fetchone()
             return int(row["count"] or 0)
 
+    async def get_deferred_domains_due_rescan(
+        self,
+        days_since_update: int = 30,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Get deferred domains that haven't been checked in X days.
+        
+        Used for watchlist/monitoring - periodic rescans of suspicious domains.
+        """
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT * FROM domains
+                WHERE status = 'deferred'
+                  AND (
+                    updated_at IS NULL
+                    OR updated_at < datetime('now', ? || ' days')
+                  )
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (f"-{days_since_update}", limit),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
     async def enqueue_dashboard_action(self, kind: str, payload: dict) -> int:
         """Add an admin action requested by the dashboard (processed by the pipeline)."""
         record = {

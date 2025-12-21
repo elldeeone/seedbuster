@@ -72,6 +72,7 @@ class AlertData:
     cluster: Optional[ClusterInfo] = None  # Threat cluster info
     seed_form_found: bool = False  # True if seed phrase entry form was discovered
     learning: Optional[LearningInfo] = None  # Auto-learning info
+    is_watchlist_update: bool = False  # True for deferred domain rescans with significant changes
 
 
 class AlertFormatter:
@@ -99,7 +100,19 @@ class AlertFormatter:
 
         # Determine header based on temporal status
         temporal = data.temporal
-        if temporal and not temporal.is_initial_scan:
+        if data.is_watchlist_update:
+            # Watchlist domain with significant change detected
+            header = "\U0001F514 WATCHLIST UPDATE"
+            if temporal and temporal.previous_score is not None:
+                score_change = data.score - temporal.previous_score
+                header += f" (Score: {temporal.previous_score} \u2192 {data.score}"
+                if score_change > 0:
+                    header += f" \u2191{score_change})"
+                elif score_change < 0:
+                    header += f" \u2193{abs(score_change)})"
+                else:
+                    header += ")"
+        elif temporal and not temporal.is_initial_scan:
             # This is a rescan update
             header = f"\U0001F504 RESCAN UPDATE (Scan {temporal.scan_number}/{temporal.total_scans})"
             if temporal.previous_score is not None:

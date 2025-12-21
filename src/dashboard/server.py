@@ -4324,10 +4324,12 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
         self._app.router.add_post("/admin/api/domains/{domain_id}/false_positive", self._admin_api_false_positive)
+        self._app.router.add_patch("/admin/api/domains/{domain_id}/status", self._admin_api_update_domain_status)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
         self._app.router.add_get("/admin/api/clusters", self._admin_api_clusters)
         self._app.router.add_get("/admin/api/clusters/{cluster_id}", self._admin_api_cluster)
+        self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
@@ -5236,12 +5238,39 @@ class DashboardServer:
         await self.report_callback(domain_id, domain, platforms, force)
         return web.json_response({"status": "report_enqueued", "domain": domain, "platforms": platforms})
 
+    async def _admin_api_platforms(self, request: web.Request) -> web.Response:
+        """Return available reporting platforms with their metadata."""
+        platforms = self.get_available_platforms()
+        info = self.get_platform_info()
+        return web.json_response({"platforms": platforms, "info": info})
+
     async def _admin_api_false_positive(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
         await self.database.mark_false_positive(domain_id)
         return web.json_response({"status": "ok"})
+
+    async def _admin_api_update_domain_status(self, request: web.Request) -> web.Response:
+        """Update domain status (PATCH /admin/api/domains/{domain_id}/status)."""
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        data = await request.json()
+        new_status = (data.get("status") or "").strip().lower()
+
+        # Validate status
+        valid_statuses = {s.value for s in DomainStatus}
+        if new_status not in valid_statuses:
+            return web.json_response(
+                {"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"},
+                status=400,
+            )
+
+        # Update via database
+        await self.database.update_domain_status(domain_id, DomainStatus(new_status))
+        return web.json_response({"status": "ok", "new_status": new_status})
 
     async def _admin_api_evidence(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)

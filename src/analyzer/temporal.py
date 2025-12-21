@@ -24,6 +24,7 @@ class ScanReason(Enum):
     RESCAN_12H = "rescan_12h"
     RESCAN_24H = "rescan_24h"
     RESCAN_48H = "rescan_48h"
+    RESCAN_MONTHLY = "rescan_monthly"  # For deferred (watchlist) domains
     MANUAL = "manual"
     CONTENT_CHANGE = "content_change"
     CLOAKING_CHECK = "cloaking_check"

@@ -348,6 +348,7 @@ class SeedBusterPipeline:
             asyncio.create_task(self._dashboard_actions_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
             asyncio.create_task(self._report_retry_worker()),
+            asyncio.create_task(self._deferred_rescan_worker()),
         ]
         if self.search_discovery:
             self._tasks.append(asyncio.create_task(self.search_discovery.run_loop()))
@@ -692,6 +693,49 @@ class SeedBusterPipeline:
                 await asyncio.sleep(60)
 
         logger.info("Report retry worker stopped")
+
+    async def _deferred_rescan_worker(self):
+        """Periodically rescan deferred (watchlist) domains.
+        
+        Checks for domains with status='deferred' that haven't been updated
+        in DEFERRED_RESCAN_DAYS (default 30). Triggers rescans so we can
+        detect if suspicious domains become more malicious over time.
+        """
+        import os
+        logger.info("Deferred rescan worker started")
+
+        # Configurable via environment variable
+        rescan_days = int(os.environ.get("DEFERRED_RESCAN_DAYS", "30"))
+        # Check once every 6 hours
+        check_interval_seconds = 6 * 60 * 60
+
+        while self._running:
+            try:
+                domains = await self.database.get_deferred_domains_due_rescan(
+                    days_since_update=rescan_days,
+                    limit=10,
+                )
+
+                if domains:
+                    logger.info(f"Found {len(domains)} deferred domains due for rescan")
+
+                for row in domains:
+                    domain = str(row.get("domain") or "").strip()
+                    if not domain:
+                        continue
+
+                    logger.info(f"Queueing monthly rescan for deferred domain: {domain}")
+                    await self._handle_rescan(domain, ScanReason.RESCAN_MONTHLY)
+
+                await asyncio.sleep(check_interval_seconds)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Deferred rescan worker error: {e}")
+                await asyncio.sleep(60)
+
+        logger.info("Deferred rescan worker stopped")
 
     async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
         """Delegate to AnalysisEngine (moved to pipeline.analysis)."""

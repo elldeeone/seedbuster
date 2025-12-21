@@ -7,12 +7,14 @@ import {
   fetchClusters,
   fetchDomainDetail,
   fetchDomains,
+  fetchPlatformInfo,
   fetchStats,
   markFalsePositive,
   reportDomain,
   rescanDomain,
   submitTarget,
 } from "./api";
+import type { PlatformInfo } from "./api";
 import type { Cluster, Domain, DomainDetailResponse, PendingReport, Stats } from "./types";
 
 type Route =
@@ -467,6 +469,16 @@ export default function App() {
   const [actionBusy, setActionBusy] = useState<Record<number, string | null>>({});
   const [reportFilters, setReportFilters] = useState<{ status: string; platform: string }>({ status: "", platform: "" });
 
+  // Report Panel state
+  const [reportPanelOpen, setReportPanelOpen] = useState(false);
+  const [reportPanelDomain, setReportPanelDomain] = useState<Domain | null>(null);
+  const [reportPanelPlatforms, setReportPanelPlatforms] = useState<string[]>([]);
+  const [reportPanelInfo, setReportPanelInfo] = useState<Record<string, PlatformInfo>>({});
+  const [reportPanelSelected, setReportPanelSelected] = useState<Set<string>>(new Set());
+  const [reportPanelSubmitting, setReportPanelSubmitting] = useState(false);
+  const [reportPanelManualMode, setReportPanelManualMode] = useState<string | null>(null);
+  const [reportPanelManualQueue, setReportPanelManualQueue] = useState<string[]>([]);
+
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     window.addEventListener("hashchange", onHash);
@@ -648,16 +660,48 @@ export default function App() {
     }
   };
 
+  // Open the report panel for a domain
+  const openReportPanel = async (domain: Domain) => {
+    if (!domain.id) {
+      showToast("Domain id is missing for this record", "error");
+      return;
+    }
+    if (["reported", "false_positive", "allowlisted"].includes((domain.status || "").toLowerCase())) {
+      showToast("Reporting is not applicable for this domain state", "error");
+      return;
+    }
+
+    setReportPanelDomain(domain);
+    setReportPanelOpen(true);
+    setReportPanelManualMode(null);
+    setReportPanelManualQueue([]);
+    setReportPanelSelected(new Set());
+
+    // Fetch available platforms
+    try {
+      const data = await fetchPlatformInfo();
+      setReportPanelPlatforms(data.platforms || []);
+      setReportPanelInfo(data.info || {});
+      // Pre-select all platforms by default
+      setReportPanelSelected(new Set(data.platforms || []));
+    } catch (err) {
+      showToast((err as Error).message || "Failed to load platforms", "error");
+    }
+  };
+
   const triggerAction = async (domain: Domain, type: "rescan" | "report" | "false_positive") => {
     const id = domain.id;
     if (!id) {
       showToast("Domain id is missing for this record", "error");
       return;
     }
-    if (type === "report" && ["reported", "false_positive", "allowlisted"].includes((domain.status || "").toLowerCase())) {
-      showToast("Reporting is not applicable for this domain state", "error");
+
+    // For report, open the panel instead of direct API call
+    if (type === "report") {
+      openReportPanel(domain);
       return;
     }
+
     if (type === "false_positive" && (domain.status || "").toLowerCase() === "false_positive") {
       showToast("Already marked as false positive", "info");
       return;
@@ -671,9 +715,6 @@ export default function App() {
       if (type === "rescan") {
         await rescanDomain(id, domain.domain);
         showToast(`Rescan queued for ${domain.domain}`, "success");
-      } else if (type === "report") {
-        await reportDomain(id, domain.domain);
-        showToast(`Report enqueued for ${domain.domain}`, "success");
       } else {
         await markFalsePositive(id);
         showToast(`Marked ${domain.domain} as false positive`, "success");
@@ -1128,6 +1169,208 @@ export default function App() {
 
       <div id="sb-toast-container" className="sb-toast-container" aria-live="polite">
         {toast && <Toast message={toast.message} tone={toast.tone} />}
+      </div>
+
+      {/* Report Panel Slide-out */}
+      <div className={`sb-slideout-overlay ${reportPanelOpen ? "open" : ""}`} onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }} />
+      <div className={`sb-slideout-panel ${reportPanelOpen ? "open" : ""}`}>
+        {reportPanelOpen && reportPanelDomain && (
+          <>
+            <div className="sb-slideout-header">
+              <span className="sb-slideout-title">
+                {reportPanelManualMode ? `${reportPanelManualMode.toUpperCase()} Manual Submission` : `Report ${reportPanelDomain.domain}`}
+              </span>
+              <button className="sb-slideout-close" onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }}>×</button>
+            </div>
+            <div className="sb-slideout-body">
+              {reportPanelManualMode ? (
+                <>
+                  {/* Progress indicator */}
+                  {reportPanelManualQueue.length > 1 && (
+                    <div style={{ marginBottom: 16, padding: "8px 12px", background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)" }}>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+                        Platform {reportPanelManualQueue.indexOf(reportPanelManualMode) + 1} of {reportPanelManualQueue.length}
+                      </div>
+                      <div style={{ height: 4, background: "var(--border-default)", borderRadius: 2 }}>
+                        <div style={{ height: "100%", background: "var(--accent-blue)", borderRadius: 2, width: `${((reportPanelManualQueue.indexOf(reportPanelManualMode) + 1) / reportPanelManualQueue.length) * 100}%` }} />
+                      </div>
+                    </div>
+                  )}
+
+                  {reportPanelInfo[reportPanelManualMode]?.url && (
+                    <div className="sb-manual-cta">
+                      <a className="sb-manual-cta-btn" href={reportPanelInfo[reportPanelManualMode].url} target="_blank" rel="noopener noreferrer">
+                        ↗ Open {reportPanelManualMode.charAt(0).toUpperCase() + reportPanelManualMode.slice(1)} Abuse Form
+                      </a>
+                    </div>
+                  )}
+                  <div className="sb-copy-field">
+                    <div className="sb-copy-field-label">Full URL</div>
+                    <div className="sb-copy-field-value" style={{ position: "relative" }}>
+                      {`https://${reportPanelDomain.domain}`}
+                      <button className="sb-copy-btn" onClick={(e) => {
+                        navigator.clipboard.writeText(`https://${reportPanelDomain.domain}`);
+                        const btn = e.currentTarget;
+                        btn.textContent = "Copied!";
+                        btn.classList.add("copied");
+                        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                      }}>Copy</button>
+                    </div>
+                  </div>
+                  {domainDetail?.evidence?.screenshots && domainDetail.evidence.screenshots.length > 0 && (
+                    <div className="sb-copy-field">
+                      <div className="sb-copy-field-label">Screenshot URLs (for reference)</div>
+                      <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                        {domainDetail.evidence.screenshots.slice(0, 3).join("\n")}
+                        <button className="sb-copy-btn" onClick={(e) => {
+                          const screenshots = domainDetail?.evidence?.screenshots || [];
+                          navigator.clipboard.writeText(screenshots.slice(0, 3).join("\n"));
+                          const btn = e.currentTarget;
+                          btn.textContent = "Copied!";
+                          btn.classList.add("copied");
+                          setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                        }}>Copy</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="sb-manual-notes">
+                    <div className="sb-manual-notes-title">Tips</div>
+                    <ul>
+                      <li>Copy the URL and paste into the abuse form</li>
+                      <li>Most forms only need the URL</li>
+                    </ul>
+                  </div>
+                  <div style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(() => {
+                      const currentIndex = reportPanelManualQueue.indexOf(reportPanelManualMode);
+                      const hasNext = currentIndex < reportPanelManualQueue.length - 1;
+                      const nextPlatform = hasNext ? reportPanelManualQueue[currentIndex + 1] : null;
+
+                      return (
+                        <>
+                          {hasNext ? (
+                            <button
+                              className="sb-btn sb-btn-primary"
+                              onClick={() => setReportPanelManualMode(nextPlatform!)}
+                            >
+                              ✓ Done — Next: {nextPlatform!.charAt(0).toUpperCase() + nextPlatform!.slice(1)}
+                            </button>
+                          ) : (
+                            <button
+                              className="sb-btn sb-btn-primary"
+                              onClick={() => {
+                                setReportPanelOpen(false);
+                                setReportPanelManualMode(null);
+                                setReportPanelManualQueue([]);
+                                loadDomains();
+                                if (route.name === "domain" && reportPanelDomain.id) {
+                                  loadDomainDetail(reportPanelDomain.id);
+                                }
+                                showToast("All manual submissions complete!", "success");
+                              }}
+                            >
+                              ✓ Done — Close
+                            </button>
+                          )}
+                          <button className="sb-btn" onClick={() => {
+                            setReportPanelManualMode(null);
+                            setReportPanelManualQueue([]);
+                          }}>← Back to Platforms</button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="sb-copy-field-label" style={{ marginBottom: 12 }}>Select platforms to report to:</div>
+                  {reportPanelPlatforms.length === 0 ? (
+                    <div className="sb-muted">Loading platforms...</div>
+                  ) : (
+                    <>
+                      <div className="sb-report-platform-list">
+                        {reportPanelPlatforms.map((platform) => {
+                          const info = reportPanelInfo[platform] || {};
+                          const isManual = info.manual_only;
+                          const isSelected = reportPanelSelected.has(platform);
+                          return (
+                            <label key={platform} className="sb-report-platform-item">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  const next = new Set(reportPanelSelected);
+                                  if (e.target.checked) {
+                                    next.add(platform);
+                                  } else {
+                                    next.delete(platform);
+                                  }
+                                  setReportPanelSelected(next);
+                                }}
+                              />
+                              <span className="sb-report-platform-name">{platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
+                              <span className={`sb-badge ${isManual ? "sb-badge-manual" : "sb-badge-auto"}`}>
+                                {isManual ? "Manual" : "Auto"}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="sb-row" style={{ marginTop: 16, gap: 8 }}>
+                        <button className="sb-btn" onClick={() => setReportPanelSelected(new Set(reportPanelPlatforms))}>Select All</button>
+                        <button className="sb-btn" onClick={() => setReportPanelSelected(new Set())}>Clear</button>
+                      </div>
+                      <div style={{ marginTop: 20, borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                        <button
+                          className="sb-btn sb-btn-primary"
+                          disabled={reportPanelSubmitting || reportPanelSelected.size === 0}
+                          onClick={async () => {
+                            if (!reportPanelDomain?.id) return;
+                            const selectedList = Array.from(reportPanelSelected);
+                            const autoPlatforms = selectedList.filter(p => !reportPanelInfo[p]?.manual_only);
+                            const manualPlatforms = selectedList.filter(p => reportPanelInfo[p]?.manual_only);
+
+                            setReportPanelSubmitting(true);
+                            try {
+                              if (autoPlatforms.length > 0) {
+                                await reportDomain(reportPanelDomain.id, reportPanelDomain.domain, autoPlatforms);
+                                showToast(`Report queued for: ${autoPlatforms.join(", ")}`, "success");
+                              }
+
+                              if (manualPlatforms.length > 0) {
+                                setReportPanelManualQueue(manualPlatforms);
+                                setReportPanelManualMode(manualPlatforms[0]);
+                              } else {
+                                setReportPanelOpen(false);
+                                loadDomains();
+                                if (route.name === "domain" && reportPanelDomain.id) {
+                                  loadDomainDetail(reportPanelDomain.id);
+                                }
+                              }
+                            } catch (err) {
+                              showToast((err as Error).message || "Report failed", "error");
+                            } finally {
+                              setReportPanelSubmitting(false);
+                            }
+                          }}
+                        >
+                          {reportPanelSubmitting ? "Submitting..." : `Submit ${reportPanelSelected.size} Platform${reportPanelSelected.size !== 1 ? "s" : ""}`}
+                        </button>
+                      </div>
+                      <div className="sb-manual-notes" style={{ marginTop: 16 }}>
+                        <div className="sb-manual-notes-title">How it works</div>
+                        <ul>
+                          <li><strong>Auto</strong> platforms are submitted automatically via API</li>
+                          <li><strong>Manual</strong> platforms will show a form with copy-paste fields</li>
+                        </ul>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

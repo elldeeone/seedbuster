@@ -24,6 +24,7 @@ data/evidence/*
 !data/evidence/.gitkeep
 data/fingerprints/*
 !data/fingerprints/.gitkeep
+backups/
 
 # Test artifacts
 data/test_*.png
