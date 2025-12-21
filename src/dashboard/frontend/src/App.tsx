@@ -13,6 +13,7 @@ import {
   reportDomain,
   rescanDomain,
   submitTarget,
+  updateDomainStatus,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type { Cluster, Domain, DomainDetailResponse, PendingReport, Stats } from "./types";
@@ -102,6 +103,53 @@ const Breakdown = ({ items, onSelect }: { items: Record<string, number>; onSelec
           </div>
         );
       })}
+    </div>
+  );
+};
+
+const VerdictReasons = ({ reasons }: { reasons: string | null | undefined }) => {
+  if (!reasons) return <div className="sb-muted">—</div>;
+
+  const lines = reasons.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return <div className="sb-muted">—</div>;
+
+  const linkifyLine = (text: string) => {
+    // Match URLs (http/https)
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts: (string | React.ReactElement)[] = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = urlRegex.exec(text)) !== null) {
+      // Add text before URL
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+      // Add URL as link
+      const url = match[0];
+      parts.push(
+        <a key={match.index} href={url} target="_blank" rel="noreferrer" className="sb-verdict-link">
+          {url}
+        </a>
+      );
+      lastIndex = match.index + url.length;
+    }
+
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+
+    return parts.length > 0 ? <>{parts}</> : text;
+  };
+
+  return (
+    <div className="sb-verdict-reasons">
+      {lines.map((line, idx) => (
+        <div key={idx} className="sb-verdict-reason-line">
+          {linkifyLine(line)}
+        </div>
+      ))}
     </div>
   );
 };
@@ -728,6 +776,37 @@ export default function App() {
     }
   };
 
+  const changeStatus = async (domain: Domain, newStatus: string) => {
+    const id = domain.id;
+    if (!id) {
+      showToast("Domain id is missing for this record", "error");
+      return;
+    }
+
+    const statusLabels: Record<string, string> = {
+      deferred: "Watchlist",
+      allowlisted: "Allowlist",
+      false_positive: "False Positive",
+      analyzed: "Analyzed",
+    };
+
+    const label = statusLabels[newStatus] || newStatus;
+    const ok = window.confirm(`Change status of ${domain.domain} to ${label}?`);
+    if (!ok) return;
+
+    setActionBusy((prev) => ({ ...prev, [id]: "status_change" }));
+    try {
+      await updateDomainStatus(id, newStatus);
+      showToast(`Changed ${domain.domain} to ${label}`, "success");
+      loadDomains();
+      if (route.name === "domain") loadDomainDetail(id);
+    } catch (err) {
+      showToast((err as Error).message || "Status change failed", "error");
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
   const bulkTriggerCluster = async (type: "rescan" | "report") => {
     if (!clusterDetail) return;
     const domains = (clusterDetail.domains || []).filter((d) => d.id) as Domain[];
@@ -1055,16 +1134,50 @@ export default function App() {
                   {domainDetail.domain.last_checked_at && <span className="sb-muted">Last checked {timeAgo(domainDetail.domain.last_checked_at)}</span>}
                 </div>
               </div>
-              <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning\u2026" : "Rescan"}
-                </button>
-                <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting\u2026" : "Report"}
-                </button>
-                <button className="sb-btn sb-btn-danger" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "false_positive")}>
-                  {actionBusy[domainDetail.domain.id || 0] === "false_positive" ? "Marking\u2026" : "False Positive"}
-                </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-end" }}>
+                {/* Primary action buttons */}
+                <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                  <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
+                    {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning…" : "Rescan"}
+                  </button>
+                  <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
+                    {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting…" : "Report"}
+                  </button>
+                </div>
+                {/* Status action buttons */}
+                {(() => {
+                  const currentStatus = (domainDetail.domain.status || "").toLowerCase();
+                  const isTerminal = ["false_positive", "allowlisted"].includes(currentStatus);
+                  const isBusy = !!actionBusy[domainDetail.domain.id || 0];
+
+                  if (isTerminal) {
+                    return (
+                      <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "analyzed")}>
+                        {isBusy ? "Reactivating…" : "↻ Reactivate"}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                      {currentStatus !== "deferred" && (
+                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "deferred")}>
+                          {isBusy ? "Working…" : "👁 Watch"}
+                        </button>
+                      )}
+                      {currentStatus !== "false_positive" && (
+                        <button className="sb-btn sb-btn-danger" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "false_positive")}>
+                          {isBusy ? "Marking…" : "✕ False Positive"}
+                        </button>
+                      )}
+                      {currentStatus !== "allowlisted" && (
+                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "allowlisted")}>
+                          {isBusy ? "Adding…" : "✓ Allowlist"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1110,11 +1223,7 @@ export default function App() {
             <div className="col-6">
               <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Verdict Reasons</span></div>
-                {domainDetail.domain.verdict_reasons ? (
-                  <pre className="sb-pre">{domainDetail.domain.verdict_reasons as any}</pre>
-                ) : (
-                  <div className="sb-muted">\u2014</div>
-                )}
+                <VerdictReasons reasons={domainDetail.domain.verdict_reasons as any} />
               </div>
             </div>
             <div className="col-6">

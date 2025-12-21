@@ -640,6 +640,32 @@ summary:focus-visible {
   word-break: break-word;
 }
 
+.sb-verdict-reasons {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.sb-verdict-reason-line {
+  padding: 6px 0;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sb-verdict-reason-line:last-child {
+  border-bottom: none;
+}
+
+.sb-verdict-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.sb-verdict-link:hover {
+  color: var(--accent-cyan);
+}
+
 .sb-code {
   background: var(--bg-overlay);
   border: 1px solid var(--border-default);
