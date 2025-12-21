@@ -62,7 +62,7 @@ class HealthServer:
 
         # Basic readiness flag
         payload.setdefault("status", "ok")
-        return web.json_response(payload)
+        return web.json_response(payload, headers={"Access-Control-Allow-Origin": "*"})
 
     async def _handle_metrics(self, request):  # noqa: ANN001
         """Expose a handful of text metrics (Prometheus-ish)."""
