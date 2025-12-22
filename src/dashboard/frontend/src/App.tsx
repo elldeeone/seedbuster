@@ -107,49 +107,124 @@ const Breakdown = ({ items, onSelect }: { items: Record<string, number>; onSelec
   );
 };
 
+// Category prefixes for verdict reasons
+const REASON_CATEGORIES: Record<string, { label: string; color: string }> = {
+  "INFRA:": { label: "Infrastructure", color: "var(--accent-blue)" },
+  "CODE:": { label: "Code Analysis", color: "var(--accent-purple)" },
+  "TEMPORAL:": { label: "Temporal", color: "var(--accent-orange)" },
+  "EXTERNAL:": { label: "External Intel", color: "var(--accent-green)" },
+  "EXPLORE:": { label: "Exploration", color: "var(--accent-red)" },
+};
+
+// Parse a single reason line and extract category + linkify URLs
+const parseReasonLine = (line: string): { category: string | null; text: React.ReactNode } => {
+  let category: string | null = null;
+  let textContent = line;
+
+  // Check for category prefix
+  for (const prefix of Object.keys(REASON_CATEGORIES)) {
+    if (line.startsWith(prefix)) {
+      category = prefix;
+      textContent = line.slice(prefix.length).trim();
+      break;
+    }
+  }
+
+  // Linkify URLs in the text
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts: (string | React.ReactElement)[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlRegex.exec(textContent)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(textContent.substring(lastIndex, match.index));
+    }
+    const url = match[0];
+    parts.push(
+      <a key={match.index} href={url} target="_blank" rel="noreferrer" className="sb-verdict-link" style={{ wordBreak: "break-all" }}>
+        {url}
+      </a>
+    );
+    lastIndex = match.index + url.length;
+  }
+
+  if (lastIndex < textContent.length) {
+    parts.push(textContent.substring(lastIndex));
+  }
+
+  const text = parts.length > 0 ? <>{parts}</> : textContent;
+  return { category, text };
+};
+
 const VerdictReasons = ({ reasons }: { reasons: string | null | undefined }) => {
   if (!reasons) return <div className="sb-muted">—</div>;
 
-  const lines = reasons.split("\n").map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) return <div className="sb-muted">—</div>;
+  // Split into lines and deduplicate
+  const lines = reasons.split("\n").map((l) => l.trim()).filter(Boolean);
+  const uniqueLines = [...new Set(lines)];
 
-  const linkifyLine = (text: string) => {
-    // Match URLs (http/https)
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const parts: (string | React.ReactElement)[] = [];
-    let lastIndex = 0;
-    let match;
+  if (uniqueLines.length === 0) return <div className="sb-muted">—</div>;
 
-    while ((match = urlRegex.exec(text)) !== null) {
-      // Add text before URL
-      if (match.index > lastIndex) {
-        parts.push(text.substring(lastIndex, match.index));
-      }
-      // Add URL as link
-      const url = match[0];
-      parts.push(
-        <a key={match.index} href={url} target="_blank" rel="noreferrer" className="sb-verdict-link">
-          {url}
-        </a>
-      );
-      lastIndex = match.index + url.length;
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      parts.push(text.substring(lastIndex));
-    }
-
-    return parts.length > 0 ? <>{parts}</> : text;
+  // Group by category
+  const grouped: Record<string, React.ReactNode[]> = {
+    "INFRA:": [],
+    "CODE:": [],
+    "TEMPORAL:": [],
+    "EXTERNAL:": [],
+    "EXPLORE:": [],
+    other: [],
   };
+
+  for (const line of uniqueLines) {
+    const { category, text } = parseReasonLine(line);
+    if (category && grouped[category]) {
+      grouped[category].push(text);
+    } else {
+      grouped.other.push(text);
+    }
+  }
+
+  // Render non-empty groups
+  const categoryOrder = ["other", "INFRA:", "CODE:", "TEMPORAL:", "EXTERNAL:", "EXPLORE:"];
 
   return (
     <div className="sb-verdict-reasons">
-      {lines.map((line, idx) => (
-        <div key={idx} className="sb-verdict-reason-line">
-          {linkifyLine(line)}
-        </div>
-      ))}
+      {categoryOrder.map((cat) => {
+        const items = grouped[cat];
+        if (!items || items.length === 0) return null;
+
+        const catInfo = REASON_CATEGORIES[cat];
+        const label = catInfo?.label || "General";
+        const color = catInfo?.color || "var(--text-muted)";
+
+        return (
+          <div key={cat} style={{ marginBottom: 12 }}>
+            {cat !== "other" && (
+              <div
+                className="sb-badge"
+                style={{
+                  backgroundColor: color,
+                  color: "#fff",
+                  marginBottom: 6,
+                  display: "inline-block",
+                  fontSize: 10,
+                  padding: "2px 6px",
+                }}
+              >
+                {label}
+              </div>
+            )}
+            <ul style={{ margin: 0, paddingLeft: cat === "other" ? 0 : 16, listStyle: cat === "other" ? "none" : "disc" }}>
+              {items.map((item, idx) => (
+                <li key={idx} style={{ marginBottom: 4, fontSize: 13, color: "var(--text-secondary)" }}>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
     </div>
   );
 };
