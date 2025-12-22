@@ -39,7 +39,6 @@ const parseHash = (): Route => {
   const hashParts = rawHash.split("/").filter(Boolean);
   const pathParts = window.location.pathname.split("/").filter(Boolean);
   const parts = hashParts.length ? hashParts : pathParts;
-  const admin = isAdminMode();
 
   if (parts[0] === "domains" && parts[1]) {
     const id = Number(parts[1]);
@@ -586,7 +585,7 @@ export default function App() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsUpdatedAt, setStatsUpdatedAt] = useState<Date | null>(null);
 
-  const [filters, setFilters] = useState({ status: "dangerous", verdict: "", q: "", limit: 100, page: 1 });
+  const [filters, setFilters] = useState({ status: "", verdict: "", q: "", limit: 100, page: 1 });
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainsTotal, setDomainsTotal] = useState(0);
   const [domainsLoading, setDomainsLoading] = useState(true);
