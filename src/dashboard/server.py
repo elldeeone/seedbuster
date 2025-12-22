@@ -4582,6 +4582,7 @@ class DashboardServer:
 
     @web.middleware
     async def _admin_auth_middleware(self, request: web.Request, handler):  # type: ignore[override]
+        # Only protect /admin and /admin/api; public routes (including /campaigns) should pass through.
         if not request.path.startswith("/admin"):
             return await handler(request)
 
