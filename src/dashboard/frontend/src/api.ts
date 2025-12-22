@@ -7,21 +7,17 @@ import type {
   Stats,
 } from "./types";
 
-// Detect admin vs public mode based on URL path or dev server port
+// Detect admin vs public mode based on explicit flag first, then path.
 export function isAdminMode(): boolean {
-  const pathname = window.location.pathname;
-
-  // Hard override: public campaigns path is always public
-  if (pathname.startsWith("/campaigns")) {
-    return false;
-  }
-
-  // Prefer explicit flag injected by the server
   const flag = (window as any).__SB_MODE;
   if (flag === "admin") return true;
   if (flag === "public") return false;
 
-  // Fallback to path
+  const pathname = window.location.pathname || "";
+  // Public-facing paths should never be treated as admin
+  if (pathname === "/" || pathname.startsWith("/campaigns") || pathname.startsWith("/public")) {
+    return false;
+  }
   return pathname.startsWith("/admin");
 }
 

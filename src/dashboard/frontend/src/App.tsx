@@ -898,10 +898,6 @@ export default function App() {
       showToast("Already marked as false positive", "info");
       return;
     }
-    if (type === "false_positive") {
-      const ok = window.confirm(`Mark ${domain.domain} as false positive? This will affect reporting and stats.`);
-      if (!ok) return;
-    }
     setActionBusy((prev) => ({ ...prev, [id]: type }));
     try {
       if (type === "rescan") {
@@ -939,9 +935,6 @@ export default function App() {
     };
 
     const label = statusLabels[newStatus] || newStatus;
-    const ok = window.confirm(`Change status of ${domain.domain} to ${label}?`);
-    if (!ok) return;
-
     setActionBusy((prev) => ({ ...prev, [id]: "status_change" }));
     try {
       await updateDomainStatus(id, newStatus);
