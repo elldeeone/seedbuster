@@ -53,8 +53,8 @@ const parseHash = (): Route => {
     return { name: "clusters" };
   }
 
-  // Default view: admin lands on dashboard, public lands on campaigns
-  return admin ? { name: "dashboard" } : { name: "clusters" };
+  // Default view: both modes land on dashboard (read-only for public)
+  return { name: "dashboard" };
 };
 
 const formatBytes = (num?: number | null) => {
@@ -257,6 +257,7 @@ const DomainTable = ({
   onReport,
   onFalsePositive,
   actionBusy,
+  canEdit,
 }: {
   domains: Domain[];
   loading: boolean;
@@ -270,6 +271,7 @@ const DomainTable = ({
   onReport: (d: Domain) => void;
   onFalsePositive: (d: Domain) => void;
   actionBusy: Record<number, string | null>;
+  canEdit: boolean;
 }) => {
   const totalPages = Math.max(1, Math.ceil((total || 0) / (filters.limit || 1)));
   const pageDisplay = Math.min(filters.page, totalPages);
@@ -360,7 +362,7 @@ const DomainTable = ({
               <th>A-Score</th>
               <th>Source</th>
               <th>First Seen</th>
-              <th>Actions</th>
+              <th>{canEdit ? "Actions" : "View"}</th>
             </tr>
           </thead>
           <tbody>
@@ -393,21 +395,25 @@ const DomainTable = ({
                   <td className="sb-muted">{d.source || "—"}</td>
                   <td className="sb-muted">{d.first_seen || "—"}</td>
                   <td>
-                    <details className="sb-actions">
-                      <summary className="sb-btn sb-btn-ghost">Actions ▾</summary>
-                      <div className="sb-actions-menu">
-                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => d.id && onView(d.id)}>Open</button>
-                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onRescan(d)}>
-                          {busy === "rescan" ? "Rescanning…" : "Rescan"}
-                        </button>
-                        <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onReport(d)}>
-                          {busy === "report" ? "Reporting…" : "Report"}
-                        </button>
-                        <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
-                          {busy === "false_positive" ? "Marking…" : "False +"}
-                        </button>
-                      </div>
-                    </details>
+                    {canEdit ? (
+                      <details className="sb-actions">
+                        <summary className="sb-btn sb-btn-ghost">Actions ▾</summary>
+                        <div className="sb-actions-menu">
+                          <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => d.id && onView(d.id)}>Open</button>
+                          <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onRescan(d)}>
+                            {busy === "rescan" ? "Rescanning…" : "Rescan"}
+                          </button>
+                          <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onReport(d)}>
+                            {busy === "report" ? "Reporting…" : "Report"}
+                          </button>
+                          <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
+                            {busy === "false_positive" ? "Marking…" : "False +"}
+                          </button>
+                        </div>
+                      </details>
+                    ) : (
+                      <button className="sb-btn" disabled={!d.id} onClick={() => d.id && onView(d.id)}>Open</button>
+                    )}
                   </td>
                 </tr>
               );
@@ -636,6 +642,7 @@ export default function App() {
 
   // Detect admin mode for conditional rendering
   const isAdmin = isAdminMode();
+  const canEdit = isAdmin;
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -730,16 +737,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) return;
     loadStats();
     const id = setInterval(loadStats, 30000);
     return () => clearInterval(id);
-  }, [loadStats, isAdmin]);
+  }, [loadStats]);
 
   useEffect(() => {
-    if (!isAdmin) return;
     loadDomains();
-  }, [loadDomains, isAdmin]);
+  }, [loadDomains]);
 
   useEffect(() => {
     if (route.name === "domain") {
@@ -757,6 +762,10 @@ export default function App() {
 
   const handleSubmit = async (e: FormEvent | MouseEvent, mode: "submit" | "rescan" = "submit") => {
     e.preventDefault();
+    if (!canEdit) {
+      showToast("Read-only mode: submissions are disabled.", "info");
+      return;
+    }
     setSubmitError(null);
     setSubmitResult(null);
     if (!submitValue.trim()) {
@@ -828,6 +837,10 @@ export default function App() {
 
   // Open the report panel for a domain
   const openReportPanel = async (domain: Domain) => {
+    if (!canEdit) {
+      showToast("Read-only mode: reporting is disabled.", "info");
+      return;
+    }
     if (!domain.id) {
       showToast("Domain id is missing for this record", "error");
       return;
@@ -865,6 +878,10 @@ export default function App() {
   };
 
   const triggerAction = async (domain: Domain, type: "rescan" | "report" | "false_positive") => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
     const id = domain.id;
     if (!id) {
       showToast("Domain id is missing for this record", "error");
@@ -904,6 +921,10 @@ export default function App() {
   };
 
   const changeStatus = async (domain: Domain, newStatus: string) => {
+    if (!canEdit) {
+      showToast("Read-only mode: status changes are disabled.", "info");
+      return;
+    }
     const id = domain.id;
     if (!id) {
       showToast("Domain id is missing for this record", "error");
@@ -935,6 +956,10 @@ export default function App() {
   };
 
   const bulkTriggerCluster = async (type: "rescan" | "report") => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
     if (!clusterDetail) return;
     const domains = (clusterDetail.domains || []).filter((d) => d.id) as Domain[];
     if (!domains.length) {
@@ -996,6 +1021,9 @@ export default function App() {
     return times.sort()[0];
   }, [domainDetail]);
 
+  const domainDownloadBase = canEdit ? "/admin/domains" : "/domains";
+  const clusterDownloadBase = canEdit ? "/admin/clusters" : "/clusters";
+
   const statsBlocks = useMemo(() => {
     if (!stats) return null;
     const refreshed = statsUpdatedAt ? `Refreshed ${timeAgo(statsUpdatedAt.toISOString())}` : "Awaiting data";
@@ -1023,27 +1051,29 @@ export default function App() {
     <>
       {statsBlocks}
 
-      {/* Manual Submission - full width */}
-      <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
-        <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
-          <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
-        </div>
-        <form onSubmit={(e) => handleSubmit(e, "submit")}>
-          <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
-            <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
-            <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
-              {submitting ? "Working…" : "Force Rescan"}
-            </button>
-            <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
+      {/* Manual Submission - admin only */}
+      {canEdit && (
+        <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
+            <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
           </div>
-          {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
-          {submitResult && (
-            <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
-              {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
+          <form onSubmit={(e) => handleSubmit(e, "submit")}>
+            <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+              <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
+                {submitting ? "Working…" : "Force Rescan"}
+              </button>
+              <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
             </div>
-          )}
-        </form>
-      </div>
+            {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
+            {submitResult && (
+              <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
+                {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
+              </div>
+            )}
+          </form>
+        </div>
+      )}
 
       {/* Reports Needing Attention - full width when present */}
       {pendingReports.length > 0 && (
@@ -1080,20 +1110,24 @@ export default function App() {
                 {filteredPendingReports.slice(0, 20).map((r) => (
                   <tr key={`${r.domain}-${r.platform}`}>
                     <td>
-                      <a
-                        className="domain-link"
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (!r.domain_id) {
-                            showToast("Domain ID missing for this report", "error");
-                            return;
-                          }
-                          openReportPanelById(r.domain_id, r.domain);
-                        }}
-                      >
-                        {r.domain}
-                      </a>
+                      {canEdit ? (
+                        <a
+                          className="domain-link"
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            if (!r.domain_id) {
+                              showToast("Domain ID missing for this report", "error");
+                              return;
+                            }
+                            openReportPanelById(r.domain_id, r.domain);
+                          }}
+                        >
+                          {r.domain}
+                        </a>
+                      ) : (
+                        <span>{r.domain}</span>
+                      )}
                     </td>
                     <td>{r.platform}</td>
                     <td><span className={badgeClass(r.status, "report")}>{(r.status || "").toUpperCase()}</span></td>
@@ -1128,6 +1162,7 @@ export default function App() {
         onReport={(d) => triggerAction(d, "report")}
         onFalsePositive={(d) => triggerAction(d, "false_positive")}
         actionBusy={actionBusy}
+        canEdit={isAdmin}
       />
     </>
   );
@@ -1228,12 +1263,10 @@ export default function App() {
               <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
               <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {cluster.cluster_id}</span>
             </div>
-            {isAdmin && (
-              <div className="sb-row" style={{ gap: 8 }}>
-                <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
-                <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
-              </div>
-            )}
+            <div className="sb-row" style={{ gap: 8 }}>
+              <a className="sb-btn" href={`${clusterDownloadBase}/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
+              <a className="sb-btn" href={`${clusterDownloadBase}/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
+            </div>
           </div>
 
           {/* Campaign Name with Edit */}
@@ -1380,12 +1413,16 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-end" }}>
                 {/* Primary action buttons */}
                 <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                  <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
-                    {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning…" : "Rescan"}
-                  </button>
-                  <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
-                    {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting…" : "Report"}
-                  </button>
+                  {canEdit && (
+                    <>
+                      <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
+                        {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning…" : "Rescan"}
+                      </button>
+                      <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
+                        {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting…" : "Report"}
+                      </button>
+                    </>
+                  )}
                   <button
                     className="sb-btn sb-btn-danger"
                     onClick={() => {
@@ -1397,7 +1434,7 @@ export default function App() {
                   </button>
                 </div>
                 {/* Status action buttons */}
-                {(() => {
+                {canEdit && (() => {
                   const currentStatus = (domainDetail.domain.status || "").toLowerCase();
                   const isTerminal = ["false_positive", "allowlisted"].includes(currentStatus);
                   const isBusy = !!actionBusy[domainDetail.domain.id || 0];
@@ -1467,51 +1504,57 @@ export default function App() {
                         {(domainDetail.domain as any).watchlist_baseline_timestamp || "Not set"}
                       </div>
                     </div>
-                    <button
-                      className="sb-btn"
-                      disabled={isBusy}
-                      onClick={async () => {
-                        if (!domainDetail.domain.id) return;
-                        setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: "baseline" }));
-                        try {
-                          const response = await fetch(
-                            `/admin/api/domains/${domainDetail.domain.id}/baseline`,
-                            { method: "POST" }
-                          );
-                          if (response.ok) {
-                            const data = await response.json();
-                            showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
-                            // Refresh domain detail
-                            await loadDomainDetail(domainDetail.domain.id);
-                          } else {
-                            const error = await response.text();
-                            showToast(`Failed to update baseline: ${error}`, "error");
+                    {canEdit && (
+                      <button
+                        className="sb-btn"
+                        disabled={isBusy}
+                        onClick={async () => {
+                          if (!canEdit) {
+                            showToast("Read-only mode: baseline updates are disabled.", "info");
+                            return;
                           }
-                        } catch (err) {
-                          showToast(`Error updating baseline: ${err}`, "error");
-                        } finally {
-                          setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: null }));
-                        }
-                      }}
-                    >
-                      {isBusy ? "Updating…" : "Update Baseline"}
-                    </button>
+                          if (!domainDetail.domain.id) return;
+                          setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: "baseline" }));
+                          try {
+                            const response = await fetch(
+                              `/admin/api/domains/${domainDetail.domain.id}/baseline`,
+                              { method: "POST" }
+                            );
+                            if (response.ok) {
+                              const data = await response.json();
+                              showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
+                              // Refresh domain detail
+                              await loadDomainDetail(domainDetail.domain.id);
+                            } else {
+                              const error = await response.text();
+                              showToast(`Failed to update baseline: ${error}`, "error");
+                            }
+                          } catch (err) {
+                            showToast(`Error updating baseline: ${err}`, "error");
+                          } finally {
+                            setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: null }));
+                          }
+                        }}
+                      >
+                        {isBusy ? "Updating…" : "Update Baseline"}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
             })()}
 
-            {/* Download links */}
-            <div className="sb-row" style={{ flexWrap: "wrap", marginTop: 16, gap: 8 }}>
-              {domainDetail.domain.id && (
-                <>
-                  <a className="sb-btn" href={`/admin/domains/${domainDetail.domain.id}/pdf`} target="_blank" rel="noreferrer">Download PDF</a>
-                  <a className="sb-btn" href={`/admin/domains/${domainDetail.domain.id}/package`} target="_blank" rel="noreferrer">Download Package</a>
-                </>
-              )}
-              {domainDetail.reports && domainDetail.reports.length > 0 && (
-                <span className="sb-muted">
-                  Next report attempt: {nextReportAttempt || "\u2014"}
+              {/* Download links */}
+              <div className="sb-row" style={{ flexWrap: "wrap", marginTop: 16, gap: 8 }}>
+                {domainDetail.domain.id && (
+                  <>
+                  <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/pdf`} target="_blank" rel="noreferrer">Download PDF</a>
+                  <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/package`} target="_blank" rel="noreferrer">Download Package</a>
+                  </>
+                )}
+                {domainDetail.reports && domainDetail.reports.length > 0 && (
+                  <span className="sb-muted">
+                    Next report attempt: {nextReportAttempt || "\u2014"}
                 </span>
               )}
             </div>
@@ -1536,41 +1579,47 @@ export default function App() {
                 ) : (
                   <div className="sb-muted" style={{ marginBottom: 12 }}>No notes yet.</div>
                 )}
-                <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
-                  <div className="sb-label">Add Note</div>
-                  <textarea
-                    className="sb-input"
-                    rows={2}
-                    placeholder="Enter a note..."
-                    value={noteInput}
-                    onChange={(e) => setNoteInput(e.target.value)}
-                    style={{ width: "100%", resize: "vertical", marginBottom: 8, minHeight: 60 }}
-                  />
-                  <button
-                    className="sb-btn sb-btn-primary"
-                    disabled={!noteInput.trim() || noteSaving}
-                    onClick={async () => {
-                      if (!domainDetail?.domain.id) return;
-                      setNoteSaving(true);
-                      try {
-                        const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-                        const existingNotes = (domainDetail.domain.operator_notes || "").trim();
-                        const newNote = `[${timestamp}] ${noteInput.trim()}`;
-                        const combined = existingNotes ? `${existingNotes}\n${newNote}` : newNote;
-                        await updateOperatorNotes(domainDetail.domain.id, combined);
-                        showToast("Note added", "success");
-                        setNoteInput("");
-                        loadDomainDetail(domainDetail.domain.id);
-                      } catch (err) {
-                        showToast((err as Error).message || "Failed to add note", "error");
-                      } finally {
-                        setNoteSaving(false);
-                      }
-                    }}
-                  >
-                    {noteSaving ? "Saving..." : "Add Note"}
-                  </button>
-                </div>
+                {canEdit && (
+                  <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
+                    <div className="sb-label">Add Note</div>
+                    <textarea
+                      className="sb-input"
+                      rows={2}
+                      placeholder="Enter a note..."
+                      value={noteInput}
+                      onChange={(e) => setNoteInput(e.target.value)}
+                      style={{ width: "100%", resize: "vertical", marginBottom: 8, minHeight: 60 }}
+                    />
+                    <button
+                      className="sb-btn sb-btn-primary"
+                      disabled={!noteInput.trim() || noteSaving}
+                      onClick={async () => {
+                        if (!canEdit) {
+                          showToast("Read-only mode: notes are disabled.", "info");
+                          return;
+                        }
+                        if (!domainDetail?.domain.id) return;
+                        setNoteSaving(true);
+                        try {
+                          const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+                          const existingNotes = (domainDetail.domain.operator_notes || "").trim();
+                          const newNote = `[${timestamp}] ${noteInput.trim()}`;
+                          const combined = existingNotes ? `${existingNotes}\n${newNote}` : newNote;
+                          await updateOperatorNotes(domainDetail.domain.id, combined);
+                          showToast("Note added", "success");
+                          setNoteInput("");
+                          loadDomainDetail(domainDetail.domain.id);
+                        } catch (err) {
+                          showToast((err as Error).message || "Failed to add note", "error");
+                        } finally {
+                          setNoteSaving(false);
+                        }
+                      }}
+                    >
+                      {noteSaving ? "Saving..." : "Add Note"}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1593,7 +1642,7 @@ export default function App() {
     <div className="sb-container">
       <header className="sb-header">
         <div className="sb-brand">
-          <a className="sb-logo" href={isAdmin ? "#/" : "#/campaigns"}>
+          <a className="sb-logo" href="#/">
             <div className="sb-logo-icon">SB</div>
             <span className="sb-logo-text">SeedBuster</span>
           </a>
@@ -1602,78 +1651,80 @@ export default function App() {
           </span>
         </div>
         <nav className="sb-nav">
-          {isAdmin && <a className="sb-btn" href="#/">Dashboard</a>}
+          <a className="sb-btn" href="#/">Dashboard</a>
           <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
 
           {/* Settings Cog */}
-          <div className="sb-settings-container">
-            <button
-              className={`sb-settings-btn ${settingsOpen ? "active" : ""}`}
-              onClick={() => setSettingsOpen(!settingsOpen)}
-              title="Settings"
-            >
-              ⚙
-            </button>
+          {canEdit && (
+            <div className="sb-settings-container">
+              <button
+                className={`sb-settings-btn ${settingsOpen ? "active" : ""}`}
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                title="Settings"
+              >
+                ⚙
+              </button>
 
-            {settingsOpen && (
-              <>
-                <div className="sb-settings-overlay" onClick={() => setSettingsOpen(false)} />
-                <div className="sb-settings-popup">
-                  <div className="sb-settings-popup-header">
-                    <span className="sb-settings-popup-title">System Settings</span>
-                    <button className="sb-btn" onClick={() => setSettingsOpen(false)} style={{ padding: "4px 8px" }}>×</button>
-                  </div>
-
-                  {/* Health Status */}
-                  <div className="sb-settings-section">
-                    <div className="sb-settings-section-title">Health Status</div>
-                    <div className="sb-row" style={{ alignItems: "center", gap: 8 }}>
-                      <span className={`sb-badge sb-badge-${healthLabel.toLowerCase()}`}>{healthLabel}</span>
-                      <span className="sb-muted" style={{ fontSize: 12 }}>{(health as any)?.status || (health as any)?.error || "Best-effort check"}</span>
+              {settingsOpen && (
+                <>
+                  <div className="sb-settings-overlay" onClick={() => setSettingsOpen(false)} />
+                  <div className="sb-settings-popup">
+                    <div className="sb-settings-popup-header">
+                      <span className="sb-settings-popup-title">System Settings</span>
+                      <button className="sb-btn" onClick={() => setSettingsOpen(false)} style={{ padding: "4px 8px" }}>×</button>
                     </div>
-                  </div>
 
-                  {/* Evidence Storage */}
-                  <div className="sb-settings-section">
-                    <div className="sb-settings-section-title">Evidence Storage</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{formatBytes(stats?.evidence_bytes)}</div>
-                    <div className="sb-muted" style={{ fontSize: 12 }}>Approximate evidence size</div>
-                  </div>
-
-                  {/* Evidence Cleanup */}
-                  <div className="sb-settings-section">
-                    <div className="sb-settings-section-title">Evidence Cleanup</div>
-                    <div className="sb-row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <input
-                        className="sb-input"
-                        type="number"
-                        min={1}
-                        value={cleanupDays}
-                        onChange={(e) => setCleanupDays(Number(e.target.value) || 1)}
-                        style={{ width: 70 }}
-                      />
-                      <span className="sb-muted">days old</span>
-                    </div>
-                    <div className="sb-row" style={{ marginTop: 10, gap: 8 }}>
-                      <button className="sb-btn" type="button" disabled={cleanupBusy} onClick={handleCleanupPreview}>
-                        {cleanupBusy ? "Working…" : "Preview"}
-                      </button>
-                      <button className="sb-btn sb-btn-danger" type="button" disabled={cleanupBusy} onClick={handleCleanup}>
-                        {cleanupBusy ? "Cleaning…" : "Cleanup"}
-                      </button>
-                    </div>
-                    {cleanupPreview && (
-                      <div className="sb-notice" style={{ marginTop: 8, fontSize: 12 }}>
-                        Would remove <b>{cleanupPreview.count}</b> directories (~{formatBytes(cleanupPreview.bytes)})
+                    {/* Health Status */}
+                    <div className="sb-settings-section">
+                      <div className="sb-settings-section-title">Health Status</div>
+                      <div className="sb-row" style={{ alignItems: "center", gap: 8 }}>
+                        <span className={`sb-badge sb-badge-${healthLabel.toLowerCase()}`}>{healthLabel}</span>
+                        <span className="sb-muted" style={{ fontSize: 12 }}>{(health as any)?.status || (health as any)?.error || "Best-effort check"}</span>
                       </div>
-                    )}
-                    {cleanupResult && <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>{cleanupResult}</div>}
-                    {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8, fontSize: 12 }}>{cleanupError}</div>}
+                    </div>
+
+                    {/* Evidence Storage */}
+                    <div className="sb-settings-section">
+                      <div className="sb-settings-section-title">Evidence Storage</div>
+                      <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{formatBytes(stats?.evidence_bytes)}</div>
+                      <div className="sb-muted" style={{ fontSize: 12 }}>Approximate evidence size</div>
+                    </div>
+
+                    {/* Evidence Cleanup */}
+                    <div className="sb-settings-section">
+                      <div className="sb-settings-section-title">Evidence Cleanup</div>
+                      <div className="sb-row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <input
+                          className="sb-input"
+                          type="number"
+                          min={1}
+                          value={cleanupDays}
+                          onChange={(e) => setCleanupDays(Number(e.target.value) || 1)}
+                          style={{ width: 70 }}
+                        />
+                        <span className="sb-muted">days old</span>
+                      </div>
+                      <div className="sb-row" style={{ marginTop: 10, gap: 8 }}>
+                        <button className="sb-btn" type="button" disabled={cleanupBusy} onClick={handleCleanupPreview}>
+                          {cleanupBusy ? "Working…" : "Preview"}
+                        </button>
+                        <button className="sb-btn sb-btn-danger" type="button" disabled={cleanupBusy} onClick={handleCleanup}>
+                          {cleanupBusy ? "Cleaning…" : "Cleanup"}
+                        </button>
+                      </div>
+                      {cleanupPreview && (
+                        <div className="sb-notice" style={{ marginTop: 8, fontSize: 12 }}>
+                          Would remove <b>{cleanupPreview.count}</b> directories (~{formatBytes(cleanupPreview.bytes)})
+                        </div>
+                      )}
+                      {cleanupResult && <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>{cleanupResult}</div>}
+                      {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8, fontSize: 12 }}>{cleanupError}</div>}
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
-          </div>
+                </>
+              )}
+            </div>
+          )}
         </nav>
       </header>
 
@@ -1682,7 +1733,7 @@ export default function App() {
 
       <footer className="sb-footer">
         <span>SeedBuster Phishing Detection Pipeline</span>
-        <span>Admin view</span>
+        <span>{isAdmin ? "Admin view" : "Public view (read-only)"}</span>
       </footer>
 
       <div id="sb-toast-container" className="sb-toast-container" aria-live="polite">
@@ -1690,246 +1741,250 @@ export default function App() {
       </div>
 
       {/* Report Panel Slide-out */}
-      <div className={`sb-slideout-overlay ${reportPanelOpen ? "open" : ""}`} onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }} />
-      <div className={`sb-slideout-panel ${reportPanelOpen ? "open" : ""}`}>
-        {reportPanelOpen && reportPanelDomain && (
-          <>
-            <div className="sb-slideout-header">
-              <span className="sb-slideout-title">
-                {reportPanelManualMode ? `${reportPanelManualMode.toUpperCase()} Manual Submission` : `Report ${reportPanelDomain.domain}`}
-              </span>
-              <button className="sb-slideout-close" onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }}>×</button>
-            </div>
-            <div className="sb-slideout-body">
-              {reportPanelManualMode ? (
-                <>
-                  {/* Progress indicator */}
-                  {reportPanelManualQueue.length > 1 && (
-                    <div style={{ marginBottom: 16, padding: "8px 12px", background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)" }}>
-                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
-                        Platform {reportPanelManualQueue.indexOf(reportPanelManualMode) + 1} of {reportPanelManualQueue.length}
-                      </div>
-                      <div style={{ height: 4, background: "var(--border-default)", borderRadius: 2 }}>
-                        <div style={{ height: "100%", background: "var(--accent-blue)", borderRadius: 2, width: `${((reportPanelManualQueue.indexOf(reportPanelManualMode) + 1) / reportPanelManualQueue.length) * 100}%` }} />
-                      </div>
-                    </div>
-                  )}
-
-                  {reportPanelInfo[reportPanelManualMode]?.url && (
-                    <div className="sb-manual-cta">
-                      <a className="sb-manual-cta-btn" href={reportPanelInfo[reportPanelManualMode].url} target="_blank" rel="noopener noreferrer">
-                        ↗ Open {reportPanelManualMode.charAt(0).toUpperCase() + reportPanelManualMode.slice(1)} Abuse Form
-                      </a>
-                    </div>
-                  )}
-                  <div className="sb-copy-field">
-                    <div className="sb-copy-field-label">Full URL</div>
-                    <div className="sb-copy-field-value" style={{ position: "relative" }}>
-                      {`https://${reportPanelDomain.domain}`}
-                      <button className="sb-copy-btn" onClick={(e) => {
-                        navigator.clipboard.writeText(`https://${reportPanelDomain.domain}`);
-                        const btn = e.currentTarget;
-                        btn.textContent = "Copied!";
-                        btn.classList.add("copied");
-                        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
-                      }}>Copy</button>
-                    </div>
-                  </div>
-                  <div className="sb-copy-field">
-                    <div className="sb-copy-field-label">Additional Details Template</div>
-                    <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {(() => {
-                        const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
-                        const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
-
-                        let template = `Reporting ${verdict} phishing/scam site.\n\n`;
-
-                        if (verdictReasons) {
-                          const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
-                          // Deduplicate reasons
-                          const uniqueReasons = Array.from(new Set(reasons));
-                          if (uniqueReasons.length > 0) {
-                            template += "Evidence:\n";
-                            uniqueReasons.slice(0, 5).forEach((reason: string) => {
-                              template += `- ${reason}\n`;
-                            });
-                            template += "\n";
-                          }
-                        }
-
-                        template += "This site poses a security risk to users.";
-
-                        return template;
-                      })()}
-                      <button className="sb-copy-btn" onClick={(e) => {
-                        const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
-                        const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
-
-                        let template = `Reporting ${verdict} phishing/scam site.\n\n`;
-
-                        if (verdictReasons) {
-                          const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
-                          // Deduplicate reasons
-                          const uniqueReasons = Array.from(new Set(reasons));
-                          if (uniqueReasons.length > 0) {
-                            template += "Evidence:\n";
-                            uniqueReasons.slice(0, 5).forEach((reason: string) => {
-                              template += `- ${reason}\n`;
-                            });
-                            template += "\n";
-                          }
-                        }
-
-                        template += "This site poses a security risk to users.";
-
-                        navigator.clipboard.writeText(template);
-                        const btn = e.currentTarget;
-                        btn.textContent = "Copied!";
-                        btn.classList.add("copied");
-                        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
-                      }}>Copy</button>
-                    </div>
-                  </div>
-                  <div className="sb-manual-notes">
-                    <div className="sb-manual-notes-title">Tips</div>
-                    <ul>
-                      <li>Copy the URL and paste into "URL to report" field</li>
-                      <li>Copy the Additional Details template and paste into the form's description field</li>
-                      <li>Review and edit the template if needed before submitting</li>
-                    </ul>
-                  </div>
-                  <div style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {(() => {
-                      const currentIndex = reportPanelManualQueue.indexOf(reportPanelManualMode);
-                      const hasNext = currentIndex < reportPanelManualQueue.length - 1;
-                      const nextPlatform = hasNext ? reportPanelManualQueue[currentIndex + 1] : null;
-
-                      return (
-                        <>
-                          {hasNext ? (
-                            <button
-                              className="sb-btn sb-btn-primary"
-                              onClick={() => setReportPanelManualMode(nextPlatform!)}
-                            >
-                              ✓ Done — Next: {nextPlatform!.charAt(0).toUpperCase() + nextPlatform!.slice(1)}
-                            </button>
-                          ) : (
-                            <button
-                              className="sb-btn sb-btn-primary"
-                              onClick={() => {
-                                setReportPanelOpen(false);
-                                setReportPanelManualMode(null);
-                                setReportPanelManualQueue([]);
-                                loadDomains();
-                                if (route.name === "domain" && reportPanelDomain.id) {
-                                  loadDomainDetail(reportPanelDomain.id);
-                                }
-                                showToast("All manual submissions complete!", "success");
-                              }}
-                            >
-                              ✓ Done — Close
-                            </button>
-                          )}
-                          <button className="sb-btn" onClick={() => {
-                            setReportPanelManualMode(null);
-                            setReportPanelManualQueue([]);
-                          }}>← Back to Platforms</button>
-                        </>
-                      );
-                    })()}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="sb-copy-field-label" style={{ marginBottom: 12 }}>Select platforms to report to:</div>
-                  {reportPanelPlatforms.length === 0 ? (
-                    <div className="sb-muted">Loading platforms...</div>
-                  ) : (
+      {canEdit && (
+        <>
+          <div className={`sb-slideout-overlay ${reportPanelOpen ? "open" : ""}`} onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }} />
+          <div className={`sb-slideout-panel ${reportPanelOpen ? "open" : ""}`}>
+            {reportPanelOpen && reportPanelDomain && (
+              <>
+                <div className="sb-slideout-header">
+                  <span className="sb-slideout-title">
+                    {reportPanelManualMode ? `${reportPanelManualMode.toUpperCase()} Manual Submission` : `Report ${reportPanelDomain.domain}`}
+                  </span>
+                  <button className="sb-slideout-close" onClick={() => { setReportPanelOpen(false); setReportPanelManualMode(null); }}>×</button>
+                </div>
+                <div className="sb-slideout-body">
+                  {reportPanelManualMode ? (
                     <>
-                      <div className="sb-report-platform-list">
-                        {reportPanelPlatforms.map((platform) => {
-                          const info = reportPanelInfo[platform] || {};
-                          const isManual = info.manual_only;
-                          const isSelected = reportPanelSelected.has(platform);
-                          return (
-                            <label key={platform} className="sb-report-platform-item">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={(e) => {
-                                  const next = new Set(reportPanelSelected);
-                                  if (e.target.checked) {
-                                    next.add(platform);
-                                  } else {
-                                    next.delete(platform);
-                                  }
-                                  setReportPanelSelected(next);
-                                }}
-                              />
-                              <span className="sb-report-platform-name">{platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
-                              <span className={`sb-badge ${isManual ? "sb-badge-manual" : "sb-badge-auto"}`}>
-                                {isManual ? "Manual" : "Auto"}
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <div className="sb-row" style={{ marginTop: 16, gap: 8 }}>
-                        <button className="sb-btn" onClick={() => setReportPanelSelected(new Set(reportPanelPlatforms))}>Select All</button>
-                        <button className="sb-btn" onClick={() => setReportPanelSelected(new Set())}>Clear</button>
-                      </div>
-                      <div style={{ marginTop: 20, borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
-                        <button
-                          className="sb-btn sb-btn-primary"
-                          disabled={reportPanelSubmitting || reportPanelSelected.size === 0}
-                          onClick={async () => {
-                            if (!reportPanelDomain?.id) return;
-                            const selectedList = Array.from(reportPanelSelected);
-                            const autoPlatforms = selectedList.filter(p => !reportPanelInfo[p]?.manual_only);
-                            const manualPlatforms = selectedList.filter(p => reportPanelInfo[p]?.manual_only);
+                      {/* Progress indicator */}
+                      {reportPanelManualQueue.length > 1 && (
+                        <div style={{ marginBottom: 16, padding: "8px 12px", background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)" }}>
+                          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+                            Platform {reportPanelManualQueue.indexOf(reportPanelManualMode) + 1} of {reportPanelManualQueue.length}
+                          </div>
+                          <div style={{ height: 4, background: "var(--border-default)", borderRadius: 2 }}>
+                            <div style={{ height: "100%", background: "var(--accent-blue)", borderRadius: 2, width: `${((reportPanelManualQueue.indexOf(reportPanelManualMode) + 1) / reportPanelManualQueue.length) * 100}%` }} />
+                          </div>
+                        </div>
+                      )}
 
-                            setReportPanelSubmitting(true);
-                            try {
-                              if (autoPlatforms.length > 0) {
-                                await reportDomain(reportPanelDomain.id, reportPanelDomain.domain, autoPlatforms);
-                                showToast(`Report queued for: ${autoPlatforms.join(", ")}`, "success");
-                              }
+                      {reportPanelInfo[reportPanelManualMode]?.url && (
+                        <div className="sb-manual-cta">
+                          <a className="sb-manual-cta-btn" href={reportPanelInfo[reportPanelManualMode].url} target="_blank" rel="noopener noreferrer">
+                            ↗ Open {reportPanelManualMode.charAt(0).toUpperCase() + reportPanelManualMode.slice(1)} Abuse Form
+                          </a>
+                        </div>
+                      )}
+                      <div className="sb-copy-field">
+                        <div className="sb-copy-field-label">Full URL</div>
+                        <div className="sb-copy-field-value" style={{ position: "relative" }}>
+                          {`https://${reportPanelDomain.domain}`}
+                          <button className="sb-copy-btn" onClick={(e) => {
+                            navigator.clipboard.writeText(`https://${reportPanelDomain.domain}`);
+                            const btn = e.currentTarget;
+                            btn.textContent = "Copied!";
+                            btn.classList.add("copied");
+                            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                          }}>Copy</button>
+                        </div>
+                      </div>
+                      <div className="sb-copy-field">
+                        <div className="sb-copy-field-label">Additional Details Template</div>
+                        <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                          {(() => {
+                            const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                            const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
 
-                              if (manualPlatforms.length > 0) {
-                                setReportPanelManualQueue(manualPlatforms);
-                                setReportPanelManualMode(manualPlatforms[0]);
-                              } else {
-                                setReportPanelOpen(false);
-                                loadDomains();
-                                if (route.name === "domain" && reportPanelDomain.id) {
-                                  loadDomainDetail(reportPanelDomain.id);
-                                }
+                            let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+
+                            if (verdictReasons) {
+                              const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                              // Deduplicate reasons
+                              const uniqueReasons = Array.from(new Set(reasons));
+                              if (uniqueReasons.length > 0) {
+                                template += "Evidence:\n";
+                                uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                                  template += `- ${reason}\n`;
+                                });
+                                template += "\n";
                               }
-                            } catch (err) {
-                              showToast((err as Error).message || "Report failed", "error");
-                            } finally {
-                              setReportPanelSubmitting(false);
                             }
-                          }}
-                        >
-                          {reportPanelSubmitting ? "Submitting..." : `Submit ${reportPanelSelected.size} Platform${reportPanelSelected.size !== 1 ? "s" : ""}`}
-                        </button>
+
+                            template += "This site poses a security risk to users.";
+
+                            return template;
+                          })()}
+                          <button className="sb-copy-btn" onClick={(e) => {
+                            const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                            const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
+
+                            let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+
+                            if (verdictReasons) {
+                              const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                              // Deduplicate reasons
+                              const uniqueReasons = Array.from(new Set(reasons));
+                              if (uniqueReasons.length > 0) {
+                                template += "Evidence:\n";
+                                uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                                  template += `- ${reason}\n`;
+                                });
+                                template += "\n";
+                              }
+                            }
+
+                            template += "This site poses a security risk to users.";
+
+                            navigator.clipboard.writeText(template);
+                            const btn = e.currentTarget;
+                            btn.textContent = "Copied!";
+                            btn.classList.add("copied");
+                            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                          }}>Copy</button>
+                        </div>
                       </div>
-                      <div className="sb-manual-notes" style={{ marginTop: 16 }}>
-                        <div className="sb-manual-notes-title">How it works</div>
+                      <div className="sb-manual-notes">
+                        <div className="sb-manual-notes-title">Tips</div>
                         <ul>
-                          <li><strong>Auto</strong> platforms are submitted automatically via API</li>
-                          <li><strong>Manual</strong> platforms will show a form with copy-paste fields</li>
+                          <li>Copy the URL and paste into "URL to report" field</li>
+                          <li>Copy the Additional Details template and paste into the form's description field</li>
+                          <li>Review and edit the template if needed before submitting</li>
                         </ul>
                       </div>
+                      <div style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {(() => {
+                          const currentIndex = reportPanelManualQueue.indexOf(reportPanelManualMode);
+                          const hasNext = currentIndex < reportPanelManualQueue.length - 1;
+                          const nextPlatform = hasNext ? reportPanelManualQueue[currentIndex + 1] : null;
+
+                          return (
+                            <>
+                              {hasNext ? (
+                                <button
+                                  className="sb-btn sb-btn-primary"
+                                  onClick={() => setReportPanelManualMode(nextPlatform!)}
+                                >
+                                  ✓ Done — Next: {nextPlatform!.charAt(0).toUpperCase() + nextPlatform!.slice(1)}
+                                </button>
+                              ) : (
+                                <button
+                                  className="sb-btn sb-btn-primary"
+                                  onClick={() => {
+                                    setReportPanelOpen(false);
+                                    setReportPanelManualMode(null);
+                                    setReportPanelManualQueue([]);
+                                    loadDomains();
+                                    if (route.name === "domain" && reportPanelDomain.id) {
+                                      loadDomainDetail(reportPanelDomain.id);
+                                    }
+                                    showToast("All manual submissions complete!", "success");
+                                  }}
+                                >
+                                  ✓ Done — Close
+                                </button>
+                              )}
+                              <button className="sb-btn" onClick={() => {
+                                setReportPanelManualMode(null);
+                                setReportPanelManualQueue([]);
+                              }}>← Back to Platforms</button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="sb-copy-field-label" style={{ marginBottom: 12 }}>Select platforms to report to:</div>
+                      {reportPanelPlatforms.length === 0 ? (
+                        <div className="sb-muted">Loading platforms...</div>
+                      ) : (
+                        <>
+                          <div className="sb-report-platform-list">
+                            {reportPanelPlatforms.map((platform) => {
+                              const info = reportPanelInfo[platform] || {};
+                              const isManual = info.manual_only;
+                              const isSelected = reportPanelSelected.has(platform);
+                              return (
+                                <label key={platform} className="sb-report-platform-item">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      const next = new Set(reportPanelSelected);
+                                      if (e.target.checked) {
+                                        next.add(platform);
+                                      } else {
+                                        next.delete(platform);
+                                      }
+                                      setReportPanelSelected(next);
+                                    }}
+                                  />
+                                  <span className="sb-report-platform-name">{platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
+                                  <span className={`sb-badge ${isManual ? "sb-badge-manual" : "sb-badge-auto"}`}>
+                                    {isManual ? "Manual" : "Auto"}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="sb-row" style={{ marginTop: 16, gap: 8 }}>
+                            <button className="sb-btn" onClick={() => setReportPanelSelected(new Set(reportPanelPlatforms))}>Select All</button>
+                            <button className="sb-btn" onClick={() => setReportPanelSelected(new Set())}>Clear</button>
+                          </div>
+                          <div style={{ marginTop: 20, borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                            <button
+                              className="sb-btn sb-btn-primary"
+                              disabled={reportPanelSubmitting || reportPanelSelected.size === 0}
+                              onClick={async () => {
+                                if (!reportPanelDomain?.id) return;
+                                const selectedList = Array.from(reportPanelSelected);
+                                const autoPlatforms = selectedList.filter(p => !reportPanelInfo[p]?.manual_only);
+                                const manualPlatforms = selectedList.filter(p => reportPanelInfo[p]?.manual_only);
+
+                                setReportPanelSubmitting(true);
+                                try {
+                                  if (autoPlatforms.length > 0) {
+                                    await reportDomain(reportPanelDomain.id, reportPanelDomain.domain, autoPlatforms);
+                                    showToast(`Report queued for: ${autoPlatforms.join(", ")}`, "success");
+                                  }
+
+                                  if (manualPlatforms.length > 0) {
+                                    setReportPanelManualQueue(manualPlatforms);
+                                    setReportPanelManualMode(manualPlatforms[0]);
+                                  } else {
+                                    setReportPanelOpen(false);
+                                    loadDomains();
+                                    if (route.name === "domain" && reportPanelDomain.id) {
+                                      loadDomainDetail(reportPanelDomain.id);
+                                    }
+                                  }
+                                } catch (err) {
+                                  showToast((err as Error).message || "Report failed", "error");
+                                } finally {
+                                  setReportPanelSubmitting(false);
+                                }
+                              }}
+                            >
+                              {reportPanelSubmitting ? "Submitting..." : `Submit ${reportPanelSelected.size} Platform${reportPanelSelected.size !== 1 ? "s" : ""}`}
+                            </button>
+                          </div>
+                          <div className="sb-manual-notes" style={{ marginTop: 16 }}>
+                            <div className="sb-manual-notes-title">How it works</div>
+                            <ul>
+                              <li><strong>Auto</strong> platforms are submitted automatically via API</li>
+                              <li><strong>Manual</strong> platforms will show a form with copy-paste fields</li>
+                            </ul>
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
-                </>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Visit Website Warning Modal */}
       {visitWarningOpen && (

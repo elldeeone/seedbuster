@@ -25,15 +25,15 @@ export function isAdminMode(): boolean {
   return pathname.startsWith("/admin");
 }
 
-// Use admin API for admin mode, public API for public mode
-const API_BASE = isAdminMode() ? "/admin/api" : "/api";
+// Use admin API for admin mode, public API for public mode (resolved per call so navigation can switch modes)
+const getApiBase = () => (isAdminMode() ? "/admin/api" : "/api");
 const BASIC_AUTH = import.meta.env.VITE_ADMIN_AUTH;
 const AUTH_HEADER = BASIC_AUTH ? { Authorization: `Basic ${btoa(BASIC_AUTH)}` } : undefined;
 
 type RequestOptions = RequestInit & { skipJson?: boolean };
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${getApiBase()}${path}`, {
     credentials: "include",
     cache: "no-store",
     ...options,

@@ -4496,12 +4496,20 @@ class DashboardServer:
         self._app.router.add_get("/healthz", self._healthz)
 
         # Public API routes (read-only, reuse admin handlers)
+        self._app.router.add_get("/api/stats", self._admin_api_stats)
+        self._app.router.add_get("/api/domains", self._admin_api_domains)
         self._app.router.add_get("/api/clusters", self._admin_api_clusters)
         self._app.router.add_get("/api/clusters/{cluster_id}", self._admin_api_cluster)
         self._app.router.add_get("/api/domains/{domain_id}", self._admin_api_domain)
+        self._app.router.add_get("/api/platforms", self._admin_api_platforms)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
+        # Public download routes for reports/evidence packages
+        self._app.router.add_get("/domains/{domain_id}/pdf", self._admin_domain_pdf)
+        self._app.router.add_get("/domains/{domain_id}/package", self._admin_domain_package)
+        self._app.router.add_get("/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
+        self._app.router.add_get("/clusters/{cluster_id}/package", self._admin_cluster_package)
 
         # Legacy admin form endpoints (kept for backward compatibility)
         self._app.router.add_post("/admin/submit", self._admin_submit)
