@@ -4574,6 +4574,14 @@ class DashboardServer:
             html_out = index_path.read_text(encoding="utf-8")
         except Exception:
             raise web.HTTPInternalServerError(text="Failed to read frontend bundle.")
+
+        mode = "admin" if (request.path or "").startswith("/admin") else "public"
+        mode_script = f"<script>window.__SB_MODE=\"{mode}\";</script>"
+        if "</head>" in html_out:
+            html_out = html_out.replace("</head>", f"{mode_script}</head>", 1)
+        else:
+            html_out = mode_script + html_out
+
         return web.Response(
             text=html_out,
             content_type="text/html",
