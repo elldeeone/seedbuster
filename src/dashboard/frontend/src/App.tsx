@@ -24,7 +24,7 @@ type Route =
   | { name: "clusters" }
   | { name: "cluster"; id: string };
 
-const STATUS_OPTIONS = ["", "pending", "analyzing", "analyzed", "reported", "failed", "deferred", "allowlisted", "false_positive"];
+const STATUS_OPTIONS = ["", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
 
@@ -737,6 +737,15 @@ export default function App() {
     }
   };
 
+  const openReportPanelById = async (domainId: number, domainName: string) => {
+    try {
+      const detail = await fetchDomainDetail(domainId);
+      await openReportPanel(detail.domain);
+    } catch (err) {
+      showToast((err as Error).message || `Failed to open report panel for ${domainName}`, "error");
+    }
+  };
+
   const triggerAction = async (domain: Domain, type: "rescan" | "report" | "false_positive") => {
     const id = domain.id;
     if (!id) {
@@ -784,7 +793,7 @@ export default function App() {
     }
 
     const statusLabels: Record<string, string> = {
-      deferred: "Watchlist",
+      watchlist: "Watchlist",
       allowlisted: "Allowlist",
       false_positive: "False Positive",
       analyzed: "Analyzed",
@@ -993,7 +1002,22 @@ export default function App() {
               <tbody>
                 {filteredPendingReports.slice(0, 20).map((r) => (
                   <tr key={`${r.domain}-${r.platform}`}>
-                    <td><a className="domain-link" href={r.domain_id ? `#/domains/${r.domain_id}` : undefined}>{r.domain}</a></td>
+                    <td>
+                      <a
+                        className="domain-link"
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (!r.domain_id) {
+                            showToast("Domain ID missing for this report", "error");
+                            return;
+                          }
+                          openReportPanelById(r.domain_id, r.domain);
+                        }}
+                      >
+                        {r.domain}
+                      </a>
+                    </td>
                     <td>{r.platform}</td>
                     <td><span className={badgeClass(r.status, "report")}>{(r.status || "").toUpperCase()}</span></td>
                     <td className="sb-muted">{r.attempts ?? "—"}</td>
@@ -1160,8 +1184,8 @@ export default function App() {
 
                   return (
                     <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                      {currentStatus !== "deferred" && (
-                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "deferred")}>
+                      {currentStatus !== "watchlist" && (
+                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "watchlist")}>
                           {isBusy ? "Working…" : "👁 Watch"}
                         </button>
                       )}
@@ -1198,6 +1222,56 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Watchlist baseline section */}
+            {(() => {
+              const currentStatus = (domainDetail.domain.status || "").toLowerCase();
+              if (currentStatus !== "watchlist") return null;
+
+              const isBusy = !!actionBusy[domainDetail.domain.id || 0];
+
+              return (
+                <div className="sb-section" style={{ marginTop: 16, padding: 12, background: "var(--accent-orange-subtle)", borderRadius: 8 }}>
+                  <div className="sb-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div className="sb-label" style={{ color: "var(--accent-orange)" }}>Watchlist Baseline</div>
+                      <div className="sb-muted" style={{ fontSize: "0.875rem", marginTop: 4 }}>
+                        {(domainDetail.domain as any).watchlist_baseline_timestamp || "Not set"}
+                      </div>
+                    </div>
+                    <button
+                      className="sb-btn"
+                      disabled={isBusy}
+                      onClick={async () => {
+                        if (!domainDetail.domain.id) return;
+                        setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: "baseline" }));
+                        try {
+                          const response = await fetch(
+                            `/admin/api/domains/${domainDetail.domain.id}/baseline`,
+                            { method: "POST" }
+                          );
+                          if (response.ok) {
+                            const data = await response.json();
+                            showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
+                            // Refresh domain detail
+                            await loadDomainDetail(domainDetail.domain.id);
+                          } else {
+                            const error = await response.text();
+                            showToast(`Failed to update baseline: ${error}`, "error");
+                          }
+                        } catch (err) {
+                          showToast(`Error updating baseline: ${err}`, "error");
+                        } finally {
+                          setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: null }));
+                        }
+                      }}
+                    >
+                      {isBusy ? "Updating…" : "Update Baseline"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Download links */}
             <div className="sb-row" style={{ flexWrap: "wrap", marginTop: 16, gap: 8 }}>

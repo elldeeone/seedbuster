@@ -215,9 +215,8 @@ class BotService:
         target = await self.find_by_short_id(short_id)
         if not target:
             return f"Domain not found: {short_id}"
-        await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
+        await self.database.update_domain_status(target["id"], DomainStatus.WATCHLIST)
         return (
-            f"\U0001F551 Deferred: `{target['domain']}`\n\n"
-            "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
-            "You'll receive an update when rescans complete."
+            f"\U0001F441 Watchlist: `{target['domain']}`\n\n"
+            "Monitoring for worsening behavior. Monthly rescans will alert if score increases, verdict escalates, or seed form detected."
         )

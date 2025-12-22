@@ -144,6 +144,12 @@ export async function updateDomainStatus(
   });
 }
 
+export async function updateWatchlistBaseline(domainId: number): Promise<any> {
+  return await request(`/domains/${domainId}/baseline`, {
+    method: "POST",
+  });
+}
+
 export interface PlatformInfo {
   manual_only: boolean;
   url: string;

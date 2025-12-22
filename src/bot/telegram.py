@@ -453,10 +453,10 @@ class SeedBusterBot:
                 ])
                 keyboard = InlineKeyboardMarkup(rows)
             elif temporal and temporal.is_initial_scan and temporal.cloaking_suspected:
-                # Initial scan with suspected cloaking - offer defer as primary
+                # Initial scan with suspected cloaking - offer watchlist as primary
                 rows = [[
                     InlineKeyboardButton(
-                        "🕐 Defer (Wait for Rescans)",
+                        "👁 Watch (Monitor for Changes)",
                         callback_data=f"defer_{data.domain_id}",
                     ),
                 ]]
@@ -1624,19 +1624,18 @@ class SeedBusterBot:
             await query.message.reply_text(f"Domain not found: {domain_short_id}")
             return
 
-        # Update status to deferred
-        await self.database.update_domain_status(target["id"], DomainStatus.DEFERRED)
+        # Update status to watchlist
+        await self.database.update_domain_status(target["id"], DomainStatus.WATCHLIST)
 
-        # Update button to show deferred
+        # Update button to show watchlist
         await query.edit_message_reply_markup(
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🕐 Deferred - Awaiting Rescans", callback_data="noop")]
+                [InlineKeyboardButton("👁 Watchlist - Monitoring", callback_data="noop")]
             ])
         )
         await query.message.reply_text(
-            f"🕐 Deferred: `{target['domain']}`\n\n"
-            "Waiting for rescans at 6h/12h/24h/48h intervals.\n"
-            "You'll receive an update when rescans complete.",
+            f"👁 Watchlist: `{target['domain']}`\n\n"
+            "Monitoring for worsening behavior. Monthly rescans will alert if score increases, verdict escalates, or seed form detected.",
             parse_mode=ParseMode.MARKDOWN,
         )
 

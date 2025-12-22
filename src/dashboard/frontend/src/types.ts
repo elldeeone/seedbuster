@@ -38,6 +38,7 @@ export interface Domain {
   action_required?: string | null;
   operator_notes?: string | null;
   verdict_reasons?: string | null;
+  watchlist_baseline_timestamp?: string | null;
   [key: string]: unknown;
 }
 

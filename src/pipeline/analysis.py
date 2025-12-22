@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
+from datetime import datetime
 from urllib.parse import urlparse
 
 from ..analyzer.clustering import analyze_for_clustering
@@ -458,50 +459,114 @@ class AnalysisEngine:
             )
 
             # Determine if we should send an alert
-            # For monthly rescans of deferred domains, only alert if findings increased
+            # For monthly rescans of watchlist domains, only alert if findings increased from baseline
             should_alert = analysis_score >= self.config.analysis_score_threshold
             is_watchlist_update = False
-            
+
             if scan_reason == ScanReason.RESCAN_MONTHLY:
-                # Get previous snapshot for comparison
-                snapshots = self.temporal.get_snapshots(domain)
-                previous_snapshot = snapshots[-2] if len(snapshots) >= 2 else None
-                
-                if previous_snapshot:
-                    score_increase = analysis_score - previous_snapshot.score
-                    previous_verdict = previous_snapshot.verdict.lower() if previous_snapshot.verdict else "low"
-                    current_verdict = verdict.value.lower()
-                    
-                    # Verdict escalation check
-                    verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
-                    verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(previous_verdict, 0)
-                    
-                    # Seed form is a smoking gun - always alert
-                    seed_form_now_detected = detection.seed_form_detected if detection else False
-                    
-                    # Only alert if meaningful change detected
-                    should_alert = (
-                        should_alert and (
-                            score_increase >= 10 or
-                            verdict_escalated or
-                            seed_form_now_detected
-                        )
-                    )
-                    
-                    if should_alert:
-                        is_watchlist_update = True
-                        logger.info(
-                            f"Watchlist update for {domain}: score change {previous_snapshot.score}→{analysis_score}, "
-                            f"verdict {previous_verdict}→{current_verdict}, seed_form={seed_form_now_detected}"
-                        )
+                # Get domain record to check if it's a watchlist domain
+                domain_record = await self.database.get_domain_by_id(domain_id)
+
+                if domain_record and domain_record.get("status") == "watchlist":
+                    baseline_timestamp = domain_record.get("watchlist_baseline_timestamp")
+
+                    if baseline_timestamp:
+                        # Find baseline snapshot by timestamp
+                        snapshots = self.temporal.get_snapshots(domain)
+                        baseline_snapshot = None
+
+                        # Find snapshot closest to baseline timestamp
+                        try:
+                            baseline_dt = datetime.fromisoformat(baseline_timestamp.replace(' ', 'T'))
+                            for snapshot in snapshots:
+                                if snapshot.timestamp <= baseline_dt:
+                                    baseline_snapshot = snapshot
+                                else:
+                                    break  # Snapshots are ordered by time
+                        except (ValueError, AttributeError):
+                            logger.warning(f"Invalid baseline timestamp for {domain}: {baseline_timestamp}")
+
+                        if baseline_snapshot:
+                            # Compare against BASELINE (not previous scan)
+                            score_increase = analysis_score - baseline_snapshot.score
+                            baseline_verdict = baseline_snapshot.verdict.lower() if baseline_snapshot.verdict else "low"
+                            current_verdict = verdict.value.lower()
+
+                            # Verdict escalation check
+                            verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
+                            verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(baseline_verdict, 0)
+
+                            # Seed form detection check
+                            seed_form_now_detected = detection.seed_form_detected if detection else False
+                            baseline_had_seed_form = any(
+                                "seed" in reason.lower() and "form" in reason.lower()
+                                for reason in baseline_snapshot.reasons
+                            )
+                            seed_form_newly_detected = seed_form_now_detected and not baseline_had_seed_form
+
+                            # Alert triggers (compared to BASELINE)
+                            should_alert = (
+                                should_alert and (
+                                    score_increase >= 10 or
+                                    verdict_escalated or
+                                    seed_form_newly_detected
+                                )
+                            )
+
+                            if should_alert:
+                                is_watchlist_update = True
+                                logger.info(
+                                    f"Watchlist alert for {domain}: baseline score {baseline_snapshot.score}→{analysis_score} (+{score_increase}), "
+                                    f"verdict {baseline_verdict}→{current_verdict}, new_seed_form={seed_form_newly_detected}"
+                                )
+                            else:
+                                logger.info(
+                                    f"No significant change from baseline for {domain}: "
+                                    f"score {baseline_snapshot.score}→{analysis_score} ({score_increase:+d}), skipping notification"
+                                )
+                        else:
+                            # No baseline snapshot found, use most recent as fallback
+                            logger.warning(f"No baseline snapshot found for {domain}, using most recent as baseline")
+                            baseline_snapshot = snapshots[-2] if len(snapshots) >= 2 else None
+                            if baseline_snapshot:
+                                score_increase = analysis_score - baseline_snapshot.score
+                                should_alert = should_alert and score_increase >= 10
+                            is_watchlist_update = should_alert
                     else:
-                        logger.info(
-                            f"No significant change for deferred domain {domain}: "
-                            f"score {previous_snapshot.score}→{analysis_score}, skipping notification"
-                        )
+                        # No baseline timestamp set yet, this scan becomes the baseline
+                        is_watchlist_update = should_alert
+                        logger.info(f"Setting baseline for watchlist domain {domain}")
                 else:
-                    # First rescan, treat it as a watchlist update if alerting
-                    is_watchlist_update = should_alert
+                    # Not a watchlist domain, use previous logic for backward compatibility
+                    snapshots = self.temporal.get_snapshots(domain)
+                    previous_snapshot = snapshots[-2] if len(snapshots) >= 2 else None
+
+                    if previous_snapshot:
+                        score_increase = analysis_score - previous_snapshot.score
+                        previous_verdict = previous_snapshot.verdict.lower() if previous_snapshot.verdict else "low"
+                        current_verdict = verdict.value.lower()
+
+                        # Verdict escalation check
+                        verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
+                        verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(previous_verdict, 0)
+
+                        # Seed form is a smoking gun - always alert
+                        seed_form_now_detected = detection.seed_form_detected if detection else False
+
+                        # Only alert if meaningful change detected
+                        should_alert = (
+                            should_alert and (
+                                score_increase >= 10 or
+                                verdict_escalated or
+                                seed_form_now_detected
+                            )
+                        )
+
+                        if should_alert:
+                            is_watchlist_update = True
+                    else:
+                        # First rescan, treat it as a watchlist update if alerting
+                        is_watchlist_update = should_alert
             
             # Send alert if criteria met
             if should_alert:

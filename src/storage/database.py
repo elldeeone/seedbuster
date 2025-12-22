@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import logging
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 
 class DomainStatus(str, Enum):
@@ -16,7 +19,7 @@ class DomainStatus(str, Enum):
     PENDING = "pending"  # Discovered, awaiting analysis
     ANALYZING = "analyzing"  # Currently being analyzed
     ANALYZED = "analyzed"  # Analysis complete
-    DEFERRED = "deferred"  # Waiting for rescans (suspected cloaking)
+    WATCHLIST = "watchlist"  # Waiting for rescans (suspected cloaking)
     REPORTED = "reported"  # Reported to blocklists
     FALSE_POSITIVE = "false_positive"  # Marked as FP
     ALLOWLISTED = "allowlisted"  # On allowlist
@@ -127,6 +130,7 @@ class Database:
             # otherwise existing DBs on older schemas would fail to start up.
             await self._migrate_domains_table()
             await self._migrate_reports_table()
+            await self._migrate_deferred_to_watchlist()
             await self._create_indexes()
 
     async def _create_indexes(self) -> None:
@@ -156,6 +160,8 @@ class Database:
         migrations: list[str] = []
         if "operator_notes" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN operator_notes TEXT")
+        if "watchlist_baseline_timestamp" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN watchlist_baseline_timestamp TEXT")
 
         for stmt in migrations:
             try:
@@ -191,6 +197,27 @@ class Database:
                 continue
         if migrations:
             await self._connection.commit()
+
+    async def _migrate_deferred_to_watchlist(self) -> None:
+        """Migrate existing deferred domains to watchlist status."""
+        # Note: Called from _create_tables which already holds the lock
+        # Check if migration needed
+        cursor = await self._connection.execute(
+            "SELECT COUNT(*) as count FROM domains WHERE status = 'deferred'"
+        )
+        row = await cursor.fetchone()
+        if row["count"] == 0:
+            return
+
+        # Update status and set baseline to updated_at
+        await self._connection.execute("""
+            UPDATE domains
+            SET status = 'watchlist',
+                watchlist_baseline_timestamp = updated_at
+            WHERE status = 'deferred'
+        """)
+        await self._connection.commit()
+        logger.info(f"Migrated {row['count']} domains from deferred to watchlist")
 
     async def add_domain(
         self,
@@ -300,6 +327,26 @@ class Database:
             )
             await self._connection.commit()
 
+        # Set baseline timestamp when marking domain as watchlist
+        if status_value == DomainStatus.WATCHLIST.value:
+            async with self._lock:
+                await self._connection.execute(
+                    "UPDATE domains SET watchlist_baseline_timestamp = CURRENT_TIMESTAMP WHERE id = ?",
+                    (domain_id,)
+                )
+                await self._connection.commit()
+
+        # Auto-cancel pending reports for certain status changes
+        if status_value in (
+            DomainStatus.WATCHLIST.value,
+            DomainStatus.ALLOWLISTED.value,
+            DomainStatus.FALSE_POSITIVE.value,
+        ):
+            await self.cancel_pending_reports_for_domain(
+                domain_id,
+                reason=f"Domain marked as {status_value}"
+            )
+
     async def update_domain_admin_fields(
         self,
         domain_id: int,
@@ -347,6 +394,39 @@ class Database:
                 params,
             )
             await self._connection.commit()
+
+    async def update_watchlist_baseline(
+        self,
+        domain_id: int,
+    ) -> Optional[str]:
+        """Update watchlist baseline to current timestamp.
+
+        Returns the new baseline timestamp or None if domain not found.
+        """
+        async with self._lock:
+            # Verify domain exists and is watchlist status
+            cursor = await self._connection.execute(
+                "SELECT status FROM domains WHERE id = ?",
+                (domain_id,)
+            )
+            row = await cursor.fetchone()
+            if not row or row["status"] != "watchlist":
+                return None
+
+            # Update baseline to current timestamp
+            await self._connection.execute(
+                "UPDATE domains SET watchlist_baseline_timestamp = CURRENT_TIMESTAMP WHERE id = ?",
+                (domain_id,)
+            )
+            await self._connection.commit()
+
+            # Return the new timestamp
+            cursor = await self._connection.execute(
+                "SELECT watchlist_baseline_timestamp FROM domains WHERE id = ?",
+                (domain_id,)
+            )
+            row = await cursor.fetchone()
+            return row["watchlist_baseline_timestamp"] if row else None
 
     async def update_domain_analysis(
         self,
@@ -496,20 +576,20 @@ class Database:
             row = await cursor.fetchone()
             return int(row["count"] or 0)
 
-    async def get_deferred_domains_due_rescan(
+    async def get_watchlist_domains_due_rescan(
         self,
         days_since_update: int = 30,
         limit: int = 20,
     ) -> list[dict]:
-        """Get deferred domains that haven't been checked in X days.
-        
+        """Get watchlist domains that haven't been checked in X days.
+
         Used for watchlist/monitoring - periodic rescans of suspicious domains.
         """
         async with self._lock:
             cursor = await self._connection.execute(
                 """
                 SELECT * FROM domains
-                WHERE status = 'deferred'
+                WHERE status = 'watchlist'
                   AND (
                     updated_at IS NULL
                     OR updated_at < datetime('now', ? || ' days')
@@ -788,6 +868,33 @@ class Database:
             )
             await self._connection.commit()
 
+    async def cancel_pending_reports_for_domain(
+        self,
+        domain_id: int,
+        reason: str = "Domain status changed"
+    ) -> int:
+        """
+        Cancel all pending/manual_required/rate_limited reports for a domain.
+
+        Sets their status to 'skipped' and clears retry timing.
+        Returns the number of reports cancelled.
+        """
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE reports
+                SET status = 'skipped',
+                    response = ?,
+                    next_attempt_at = NULL,
+                    retry_after = NULL
+                WHERE domain_id = ?
+                  AND status IN ('pending', 'manual_required', 'rate_limited')
+                """,
+                (reason, domain_id)
+            )
+            await self._connection.commit()
+            return cursor.rowcount
+
     async def get_reports_for_domain(self, domain_id: int) -> list[dict]:
         """Get all reports for a domain."""
         async with self._lock:
@@ -848,6 +955,7 @@ class Database:
                 FROM reports r
                 JOIN domains d ON r.domain_id = d.id
                 WHERE r.status IN ('pending', 'manual_required', 'rate_limited')
+                  AND d.status NOT IN ('watchlist', 'allowlisted', 'false_positive')
                 ORDER BY r.id ASC
                 """
             )

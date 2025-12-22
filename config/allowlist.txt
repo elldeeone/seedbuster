@@ -8,3 +8,4 @@ kaspa.org
 kaspahub.org
 kaspanet.io
 wallet.kaspanet.io
+www.kaspafaq.com

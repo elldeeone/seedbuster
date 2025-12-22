@@ -556,7 +556,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       .sb-badge-pending {{ background: var(--accent-amber-subtle); color: var(--accent-amber); }}
       .sb-badge-analyzing {{ background: var(--accent-blue-subtle); color: var(--accent-blue); }}
       .sb-badge-analyzed {{ background: var(--accent-gray-subtle); color: var(--accent-gray); }}
-      .sb-badge-deferred {{ background: var(--accent-orange-subtle); color: var(--accent-orange); }}
+      .sb-badge-watchlist {{ background: var(--accent-orange-subtle); color: var(--accent-orange); }}
       .sb-badge-reported {{ background: var(--accent-green-subtle); color: var(--accent-green); }}
       .sb-badge-false_positive {{ background: var(--accent-purple-subtle); color: var(--accent-purple); }}
       .sb-badge-allowlisted {{ background: var(--accent-cyan-subtle); color: var(--accent-cyan); }}
@@ -4325,6 +4325,7 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
         self._app.router.add_post("/admin/api/domains/{domain_id}/false_positive", self._admin_api_false_positive)
         self._app.router.add_patch("/admin/api/domains/{domain_id}/status", self._admin_api_update_domain_status)
+        self._app.router.add_post("/admin/api/domains/{domain_id}/baseline", self._admin_api_update_baseline)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
         self._app.router.add_get("/admin/api/clusters", self._admin_api_clusters)
@@ -5271,6 +5272,54 @@ class DashboardServer:
         # Update via database
         await self.database.update_domain_status(domain_id, DomainStatus(new_status))
         return web.json_response({"status": "ok", "new_status": new_status})
+
+    async def _admin_api_update_baseline(self, request: web.Request) -> web.Response:
+        """Update watchlist baseline to current snapshot (POST /admin/api/domains/{domain_id}/baseline)."""
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        # Get domain record
+        domain_record = await self.database.get_domain_by_id(domain_id)
+        if not domain_record:
+            return web.json_response(
+                {"error": "Domain not found"},
+                status=404
+            )
+
+        # Verify domain is watchlist status
+        if domain_record.get("status") != "watchlist":
+            return web.json_response(
+                {"error": "Domain must be in watchlist status to update baseline"},
+                status=400
+            )
+
+        # Update baseline
+        new_baseline = await self.database.update_watchlist_baseline(domain_id)
+
+        if not new_baseline:
+            return web.json_response(
+                {"error": "Failed to update baseline"},
+                status=500
+            )
+
+        # Get latest snapshot for response
+        domain_name = domain_record.get("domain")
+        latest_snapshot = self.temporal.get_latest_snapshot(domain_name)
+
+        response_data = {
+            "status": "ok",
+            "baseline_timestamp": new_baseline,
+        }
+
+        if latest_snapshot:
+            response_data["snapshot"] = {
+                "score": latest_snapshot.score,
+                "verdict": latest_snapshot.verdict,
+                "timestamp": latest_snapshot.timestamp.isoformat(),
+            }
+
+        return web.json_response(response_data)
 
     async def _admin_api_evidence(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)

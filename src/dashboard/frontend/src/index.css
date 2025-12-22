@@ -507,7 +507,7 @@ summary:focus-visible {
   color: var(--accent-gray);
 }
 
-.sb-badge-deferred {
+.sb-badge-watchlist {
   background: var(--accent-orange-subtle);
   color: var(--accent-orange);
 }
@@ -934,13 +934,13 @@ summary:focus-visible {
   background: var(--accent-gray);
 }
 
-.sb-status-selector[data-status="deferred"] select {
+.sb-status-selector[data-status="watchlist"] select {
   background: var(--accent-orange-subtle);
   color: var(--accent-orange);
   border-color: rgba(240, 136, 62, 0.3);
 }
 
-.sb-status-selector[data-status="deferred"]::before {
+.sb-status-selector[data-status="watchlist"]::before {
   background: var(--accent-orange);
 }
 
