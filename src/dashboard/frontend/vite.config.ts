@@ -32,6 +32,10 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
+      "/api": {
+        target: backend,
+        changeOrigin: true,
+      },
     },
   },
   build: {

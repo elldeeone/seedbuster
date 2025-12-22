@@ -49,6 +49,25 @@ class AnalysisEngine:
         self.report_manager = report_manager
         self.bot = bot
 
+    async def _lookup_urlscan_history(self, domain: str) -> tuple[list[str], str | None, bool]:
+        """Find historical urlscan.io scans with wallet/seed UI for unreachable pages."""
+        reasons: list[str] = []
+        result_url: str | None = None
+        found = False
+
+        try:
+            best = await self.external_intel.query_urlscan_best(domain)
+        except Exception as e:
+            logger.warning(f"Historical urlscan.io lookup failed for {domain}: {e}")
+            return reasons, result_url, found
+
+        if best and best.found and best.result_url:
+            reasons.append(f"EXTERNAL: urlscan.io historical scan with wallet/seed UI: {best.result_url}")
+            result_url = best.result_url
+            found = True
+
+        return reasons, result_url, found
+
     async def analyze(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL, is_rescan: bool = False):
         """Analyze a single domain task (initial or rescan)."""
         domain_id = task["id"]
@@ -109,9 +128,18 @@ class AnalysisEngine:
 
             if not dns_resolves or not resolved_ips:
                 # Domain doesn't exist - report based on domain score alone
-                verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
+                urlscan_history_reasons, urlscan_result_url, urlscan_history_found = await self._lookup_urlscan_history(domain)
                 analysis_score = domain_score
-                reasons = domain_reasons + ["Domain does not resolve (not registered or offline)"]
+                if urlscan_history_found:
+                    analysis_score = max(analysis_score, max(self.config.analysis_score_threshold, 75))
+                    verdict = Verdict.HIGH
+                else:
+                    verdict = Verdict.MEDIUM if domain_score >= 50 else Verdict.LOW
+                reasons = (
+                    domain_reasons
+                    + ["Domain does not resolve (not registered or offline)"]
+                    + urlscan_history_reasons
+                )
 
                 # Save analysis
                 await self.evidence_store.save_analysis(domain, {
@@ -191,12 +219,21 @@ class AnalysisEngine:
                 if not browser_result or not browser_result.success:
                     error = getattr(browser_result, "error", None) or "Analysis failed"
                     logger.warning(f"Failed to analyze {domain}: {error}")
-                    verdict = Verdict.LOW
-                    analysis_score = min(
-                        100,
-                        domain_score + (external_result.score if external_result else 0),
+                    analysis_score = min(100, domain_score + (external_result.score if external_result else 0))
+                    urlscan_history_reasons, history_result_url, urlscan_history_found = await self._lookup_urlscan_history(domain)
+                    if history_result_url and not urlscan_result_url:
+                        urlscan_result_url = history_result_url
+                    if urlscan_history_found:
+                        analysis_score = max(analysis_score, max(self.config.analysis_score_threshold, 75))
+                        verdict = Verdict.HIGH
+                    else:
+                        verdict = Verdict.LOW
+                    reasons = (
+                        domain_reasons
+                        + [error]
+                        + (external_result.reasons if external_result else [])
+                        + urlscan_history_reasons
                     )
-                    reasons = domain_reasons + [error] + (external_result.reasons if external_result else [])
 
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,

@@ -7,7 +7,22 @@ import type {
   Stats,
 } from "./types";
 
-const API_BASE = "/admin/api";
+// Detect admin vs public mode based on URL path or dev server port
+export function isAdminMode(): boolean {
+  // In production, check if served from /admin/ path
+  if (window.location.pathname.startsWith("/admin")) {
+    return true;
+  }
+  // In development, Vite runs on port 5173 and is admin-only
+  // Public view would be served from port 8080 (Python server)
+  if (window.location.port === "5173") {
+    return true;
+  }
+  return false;
+}
+
+// Use admin API for admin mode, public API for public mode
+const API_BASE = isAdminMode() ? "/admin/api" : "/api";
 const BASIC_AUTH = import.meta.env.VITE_ADMIN_AUTH;
 const AUTH_HEADER = BASIC_AUTH ? { Authorization: `Basic ${btoa(BASIC_AUTH)}` } : undefined;
 

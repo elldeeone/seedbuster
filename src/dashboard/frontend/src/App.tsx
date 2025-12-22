@@ -9,6 +9,7 @@ import {
   fetchDomains,
   fetchPlatformInfo,
   fetchStats,
+  isAdminMode,
   markFalsePositive,
   reportDomain,
   rescanDomain,
@@ -624,6 +625,9 @@ export default function App() {
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // Detect admin mode for conditional rendering
+  const isAdmin = isAdminMode();
+
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     window.addEventListener("hashchange", onHash);
@@ -1213,17 +1217,19 @@ export default function App() {
               <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
               <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {cluster.cluster_id}</span>
             </div>
-            <div className="sb-row" style={{ gap: 8 }}>
-              <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
-              <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
-            </div>
+            {isAdmin && (
+              <div className="sb-row" style={{ gap: 8 }}>
+                <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
+                <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
+              </div>
+            )}
           </div>
 
           {/* Campaign Name with Edit */}
           <div className="sb-grid" style={{ marginBottom: 16 }}>
             <div className="col-8">
               <div className="sb-label">Campaign Name</div>
-              {clusterNameEditing ? (
+              {isAdmin && clusterNameEditing ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
                   <input
                     className="sb-input"
@@ -1259,16 +1265,18 @@ export default function App() {
                   <div style={{ fontSize: 20, fontWeight: 600 }}>
                     {cluster.name || cluster.cluster_id}
                   </div>
-                  <button
-                    className="sb-btn"
-                    style={{ padding: "4px 10px", fontSize: 12 }}
-                    onClick={() => {
-                      setClusterNameInput(cluster.name || "");
-                      setClusterNameEditing(true);
-                    }}
-                  >
-                    ✏️ Edit
-                  </button>
+                  {isAdmin && (
+                    <button
+                      className="sb-btn"
+                      style={{ padding: "4px 10px", fontSize: 12 }}
+                      onClick={() => {
+                        setClusterNameInput(cluster.name || "");
+                        setClusterNameEditing(true);
+                      }}
+                    >
+                      ✏️ Edit
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1278,15 +1286,17 @@ export default function App() {
             </div>
           </div>
 
-          {/* Bulk Actions */}
-          <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-            <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
-              {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
-            </button>
-            <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
-              {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
-            </button>
-          </div>
+          {/* Bulk Actions (admin only) */}
+          {isAdmin && (
+            <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+              <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
+                {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
+              </button>
+              <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
+                {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
+              </button>
+            </div>
+          )}
 
           {/* Shared Indicators */}
           <div style={{ marginBottom: 16 }}>

@@ -4488,11 +4488,16 @@ class DashboardServer:
         # Public (legacy server-rendered) routes remain for now
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
+        # Public campaign routes - will be updated to serve React SPA below if available
+        # For now, use server-rendered as fallback
         self._app.router.add_get("/clusters", self._public_clusters)
-        self._app.router.add_get("/campaigns", self._public_clusters)  # friendly alias
         self._app.router.add_get("/clusters/{cluster_id}", self._public_cluster_detail)
-        self._app.router.add_get("/campaigns/{cluster_id}", self._public_cluster_detail)  # friendly alias
         self._app.router.add_get("/healthz", self._healthz)
+
+        # Public API routes (read-only, reuse admin handlers)
+        self._app.router.add_get("/api/clusters", self._admin_api_clusters)
+        self._app.router.add_get("/api/clusters/{cluster_id}", self._admin_api_cluster)
+        self._app.router.add_get("/api/domains/{domain_id}", self._admin_api_domain)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -4537,6 +4542,8 @@ class DashboardServer:
             assets_dir = self.frontend_dir / "assets"
             if assets_dir.exists():
                 self._app.router.add_static("/admin/assets", str(assets_dir), show_index=False)
+                # Also serve assets from root for public SPA
+                self._app.router.add_static("/assets", str(assets_dir), show_index=False)
             # Legacy HTML fallback (for features not yet ported)
             self._app.router.add_get("/admin/legacy", self._admin_index)
             self._app.router.add_get("/admin/legacy/domains/{domain_id}", self._admin_domain)
@@ -4545,11 +4552,17 @@ class DashboardServer:
             self._app.router.add_get("/admin", self._serve_frontend)
             self._app.router.add_get("/admin/", self._serve_frontend)
             self._app.router.add_get("/admin/{tail:.*}", self._serve_frontend)
+            # Public campaigns routes serve the same React SPA (but detect public mode client-side)
+            self._app.router.add_get("/campaigns", self._serve_frontend)
+            self._app.router.add_get("/campaigns/{tail:.*}", self._serve_frontend)
         else:
             self._app.router.add_get("/admin", self._admin_index)
             self._app.router.add_get("/admin/clusters", self._admin_clusters)
             self._app.router.add_get("/admin/domains/{domain_id}", self._admin_domain)
             self._app.router.add_get("/admin/clusters/{cluster_id}", self._admin_cluster_detail)
+            # Fallback public campaigns to server-rendered when frontend not built
+            self._app.router.add_get("/campaigns", self._public_clusters)
+            self._app.router.add_get("/campaigns/{cluster_id}", self._public_cluster_detail)
 
     async def _serve_frontend(self, request: web.Request) -> web.Response:
         """Serve built SPA assets for the admin dashboard."""
