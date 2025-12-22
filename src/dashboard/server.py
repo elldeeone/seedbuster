@@ -115,8 +115,8 @@ DANGEROUS_EXCLUDE_STATUSES = ["watchlist", "false_positive", "allowlisted"]
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
     # Build navigation links
-    clusters_href = "/admin/clusters" if admin else "/clusters"
-    nav_items = [f'<a class="nav-link" href="{clusters_href}">Clusters</a>']
+    clusters_href = "/admin/clusters" if admin else "/campaigns"
+    nav_items = [f'<a class="nav-link" href="{clusters_href}">Threat Campaigns</a>']
     if admin:
         nav_items.append('<a class="nav-link" href="/">Public View</a>')
     nav = "".join(nav_items)
@@ -2760,52 +2760,138 @@ def _render_health(health_url: str, health: dict | None) -> str:
       </div>
     """
 
-def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
-    if not domains:
-        return '''
-          <div class="sb-panel">
-            <div class="sb-muted" style="text-align: center; padding: 32px;">
-              No domains found matching your criteria.
-            </div>
-          </div>
-        '''
+def _render_domains_section(
+    domains: list[dict],
+    *,
+    admin: bool,
+    total: int,
+    status: str,
+    verdict: str,
+    q: str,
+    limit: int,
+    page: int,
+    include_dangerous: bool = False,
+) -> str:
+    action = "/admin" if admin else "/"
+    total_count = total or len(domains)
+    limit_safe = max(1, limit or 1)
+    total_pages = max(1, (total_count + limit_safe - 1) // limit_safe)
+    page_display = max(1, min(page, total_pages))
+    can_prev = page_display > 1
+    can_next = page_display < total_pages
 
-    rows = []
-    for d in domains:
-        did = d.get("id")
-        domain = d.get("domain") or ""
-        href = f"/admin/domains/{did}" if admin else f"/domains/{did}"
-        domain_score = d.get("domain_score")
-        analysis_score = d.get("analysis_score")
+    def _render_status_options() -> str:
+        options: list[str] = []
+        for value in STATUS_FILTER_OPTIONS:
+            if value == "dangerous" and not include_dangerous:
+                continue
+            label = "All Statuses" if value == "" else ("Dangerous Only" if value == "dangerous" else value)
+            options.append(
+                f'<option value="{_escape(value)}" {"selected" if status == value else ""}>{_escape(label)}</option>'
+            )
+        return "".join(options)
 
-        actions_cell = ""
-        if admin:
-            actions_cell = (
-                f'<td class="sb-muted">'
-                f'<button class="sb-btn sb-btn-ghost js-rescan" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Rescan</button> '
-                f'<button class="sb-btn sb-btn-ghost js-report" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Report</button>'
-                f"</td>"
+    def _render_verdict_options() -> str:
+        options: list[str] = []
+        for value in VERDICT_FILTER_OPTIONS:
+            label = "All Verdicts" if value == "" else value
+            options.append(
+                f'<option value="{_escape(value)}" {"selected" if verdict == value else ""}>{_escape(label)}</option>'
+            )
+        return "".join(options)
+
+    def _render_domain_rows() -> str:
+        if not domains:
+            col_span = 8 if admin else 7
+            return (
+                f'<tr><td colspan="{col_span}" class="sb-muted" style="text-align: center; padding: 20px;">'
+                "No domains found matching your criteria."
+                "</td></tr>"
             )
 
-        rows.append(
-            "<tr>"
-            f'<td class="domain-cell" title="{_escape(domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
-            f"<td>{_status_badge(str(d.get('status') or ''))}</td>"
-            f"<td>{_verdict_badge(d.get('verdict'))}</td>"
-            f'<td><span class="sb-score">{_escape(domain_score) if domain_score is not None else "&mdash;"}</span></td>'
-            f'<td><span class="sb-score">{_escape(analysis_score) if analysis_score is not None else "&mdash;"}</span></td>'
-            f'<td class="sb-muted">{_escape(d.get("source") or "&mdash;")}</td>'
-            f'<td class="sb-muted">{_escape(d.get("first_seen") or "&mdash;")}</td>'
-            f"{actions_cell}"
-            "</tr>"
-        )
+        rows = []
+        for d in domains:
+            did = d.get("id")
+            domain = d.get("domain") or ""
+            href = f"/admin/domains/{did}" if admin else f"/domains/{did}"
+            domain_score = d.get("domain_score")
+            analysis_score = d.get("analysis_score")
+
+            actions_cell = ""
+            if admin:
+                actions_cell = (
+                    f'<td class="sb-muted">'
+                    f'<button class="sb-btn sb-btn-ghost js-rescan" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Rescan</button> '
+                    f'<button class="sb-btn sb-btn-ghost js-report" data-domain="{_escape(domain)}" data-domain-id="{_escape(did)}">Report</button>'
+                    f"</td>"
+                )
+
+            rows.append(
+                "<tr>"
+                f'<td class="domain-cell" title="{_escape(domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
+                f"<td>{_status_badge(str(d.get('status') or ''))}</td>"
+                f"<td>{_verdict_badge(d.get('verdict'))}</td>"
+                f'<td><span class="sb-score">{_escape(domain_score) if domain_score is not None else "&mdash;"}</span></td>'
+                f'<td><span class="sb-score">{_escape(analysis_score) if analysis_score is not None else "&mdash;"}</span></td>'
+                f'<td class="sb-muted">{_escape(d.get("source") or "&mdash;")}</td>'
+                f'<td class="sb-muted">{_escape(d.get("first_seen") or "&mdash;")}</td>'
+                f"{actions_cell}"
+                "</tr>"
+            )
+        return "".join(rows)
+
+    prev_link = ""
+    if can_prev:
+        prev_link = _build_query_link(action, status=status, verdict=verdict, q=q, limit=limit, page=page_display - 1)
+        prev_link = f'<a class="sb-btn" href="{_escape(prev_link)}">&larr; Previous</a>'
+
+    next_link = ""
+    if can_next:
+        next_link = _build_query_link(action, status=status, verdict=verdict, q=q, limit=limit, page=page_display + 1)
+        next_link = f'<a class="sb-btn" href="{_escape(next_link)}">Next &rarr;</a>'
 
     return f"""
       <div class="sb-panel">
         <div class="sb-panel-header">
           <span class="sb-panel-title">Tracked Domains</span>
-          <span class="sb-muted">{len(domains)} results</span>
+          <span class="sb-muted">Showing {len(domains)} / {total_count} (page {page_display} of {total_pages})</span>
         </div>
+        <form method="get" action="{_escape(action)}" style="margin-bottom: 12px;">
+          <div class="sb-grid">
+            <div class="col-3">
+              <label class="sb-label">Status</label>
+              <select class="sb-select" name="status">
+                {_render_status_options()}
+              </select>
+            </div>
+            <div class="col-3">
+              <label class="sb-label">Verdict</label>
+              <select class="sb-select" name="verdict">
+                {_render_verdict_options()}
+              </select>
+            </div>
+            <div class="col-3">
+              <label class="sb-label">Search</label>
+              <input class="sb-input" type="text" name="q" value="{_escape(q)}" placeholder="domain contains..." />
+            </div>
+            <div class="col-3">
+              <label class="sb-label">Results</label>
+              <div class="sb-row">
+                <select class="sb-select" name="limit" style="width: auto; flex: 1;">
+                  {''.join(
+                      f'<option value="{n}" {"selected" if limit == n else ""}>{n}</option>'
+                      for n in (25, 50, 100, 200, 500)
+                  )}
+                </select>
+                <input class="sb-input" type="text" name="page" value="{_escape(page)}" style="width: 60px; flex: 0 0 auto; text-align: center;" />
+              </div>
+            </div>
+            <div class="col-12" style="display:flex;gap:12px;padding-top:8px;">
+              <button class="sb-btn sb-btn-primary" type="submit">Apply Filters</button>
+              <a class="sb-btn" href="{_escape(action)}">Reset</a>
+            </div>
+          </div>
+        </form>
         <div class="sb-table-wrap">
           <table class="sb-table">
             <thead>
@@ -2821,9 +2907,16 @@ def _render_domains_table(domains: list[dict], *, admin: bool) -> str:
               </tr>
             </thead>
             <tbody>
-              {''.join(rows)}
+              {_render_domain_rows()}
             </tbody>
           </table>
+        </div>
+        <div class="sb-pagination">
+          <div class="sb-page-info">Page {page_display} of {total_pages}</div>
+          <div class="sb-row">
+            {prev_link}
+            {next_link}
+          </div>
         </div>
       </div>
     """
@@ -2874,114 +2967,8 @@ def _render_pending_reports(pending: list[dict], *, admin: bool, limit: int = 50
     """
 
 
-def _render_filters(*, status: str, verdict: str, q: str, admin: bool, limit: int, page: int, include_dangerous: bool = False) -> str:
-    action = "/admin" if admin else "/"
-
-    def _render_status_options() -> str:
-        options: list[str] = []
-        for value in STATUS_FILTER_OPTIONS:
-            if value == "dangerous" and not include_dangerous:
-                continue
-            label = "All Statuses" if value == "" else ("Dangerous Only" if value == "dangerous" else value)
-            options.append(
-                f'<option value="{_escape(value)}" {"selected" if status == value else ""}>{_escape(label)}</option>'
-            )
-        return "".join(options)
-
-    def _render_verdict_options() -> str:
-        options: list[str] = []
-        for value in VERDICT_FILTER_OPTIONS:
-            label = "All Verdicts" if value == "" else value
-            options.append(
-                f'<option value="{_escape(value)}" {"selected" if verdict == value else ""}>{_escape(label)}</option>'
-            )
-        return "".join(options)
-
-    return f"""
-      <div class="sb-panel" style="margin-bottom: 16px;">
-        <div class="sb-panel-header">
-          <span class="sb-panel-title">Filters</span>
-        </div>
-        <form method="get" action="{_escape(action)}">
-          <div class="sb-grid">
-            <div class="col-3">
-              <label class="sb-label">Status</label>
-              <select class="sb-select" name="status">
-                {_render_status_options()}
-              </select>
-            </div>
-            <div class="col-3">
-              <label class="sb-label">Verdict</label>
-              <select class="sb-select" name="verdict">
-                {_render_verdict_options()}
-              </select>
-            </div>
-            <div class="col-3">
-              <label class="sb-label">Search</label>
-              <input class="sb-input" type="text" name="q" value="{_escape(q)}" placeholder="domain contains..." />
-            </div>
-            <div class="col-3">
-              <label class="sb-label">Results</label>
-              <div class="sb-row">
-                <select class="sb-select" name="limit" style="width: auto; flex: 1;">
-                  {''.join(
-                      f'<option value="{n}" {"selected" if limit == n else ""}>{n}</option>'
-                      for n in (25, 50, 100, 200, 500)
-                  )}
-                </select>
-                <input class="sb-input" type="text" name="page" value="{_escape(page)}" style="width: 60px; flex: 0 0 auto; text-align: center;" />
-              </div>
-            </div>
-            <div class="col-12" style="display:flex;gap:12px;padding-top:8px;">
-              <button class="sb-btn sb-btn-primary" type="submit">Apply Filters</button>
-              <a class="sb-btn" href="{_escape(action)}">Reset</a>
-            </div>
-          </div>
-        </form>
-      </div>
-    """
-
-
-def _render_pagination(*, status: str, verdict: str, q: str, limit: int, page: int, got: int, admin: bool) -> str:
-    if page < 1:
-        page = 1
-    prev_link = ""
-    if page > 1:
-        prev_link = _build_query_link(
-            "/admin" if admin else "/",
-            status=status,
-            verdict=verdict,
-            q=q,
-            limit=limit,
-            page=page - 1,
-        )
-        prev_link = f'<a class="sb-btn" href="{_escape(prev_link)}">&larr; Previous</a>'
-
-    next_link = ""
-    if got >= limit:
-        next_link = _build_query_link(
-            "/admin" if admin else "/",
-            status=status,
-            verdict=verdict,
-            q=q,
-            limit=limit,
-            page=page + 1,
-        )
-        next_link = f'<a class="sb-btn" href="{_escape(next_link)}">Next &rarr;</a>'
-
-    if not prev_link and not next_link:
-        return ""
-
-    return f"""
-      <div class="sb-pagination">
-        <div class="sb-page-info">Page {page}</div>
-        <div class="sb-row">{prev_link}{next_link}</div>
-      </div>
-    """
-
-
 def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admin: bool) -> str:
-    """Render cluster/campaign info panel for domain detail page."""
+    """Render threat campaign info panel for domain detail page."""
     if not cluster:
         return ""
 
@@ -3033,7 +3020,7 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
               </details>
             '''
     else:
-        related_html = '<div class="sb-muted">No other domains in this cluster yet.</div>'
+        related_html = '<div class="sb-muted">No other domains in this campaign yet.</div>'
 
     # Shared indicators - vertical layout with expandable lists
     def render_indicator_list(label: str, items: list) -> str:
@@ -3086,7 +3073,7 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
     else:
         conf_class = "sb-badge-low"
 
-    clusters_link = "/admin/clusters" if admin else "/clusters"
+    clusters_link = "/admin/clusters" if admin else "/campaigns"
     confidence_display = f"{confidence:.0f}% confidence"
 
     return f"""
@@ -3094,7 +3081,7 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
         <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
           <div>
             <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
-            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all clusters &rarr;</a>
+            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all campaigns &rarr;</a>
           </div>
           <span class="sb-badge {conf_class}">{_escape(confidence_display)}</span>
         </div>
@@ -3119,198 +3106,150 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
     """
 
 
-def _render_clusters_list(clusters: list[dict], admin: bool) -> str:
-    """Render the clusters/campaigns listing page."""
-    if not clusters:
-        return """
-          <div class="sb-panel">
-            <div class="sb-muted" style="text-align: center; padding: 32px;">
-              No threat clusters identified yet. Clusters are formed when related phishing sites share common infrastructure.
+def _render_clusters_list(clusters: list[dict], admin: bool, q: str = "") -> str:
+    """Render the threat campaigns listing page."""
+    search = (q or "").strip().lower()
+    filtered: list[dict] = []
+    for cluster in clusters:
+        if not search:
+            filtered.append(cluster)
+            continue
+        name = str(cluster.get("name") or cluster.get("cluster_id") or "").lower()
+        cid = str(cluster.get("cluster_id") or "").lower()
+        member_hit = any(search in (m.get("domain", "").lower()) for m in cluster.get("members", []))
+        if search in name or search in cid or member_hit:
+            filtered.append(cluster)
+
+    total_count = len(clusters)
+    display_count = len(filtered)
+    action_href = "/admin/clusters" if admin else "/campaigns"
+
+    search_form = f"""
+      <form class="sb-row" method="get" action="{_escape(action_href)}" style="gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+        <input class="sb-input" type="text" name="q" value="{_escape(q)}" placeholder="Search campaigns" style="flex: 1; min-width: 260px;" />
+        <button class="sb-btn sb-btn-primary" type="submit">Search</button>
+        {f'<a class="sb-btn" href="{_escape(action_href)}">Reset</a>' if search else ''}
+      </form>
+    """
+
+    if not filtered:
+        empty_state = "No campaigns match your search." if search else "No threat campaigns identified yet."
+        return f"""
+          <div class="sb-panel" style="margin-bottom: 16px;">
+            <div class="sb-panel-header">
+              <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaigns</span>
+              <span class="sb-muted">{total_count} campaign(s)</span>
             </div>
+            <div class="sb-muted" style="margin-bottom: 12px;">
+              Threat campaigns group related phishing sites that share common infrastructure like backends, phishing kits, or nameservers.
+            </div>
+            {search_form}
+            <div class="sb-muted" style="padding: 16px 0;">{_escape(empty_state)}</div>
           </div>
         """
 
     cluster_cards = []
-    for cluster in clusters:
+    for cluster in filtered:
         cluster_id = cluster.get("cluster_id", "")
-        cluster_name = cluster.get("name", "Unknown Campaign")
-        confidence = cluster.get("confidence", 0)
-        members = cluster.get("members", [])
-        shared_backends = cluster.get("shared_backends", [])
-        shared_kits = cluster.get("shared_kits", [])
-        shared_nameservers = cluster.get("shared_nameservers", [])
-        created_at = cluster.get("created_at", "")
-        updated_at = cluster.get("updated_at", "")
+        cluster_name = cluster.get("name", "") or cluster_id or "Unknown Campaign"
+        members = cluster.get("members", []) or []
+        member_count = len(members)
+        shared_backends = cluster.get("shared_backends", []) or []
+        shared_kits = cluster.get("shared_kits", []) or []
+        shared_nameservers = cluster.get("shared_nameservers", []) or []
 
-        # Confidence badge color
-        if confidence >= 70:
-            conf_class = "sb-badge-high"
-        elif confidence >= 40:
-            conf_class = "sb-badge-medium"
-        else:
-            conf_class = "sb-badge-low"
+        detail_href = f"/admin/clusters/{cluster_id}" if admin else f"/campaigns/{cluster_id}"
 
-        # Build indicators summary
-        indicators = []
-        if shared_backends:
-            indicators.append(f"{len(shared_backends)} backend(s)")
-        if shared_kits:
-            indicators.append(f"{len(shared_kits)} kit(s)")
-        if shared_nameservers:
-            indicators.append(f"{len(shared_nameservers)} nameserver(s)")
-        indicators_text = ", ".join(indicators) if indicators else "No shared indicators"
-
-        # Build member domains list (show first 5)
-        domain_links = []
-        for member in members[:5]:
+        # Members preview (first 3)
+        member_items: list[str] = []
+        for member in members[:3]:
             domain = member.get("domain", "")
-            href = f"/admin/domains?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
-            domain_links.append(
-                f'<a href="{_escape(href)}" class="sb-code" style="margin-right: 8px; margin-bottom: 4px; display: inline-block;">{_escape(domain)}</a>'
+            added_at = (member.get("added_at") or "")[:10]
+            domain_id = member.get("id")
+            href = f"/admin/domains/{domain_id}" if (admin and domain_id) else (f"/domains/{domain_id}" if domain_id else "")
+            if not href:
+                href = f"/admin?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
+            meta_html = _escape(added_at) if added_at else "&nbsp;"
+            member_items.append(
+                f'<div class="sb-breakdown-item">'
+                f'<a href="{_escape(href)}" class="sb-breakdown-key" style="color: var(--text-link);">{_escape(domain)}</a>'
+                f'<span class="sb-muted">{meta_html}</span>'
+                f"</div>"
             )
-        if len(members) > 5:
-            domain_links.append(f'<span class="sb-muted">+{len(members) - 5} more</span>')
 
-        detail_href = f"/admin/clusters/{cluster_id}" if admin else f"/clusters/{cluster_id}"
+        indicators = (shared_backends or []) + (shared_nameservers or []) + (shared_kits or [])
+        indicator_chips = "".join(
+            f'<code class="sb-code">{_escape(v)}</code>'
+            for v in indicators[:3]
+        )
+
         cluster_cards.append(f"""
-          <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.2);">
-            <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.15);">
-              <div>
-                <a href="{_escape(detail_href)}" style="font-size: 16px; font-weight: 600; color: var(--text-primary); text-decoration: none;">{_escape(cluster_name)}</a>
-                <span class="sb-muted" style="margin-left: 12px; font-size: 12px;">ID: <code class="sb-code">{_escape(cluster_id[:12])}...</code></span>
-              </div>
-              <span class="sb-badge {conf_class}">{confidence:.0f}% confidence</span>
-            </div>
-            <div class="sb-grid">
-              <div class="col-6">
-                <div class="sb-label">Shared Indicators</div>
-                <div class="sb-text-secondary" style="margin-bottom: 12px;">{_escape(indicators_text)}</div>
-                <div class="sb-label">Timeline</div>
-                <div class="sb-muted" style="font-size: 12px;">
-                  Created: {_escape(created_at[:10] if created_at else "&mdash;")} \xb7 Updated: {_escape(updated_at[:10] if updated_at else "&mdash;")}
+          <div class="col-6">
+            <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.25); margin: 0;">
+              <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.18);">
+                <div>
+                  <div class="sb-panel-title" style="color: var(--accent-purple);">{_escape(cluster_name)}</div>
+                  <div class="sb-muted" style="font-size: 12px;">Campaign ID: <code class="sb-code">{_escape(cluster_id)}</code></div>
+                  <div class="sb-muted" style="font-size: 12px;">Members: {member_count}</div>
                 </div>
+                <a class="sb-btn" href="{_escape(detail_href)}">View</a>
               </div>
-              <div class="col-6">
-                <div class="sb-label">Member Domains ({len(members)})</div>
-                <div style="line-height: 1.8;">{"".join(domain_links)}</div>
+              <div class="sb-label">Recent Members</div>
+              <div class="sb-breakdown" style="margin-bottom: 8px;">
+                {''.join(member_items) if member_items else '<div class="sb-muted">No members yet.</div>'}
               </div>
+              {indicator_chips and f'<div class="sb-row" style="flex-wrap: wrap; gap: 6px; margin-top: 8px;">{indicator_chips}</div>' or ''}
             </div>
           </div>
         """)
 
     return f"""
-      <div class="sb-panel" style="margin-bottom: 24px;">
+      <div class="sb-panel" style="margin-bottom: 16px;">
         <div class="sb-panel-header">
           <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaigns</span>
-          <span class="sb-muted">{len(clusters)} cluster(s) identified</span>
+          <span class="sb-muted">{display_count} campaign(s){f" of {total_count}" if total_count != display_count else ""}</span>
         </div>
-        <div class="sb-muted" style="margin-bottom: 16px;">
-          Clusters group related phishing sites that share common infrastructure like backends, phishing kits, or nameservers.
+        <div class="sb-muted" style="margin-bottom: 12px;">
+          Threat campaigns group related phishing sites that share common infrastructure like backends, phishing kits, or nameservers.
         </div>
+        {search_form}
       </div>
-      {"".join(cluster_cards)}
+      <div class="sb-grid" style="gap: 16px;">
+        {"".join(cluster_cards)}
+      </div>
     """
 
 
 def _render_cluster_detail(cluster: dict, admin: bool) -> str:
-    """Render the detailed campaign/cluster page with action buttons."""
+    """Render the detailed threat campaign page with action buttons."""
     cluster_id = cluster.get("cluster_id", "")
     cluster_name = cluster.get("name", "Unknown Campaign")
-    confidence = cluster.get("confidence", 0)
-    members = cluster.get("members", [])
-    shared_backends = cluster.get("shared_backends", [])
-    shared_kits = cluster.get("shared_kits", [])
-    shared_nameservers = cluster.get("shared_nameservers", [])
-    shared_asns = cluster.get("shared_asns", [])
-    created_at = cluster.get("created_at", "")
-    updated_at = cluster.get("updated_at", "")
+    members = cluster.get("members", []) or []
+    shared_backends = cluster.get("shared_backends", []) or []
+    shared_kits = cluster.get("shared_kits", []) or []
+    shared_nameservers = cluster.get("shared_nameservers", []) or []
+    shared_asns = cluster.get("shared_asns", []) or []
     actor_id = cluster.get("actor_id", "")
     actor_notes = cluster.get("actor_notes", "")
 
-    # Confidence badge
-    if confidence >= 70:
-        conf_class = "sb-badge-high"
-    elif confidence >= 40:
-        conf_class = "sb-badge-medium"
-    else:
-        conf_class = "sb-badge-low"
-
     # Back button
-    back_href = "/admin/clusters" if admin else "/clusters"
+    back_href = "/admin/clusters" if admin else "/campaigns"
 
     # Build action buttons (admin only)
     action_buttons = ""
     if admin:
         action_buttons = f"""
-          <div class="sb-panel" style="border-color: rgba(88, 166, 255, 0.3); margin-bottom: 24px;">
-            <div class="sb-panel-header" style="border-color: rgba(88, 166, 255, 0.2);">
-              <span class="sb-panel-title" style="color: var(--accent-blue);">Campaign Actions</span>
-            </div>
-            <div class="sb-row" style="flex-wrap: wrap; gap: 12px;">
-              <a class="sb-btn sb-btn-primary" href="/admin/clusters/{_escape(cluster_id)}/pdf">Download PDF Report</a>
-              <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/package">Download Evidence Archive</a>
-              <form method="post" action="/admin/clusters/{_escape(cluster_id)}/preview" style="display: inline;">
-                <input type="hidden" name="csrf" value="__SET_COOKIE__" />
-                <button type="submit" class="sb-btn">Preview Reports (Dry-Run)</button>
-              </form>
-              <form method="post" action="/admin/clusters/{_escape(cluster_id)}/submit" style="display: inline;">
-                <input type="hidden" name="csrf" value="__SET_COOKIE__" />
-                <button type="submit" class="sb-btn sb-btn-danger">Submit All Reports</button>
-              </form>
-            </div>
-          </div>
-        """
-
-    # Build shared backends list
-    backends_html = ""
-    if shared_backends:
-        backend_items = "".join(
-            f'<div class="sb-code" style="margin-bottom: 4px;">{_escape(b)}</div>'
-            for b in shared_backends
-        )
-        backends_html = f"""
-          <div class="sb-panel" style="margin-bottom: 16px;">
-            <div class="sb-label">Shared Backends ({len(shared_backends)})</div>
-            <div style="max-height: 200px; overflow-y: auto;">{backend_items}</div>
-          </div>
-        """
-
-    # Build kits list
-    kits_html = ""
-    if shared_kits:
-        kit_items = "".join(
-            f'<span class="sb-badge sb-badge-kit" style="margin-right: 8px; margin-bottom: 4px;">{_escape(k)}</span>'
-            for k in shared_kits
-        )
-        kits_html = f"""
-          <div class="sb-panel" style="margin-bottom: 16px;">
-            <div class="sb-label">Kit Signatures</div>
-            <div>{kit_items}</div>
-          </div>
-        """
-
-    # Build nameservers list
-    ns_html = ""
-    if shared_nameservers:
-        ns_items = "".join(
-            f'<div class="sb-code" style="margin-bottom: 4px;">{_escape(ns)}</div>'
-            for ns in shared_nameservers
-        )
-        ns_html = f"""
-          <div class="sb-panel" style="margin-bottom: 16px;">
-            <div class="sb-label">Shared Nameservers ({len(shared_nameservers)})</div>
-            <div>{ns_items}</div>
-          </div>
-        """
-
-    # Build ASN list
-    asn_html = ""
-    if shared_asns:
-        asn_items = ", ".join(shared_asns)
-        asn_html = f"""
-          <div class="sb-panel" style="margin-bottom: 16px;">
-            <div class="sb-label">Shared ASNs</div>
-            <div class="sb-code">{_escape(asn_items)}</div>
+          <div class="sb-row" style="flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+            <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/pdf">Campaign PDF</a>
+            <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/package">Campaign Package</a>
+            <form method="post" action="/admin/clusters/{_escape(cluster_id)}/preview" style="display: inline;">
+              <input type="hidden" name="csrf" value="__SET_COOKIE__" />
+              <button type="submit" class="sb-btn">Preview Reports</button>
+            </form>
+            <form method="post" action="/admin/clusters/{_escape(cluster_id)}/submit" style="display: inline;">
+              <input type="hidden" name="csrf" value="__SET_COOKIE__" />
+              <button type="submit" class="sb-btn sb-btn-danger">Submit All Reports</button>
+            </form>
           </div>
         """
 
@@ -3325,74 +3264,171 @@ def _render_cluster_detail(cluster: dict, admin: bool) -> str:
           </div>
         """
 
-    # Build member domains table
-    domain_rows = []
+    # Shared indicators (chips with +more)
+    def render_indicator(label: str, values: list[str]) -> str:
+        if not values:
+            return ""
+        visible = values[:6]
+        chips = "".join(
+            f'<code class="sb-code" style="display: inline-block; margin: 2px 4px 2px 0;">{_escape(v)}</code>'
+            for v in visible
+        )
+        remainder = len(values) - len(visible)
+        more = f'<span class="sb-muted" style="font-size: 12px;">+{remainder} more</span>' if remainder > 0 else ""
+        return (
+            f'<div style="margin-right: 16px; margin-bottom: 8px;">'
+            f'<div class="sb-muted" style="font-size: 12px; margin-bottom: 4px;">{_escape(label)}</div>'
+            f'<div>{chips}{more}</div>'
+            f"</div>"
+        )
+
+    indicators_html = "".join([
+        render_indicator("Backends", shared_backends),
+        render_indicator("Kits", shared_kits),
+        render_indicator("Nameservers", shared_nameservers),
+        render_indicator("ASNs", shared_asns),
+    ])
+    if not indicators_html:
+        indicators_html = '<div class="sb-muted">No shared indicators.</div>'
+
+    # Related/member domains list (read-only)
+    visible_members = members[:12]
+    hidden_members = members[12:]
+    member_items: list[str] = []
+    for member in visible_members:
+        domain = member.get("domain", "")
+        status = member.get("status")
+        verdict = member.get("verdict")
+        score = member.get("score")
+        added = (member.get("added_at") or "")[:10]
+        ip = member.get("ip_address") or ""
+        domain_id = member.get("id")
+        href = f"/admin/domains/{domain_id}" if (admin and domain_id) else (f"/domains/{domain_id}" if domain_id else "")
+        if not href:
+            href = f"/admin?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
+        badges = []
+        if status:
+            badges.append(_status_badge(str(status)))
+        if verdict:
+            badges.append(_verdict_badge(str(verdict)))
+        score_html = f'<span class="sb-score">{_escape(score)}</span>' if score is not None else ""
+        meta = " ".join(badges + [score_html]) if (badges or score_html) else ""
+        footer_parts = []
+        if added:
+            footer_parts.append(f'<span class="sb-muted">Added { _escape(added)}</span>')
+        if ip:
+            footer_parts.append(f'<span class="sb-muted">IP { _escape(ip)}</span>')
+        footer = " \u2022 ".join(footer_parts) if footer_parts else ""
+        meta_display = meta if meta else '<span class="sb-muted">&mdash;</span>'
+        footer_html = f'<div class="sb-muted" style="font-size: 12px; margin-top: 2px;">{footer}</div>' if footer else ""
+        member_items.append(
+            f'<div class="sb-breakdown-item">'
+            f'<a href="{_escape(href)}" class="sb-breakdown-key" style="color: var(--text-link);">{_escape(domain)}</a>'
+            f'<div class="sb-row" style="gap: 8px; flex-wrap: wrap; align-items: center;">{meta_display}</div>'
+            f'{footer_html}'
+            f"</div>"
+        )
+
+    related_html = f'<div class="sb-breakdown">{"".join(member_items)}</div>' if member_items else '<div class="sb-muted">No related domains yet.</div>'
+    if hidden_members:
+        hidden_items = []
+        for member in hidden_members:
+            domain = member.get("domain", "")
+            score = member.get("score")
+            score_badge = f'<span class="sb-score">{_escape(score)}</span>' if score is not None else ""
+            hidden_items.append(
+                f'<div class="sb-breakdown-item">'
+                f'<span class="sb-breakdown-key">{_escape(domain)}</span>'
+                f'{score_badge}'
+                f"</div>"
+            )
+        related_html += f"""
+          <details style="margin-top: 8px;">
+            <summary class="sb-muted" style="cursor: pointer; padding: 8px 0; font-size: 12px;">
+              + {len(hidden_members)} more domains
+            </summary>
+            <div class="sb-breakdown" style="margin-top: 8px;">{"".join(hidden_items)}</div>
+          </details>
+        """
+
+    # Full table to expose all member data (read-only)
+    table_rows = []
     for member in members:
         domain = member.get("domain", "")
-        score = member.get("score", 0)
-        added = member.get("added_at", "")[:10] if member.get("added_at") else "&mdash;"
-        ip = member.get("ip_address", "") or "&mdash;"
-        href = f"/admin/domains?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
-        domain_rows.append(f"""
-          <tr>
-            <td><a href="{_escape(href)}" class="sb-code">{_escape(domain)}</a></td>
-            <td class="sb-text-right">{score}</td>
-            <td>{_escape(added)}</td>
-            <td class="sb-code">{_escape(ip)}</td>
-          </tr>
-        """)
+        status = member.get("status")
+        verdict = member.get("verdict")
+        score = member.get("score")
+        added = (member.get("added_at") or "")[:10] or "&mdash;"
+        ip = member.get("ip_address") or "&mdash;"
+        domain_id = member.get("id")
+        href = f"/admin/domains/{domain_id}" if (admin and domain_id) else (f"/domains/{domain_id}" if domain_id else "")
+        if not href:
+            href = f"/admin?q={quote(domain)}" if admin else f"/?q={quote(domain)}"
+        table_rows.append(
+            "<tr>"
+            f'<td><a href="{_escape(href)}" class="sb-code">{_escape(domain)}</a></td>'
+            f"<td>{_status_badge(str(status)) if status else '&mdash;'}</td>"
+            f"<td>{_verdict_badge(str(verdict)) if verdict else '&mdash;'}</td>"
+            f'<td class="sb-text-right">{_escape(score) if score is not None else "&mdash;"}</td>'
+            f"<td class=\"sb-muted\">{_escape(added)}</td>"
+            f"<td class=\"sb-code\">{_escape(ip)}</td>"
+            "</tr>"
+        )
 
     members_table = f"""
       <div class="sb-panel">
         <div class="sb-panel-header">
-          <span class="sb-panel-title">Member Domains ({len(members)})</span>
+          <span class="sb-panel-title">All Member Domains ({len(members)})</span>
         </div>
-        <div style="max-height: 400px; overflow-y: auto;">
+        <div style="max-height: 420px; overflow-y: auto;">
           <table class="sb-table" style="width: 100%;">
-            <thead><tr><th>Domain</th><th class="sb-text-right">Score</th><th>Added</th><th>IP</th></tr></thead>
-            <tbody>{"".join(domain_rows)}</tbody>
+            <thead><tr><th>Domain</th><th>Status</th><th>Verdict</th><th class="sb-text-right">Score</th><th>Added</th><th>IP</th></tr></thead>
+            <tbody>{"".join(table_rows)}</tbody>
           </table>
         </div>
       </div>
     """
 
     return f"""
-      <div class="sb-row" style="margin-bottom: 24px; align-items: center;">
+      <div class="sb-row" style="margin-bottom: 24px; align-items: center; flex-wrap: wrap; gap: 8px;">
         <a class="sb-btn" href="{_escape(back_href)}">&larr; Back to Campaigns</a>
-        <h1 style="flex: 1; margin: 0 0 0 16px; font-size: 24px;">{_escape(cluster_name)}</h1>
-        <span class="sb-badge {conf_class}" style="font-size: 14px;">{confidence:.0f}% confidence</span>
+        <h1 style="flex: 1; margin: 0 0 0 12px; font-size: 24px;">{_escape(cluster_name)}</h1>
       </div>
 
-      {action_buttons}
-
-      <div class="sb-panel" style="margin-bottom: 24px;">
-        <div class="sb-grid">
-          <div class="col-6">
-            <div class="sb-label">Campaign ID</div>
-            <div class="sb-code">{_escape(cluster_id)}</div>
+      <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.3); margin-bottom: 16px;">
+        <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
+          <div>
+            <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
+            <span class="sb-muted" style="margin-left: 10px; font-size: 12px;">ID: <code class="sb-code">{_escape(cluster_id)}</code></span>
           </div>
-          <div class="col-3">
-            <div class="sb-label">First Seen</div>
-            <div>{_escape(created_at[:10] if created_at else "&mdash;")}</div>
+          {action_buttons}
+        </div>
+        <div class="sb-grid" style="align-items: flex-start;">
+          <div class="col-8">
+            <div class="sb-label">Campaign Name</div>
+            <div style="font-size: 20px; font-weight: 700; margin-top: 4px;">{_escape(cluster_name)}</div>
           </div>
-          <div class="col-3">
-            <div class="sb-label">Last Updated</div>
-            <div>{_escape(updated_at[:10] if updated_at else "&mdash;")}</div>
+          <div class="col-4">
+            <div class="sb-label">Members</div>
+            <div style="font-size: 20px; font-weight: 600; margin-top: 4px;">{len(members)}</div>
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <div class="sb-label">Shared Indicators</div>
+          <div class="sb-row" style="flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-top: 6px;">
+            {indicators_html}
           </div>
         </div>
       </div>
 
       {actor_html}
 
-      <div class="sb-grid" style="margin-bottom: 24px;">
-        <div class="col-6">
-          {backends_html}
-          {ns_html}
-          {asn_html}
+      <div class="sb-panel" style="margin-bottom: 16px;">
+        <div class="sb-panel-header">
+          <span class="sb-panel-title">Related Domains</span>
+          <span class="sb-muted">{len(members)} total</span>
         </div>
-        <div class="col-6">
-          {kits_html}
-        </div>
+        {related_html}
       </div>
 
       {members_table}
@@ -4210,7 +4246,7 @@ class DashboardServer:
         self._register_routes()
 
     def _load_clusters(self) -> list[dict]:
-        """Load all clusters from clusters.json."""
+        """Load all threat campaigns from clusters.json."""
         if not self.clusters_dir:
             return []
         clusters_file = self.clusters_dir / "clusters.json"
@@ -4244,7 +4280,7 @@ class DashboardServer:
         return (host in self._allowlist) or (registered in self._allowlist)
 
     async def _filter_clusters(self, clusters: list[dict]) -> list[dict]:
-        """Hide clusters whose members are all allowlisted/watchlist/false positive."""
+        """Hide campaigns whose members are all allowlisted/watchlist/false positive."""
         if not clusters:
             return []
 
@@ -4311,7 +4347,7 @@ class DashboardServer:
         return filtered
 
     def _get_cluster_for_domain(self, domain: str) -> dict | None:
-        """Get cluster info for a specific domain."""
+        """Get campaign info for a specific domain."""
         if self._is_allowlisted_domain(domain):
             return None
         clusters = self._load_clusters()
@@ -4323,7 +4359,7 @@ class DashboardServer:
         return None
 
     def _get_related_domains(self, domain: str, cluster: dict | None) -> list[dict]:
-        """Get list of related domains from the same cluster."""
+        """Get list of related domains from the same campaign."""
         if not cluster:
             return []
         members = cluster.get("members", [])
@@ -4453,6 +4489,9 @@ class DashboardServer:
         self._app.router.add_get("/", self._public_index)
         self._app.router.add_get("/domains/{domain_id}", self._public_domain)
         self._app.router.add_get("/clusters", self._public_clusters)
+        self._app.router.add_get("/campaigns", self._public_clusters)  # friendly alias
+        self._app.router.add_get("/clusters/{cluster_id}", self._public_cluster_detail)
+        self._app.router.add_get("/campaigns/{cluster_id}", self._public_cluster_detail)  # friendly alias
         self._app.router.add_get("/healthz", self._healthz)
 
         # Evidence directory is public by design for transparency.
@@ -4487,7 +4526,7 @@ class DashboardServer:
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
         self._app.router.add_post("/admin/domains/{domain_id}/preview", self._admin_domain_preview)
-        # Campaign/cluster routes
+        # Campaign routes
         self._app.router.add_get("/admin/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
         self._app.router.add_get("/admin/clusters/{cluster_id}/package", self._admin_cluster_package)
         self._app.router.add_post("/admin/clusters/{cluster_id}/preview", self._admin_cluster_preview)
@@ -4617,6 +4656,12 @@ class DashboardServer:
         status_filter = None if status == "dangerous" else (status or None)
         exclude_statuses = DANGEROUS_EXCLUDE_STATUSES if status == "dangerous" else None
 
+        total_count = await self.database.count_domains(
+            status=status_filter,
+            verdict=verdict or None,
+            query=q or None,
+            exclude_statuses=exclude_statuses,
+        )
         await self._fetch_health_status()
         domains = await self.database.list_domains(
             limit=limit,
@@ -4630,24 +4675,16 @@ class DashboardServer:
         body = (
             _flash(request.query.get("msg"))
             + _render_stats(stats, admin=False)
-            + _render_filters(
+            + _render_domains_section(
+                domains,
+                admin=False,
+                total=total_count,
                 status=status,
                 verdict=verdict,
                 q=q,
-                admin=False,
                 limit=limit,
                 page=page,
                 include_dangerous=True,
-            )
-            + _render_domains_table(domains, admin=False)
-            + _render_pagination(
-                status=status,
-                verdict=verdict,
-                q=q,
-                limit=limit,
-                page=page,
-                got=len(domains),
-                admin=False,
             )
         )
         html_out = _layout(title="SeedBuster Dashboard", body=body, admin=False)
@@ -4690,15 +4727,41 @@ class DashboardServer:
         return web.Response(text=html_out, content_type="text/html")
 
     async def _public_clusters(self, request: web.Request) -> web.Response:
+        search = (request.query.get("q") or "").strip()
         clusters = await self._filter_clusters(self._load_clusters())
-        body = _render_clusters_list(clusters, admin=False)
-        html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=False)
+        body = _render_clusters_list(clusters, admin=False, q=search)
+        html_out = _layout(title="SeedBuster - Threat Campaigns", body=body, admin=False)
+        return web.Response(text=html_out, content_type="text/html")
+
+    async def _public_cluster_detail(self, request: web.Request) -> web.Response:
+        cluster_id = (request.match_info.get("cluster_id") or "").strip()
+        if not cluster_id:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        clusters = await self._filter_clusters(self._load_clusters())
+        cluster = next(
+            (
+                c for c in clusters
+                if str(c.get("cluster_id")) == cluster_id or str(c.get("cluster_id", "")).startswith(cluster_id)
+            ),
+            None,
+        )
+        if not cluster:
+            raise web.HTTPNotFound(text="Campaign not found.")
+
+        enriched_members = await self._enrich_related_domains_with_ids(cluster.get("members", []))
+        cluster = dict(cluster)
+        cluster["members"] = enriched_members
+
+        body = _render_cluster_detail(cluster, admin=False)
+        html_out = _layout(title=f"Campaign: {cluster.get('name', 'Unknown Campaign')}", body=body, admin=False)
         return web.Response(text=html_out, content_type="text/html")
 
     async def _admin_clusters(self, request: web.Request) -> web.Response:
+        search = (request.query.get("q") or "").strip()
         clusters = await self._filter_clusters(self._load_clusters())
-        body = _render_clusters_list(clusters, admin=True)
-        html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=True)
+        body = _render_clusters_list(clusters, admin=True, q=search)
+        html_out = _layout(title="SeedBuster - Threat Campaigns", body=body, admin=True)
         return web.Response(text=html_out, content_type="text/html")
 
     async def _admin_index(self, request: web.Request) -> web.Response:
@@ -4715,6 +4778,12 @@ class DashboardServer:
 
         status_filter = None if status == "dangerous" else (status or None)
         exclude_statuses = DANGEROUS_EXCLUDE_STATUSES if status == "dangerous" else None
+        total_count = await self.database.count_domains(
+            status=status_filter,
+            verdict=verdict or None,
+            query=q or None,
+            exclude_statuses=exclude_statuses,
+        )
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
@@ -4765,24 +4834,16 @@ class DashboardServer:
                 + _render_health(getattr(self.config, "health_url", ""), health_status)
                 + submit_panel
                 + _render_pending_reports(pending_reports, admin=True)
-                + _render_filters(
+                + _render_domains_section(
+                    domains,
+                    admin=True,
+                    total=total_count,
                     status=status,
                     verdict=verdict,
                     q=q,
-                    admin=True,
                     limit=limit,
                     page=page,
                     include_dangerous=True,
-                )
-                + _render_domains_table(domains, admin=True)
-                + _render_pagination(
-                    status=status,
-                    verdict=verdict,
-                    q=q,
-                    limit=limit,
-                    page=page,
-                    got=len(domains),
-                    admin=True,
                 )
             ),
             admin=True,
@@ -5536,11 +5597,11 @@ class DashboardServer:
     async def _admin_api_cluster(self, request: web.Request) -> web.Response:
         cluster_id = (request.match_info.get("cluster_id") or "").strip()
         if not cluster_id:
-            raise web.HTTPBadRequest(text="cluster_id required")
+            raise web.HTTPBadRequest(text="campaign_id required")
         clusters = await self._filter_clusters(self._load_clusters())
         cluster = next((c for c in clusters if str(c.get("cluster_id")) == cluster_id), None)
         if not cluster:
-            raise web.HTTPNotFound(text="Cluster not found")
+            raise web.HTTPNotFound(text="Campaign not found")
         enriched = await self._enrich_related_domains_with_ids(cluster.get("members", []))
         return web.json_response({"cluster": cluster, "domains": enriched})
 
@@ -5565,10 +5626,10 @@ class DashboardServer:
         return web.json_response({"status": "ok"})
 
     async def _admin_api_update_cluster_name(self, request: web.Request) -> web.Response:
-        """Update cluster name (PATCH /admin/api/clusters/{cluster_id}/name)."""
+        """Update campaign name (PATCH /admin/api/clusters/{cluster_id}/name)."""
         cluster_id = (request.match_info.get("cluster_id") or "").strip()
         if not cluster_id:
-            raise web.HTTPBadRequest(text="cluster_id required")
+            raise web.HTTPBadRequest(text="campaign_id required")
 
         data = await request.json()
         new_name = (data.get("name") or "").strip()
@@ -5577,11 +5638,11 @@ class DashboardServer:
 
         # Load clusters, update, and save
         if not self.clusters_dir:
-            return web.json_response({"error": "Clusters not configured"}, status=500)
+            return web.json_response({"error": "Campaigns not configured"}, status=500)
 
         clusters_file = self.clusters_dir / "clusters.json"
         if not clusters_file.exists():
-            raise web.HTTPNotFound(text="Cluster file not found")
+            raise web.HTTPNotFound(text="Campaign file not found")
 
         try:
             with open(clusters_file, "r") as f:
@@ -5597,7 +5658,7 @@ class DashboardServer:
                     break
 
             if not found:
-                raise web.HTTPNotFound(text="Cluster not found")
+                raise web.HTTPNotFound(text="Campaign not found")
 
             # Save back
             data_file["saved_at"] = datetime.now().isoformat()
@@ -5687,11 +5748,11 @@ class DashboardServer:
         raise web.HTTPSeeOther(location=_build_query_link(f"/admin/domains/{did}", msg="Preview sent to your email"))
 
     # -------------------------------------------------------------------------
-    # Campaign/Cluster Detail and Reporting Routes
+    # Campaign Detail and Reporting Routes
     # -------------------------------------------------------------------------
 
     def _get_cluster_by_id(self, cluster_id: str) -> dict | None:
-        """Get a specific cluster by ID (supports prefix matching)."""
+        """Get a specific campaign by ID (supports prefix matching)."""
         clusters = self._load_clusters()
         for cluster in clusters:
             cid = cluster.get("cluster_id", "")
@@ -5700,11 +5761,22 @@ class DashboardServer:
         return None
 
     async def _admin_cluster_detail(self, request: web.Request) -> web.Response:
-        """Show detailed campaign/cluster view with action buttons."""
+        """Show detailed threat campaign view with action buttons."""
         cluster_id = request.match_info.get("cluster_id", "")
-        cluster = self._get_cluster_by_id(cluster_id)
+        clusters = await self._filter_clusters(self._load_clusters())
+        cluster = next(
+            (
+                c for c in clusters
+                if str(c.get("cluster_id")) == cluster_id or str(c.get("cluster_id", "")).startswith(cluster_id)
+            ),
+            None,
+        )
         if not cluster:
             raise web.HTTPNotFound(text="Campaign not found.")
+
+        enriched_members = await self._enrich_related_domains_with_ids(cluster.get("members", []))
+        cluster = dict(cluster)
+        cluster["members"] = enriched_members
 
         msg = request.query.get("msg")
         error = request.query.get("error") == "1"
