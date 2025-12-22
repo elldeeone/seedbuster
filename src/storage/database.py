@@ -251,6 +251,22 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+    async def get_domains_by_names(self, domains: list[str]) -> dict[str, dict]:
+        """Fetch multiple domains by name, returned as a mapping of domain -> record."""
+        normalized = [d.strip().lower() for d in domains if isinstance(d, str) and d.strip()]
+        if not normalized:
+            return {}
+
+        unique = sorted(set(normalized))
+        placeholders = ",".join("?" for _ in unique)
+        query = f"SELECT * FROM domains WHERE domain IN ({placeholders})"
+
+        async with self._lock:
+            cursor = await self._connection.execute(query, unique)
+            rows = await cursor.fetchall()
+
+        return {row["domain"]: dict(row) for row in rows}
+
     async def get_domain_by_id(self, domain_id: int) -> Optional[dict]:
         """Get domain record by ID."""
         async with self._lock:

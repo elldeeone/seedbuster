@@ -155,6 +155,18 @@ class ThreatClusterManager:
 
         self._load_clusters()
 
+    def _normalize_domain_key(self, domain: str) -> str:
+        """Normalize domains for clustering comparisons (strip scheme/path, lowercase)."""
+        raw = (domain or "").strip().lower()
+        if not raw:
+            return ""
+        try:
+            parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+            host = (parsed.hostname or raw.split("/")[0]).strip(".").lower()
+            return host
+        except Exception:
+            return raw.split("/")[0].strip().lower()
+
     def _load_clusters(self):
         """Load clusters from disk."""
         if self.clusters_file.exists():
@@ -207,7 +219,9 @@ class ThreatClusterManager:
             self._asn_index[asn].add(cluster.cluster_id)
 
         for member in cluster.members:
-            self._domain_index[member.domain] = cluster.cluster_id
+            domain_key = self._normalize_domain_key(member.domain)
+            if domain_key:
+                self._domain_index[domain_key] = cluster.cluster_id
 
     def _generate_cluster_id(self) -> str:
         """Generate unique cluster ID."""
@@ -258,14 +272,15 @@ class ThreatClusterManager:
         - match_reasons: Why it matched
         - match_score: Confidence of match (0-100)
         """
-        # Check if domain already in a cluster
-        if domain in self._domain_index:
-            cluster_id = self._domain_index[domain]
+        # Check if domain (normalized) already belongs to a cluster
+        domain_key = self._normalize_domain_key(domain)
+        if domain_key and domain_key in self._domain_index:
+            cluster_id = self._domain_index[domain_key]
             cluster = self.clusters.get(cluster_id)
             if cluster:
                 return ClusterMatch(
                     cluster=cluster,
-                    match_reasons=["Domain already in cluster"],
+                    match_reasons=[f"Same domain: {domain_key}"],
                     match_score=100.0,
                 )
 
@@ -478,7 +493,8 @@ class ThreatClusterManager:
 
     def get_cluster_for_domain(self, domain: str) -> Optional[ThreatCluster]:
         """Get cluster containing a domain."""
-        cluster_id = self._domain_index.get(domain)
+        domain_key = self._normalize_domain_key(domain)
+        cluster_id = self._domain_index.get(domain_key)
         if cluster_id:
             return self.clusters.get(cluster_id)
         return None
@@ -487,7 +503,12 @@ class ThreatClusterManager:
         """Get all domains related to a given domain via clustering."""
         cluster = self.get_cluster_for_domain(domain)
         if cluster:
-            return [m.domain for m in cluster.members if m.domain != domain]
+            current_key = self._normalize_domain_key(domain)
+            return [
+                m.domain
+                for m in cluster.members
+                if self._normalize_domain_key(m.domain) != current_key
+            ]
         return []
 
     def get_cluster_summary(self, cluster_id: str) -> Optional[Dict]:

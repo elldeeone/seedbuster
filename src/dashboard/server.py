@@ -7,6 +7,7 @@ This is intentionally simple: server-rendered HTML, SQLite-backed, no JS framewo
 from __future__ import annotations
 
 import aiohttp
+import tldextract
 import asyncio
 import base64
 import html
@@ -14,7 +15,7 @@ import json
 import os
 import hashlib
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -4094,6 +4095,7 @@ class DashboardConfig:
     admin_password: str = ""
     health_url: str = ""
     frontend_dir: Path | None = None
+    allowlist: set[str] = field(default_factory=set)
 
 
 class DashboardServer:
@@ -4123,6 +4125,7 @@ class DashboardServer:
     ):
         self.config = config
         self.database = database
+        self._allowlist = {d.lower() for d in getattr(config, "allowlist", [])}
         self.evidence_dir = evidence_dir
         self.clusters_dir = clusters_dir
         self.frontend_dir = Path(
@@ -4166,8 +4169,97 @@ class DashboardServer:
         except Exception:
             return []
 
+    def _normalize_domain_key(self, domain: str) -> str:
+        """Normalize a domain for lookups (strip scheme/path, lowercase)."""
+        return _extract_hostname(domain)
+
+    def _registered_domain(self, domain: str) -> str:
+        """Return the registered domain (second-level + suffix) for allowlist checks."""
+        host = self._normalize_domain_key(domain)
+        if not host:
+            return ""
+        extracted = tldextract.extract(host)
+        if extracted.domain and extracted.suffix:
+            return f"{extracted.domain}.{extracted.suffix}".lower()
+        return host
+
+    def _is_allowlisted_domain(self, domain: str) -> bool:
+        """Return True if the domain (or its registered form) is allowlisted."""
+        host = self._normalize_domain_key(domain)
+        registered = self._registered_domain(domain)
+        return (host in self._allowlist) or (registered in self._allowlist)
+
+    async def _filter_clusters(self, clusters: list[dict]) -> list[dict]:
+        """Hide clusters whose members are all allowlisted/watchlist/false positive."""
+        if not clusters:
+            return []
+
+        # Collect member domains for bulk lookup
+        member_domains: set[str] = set()
+        for cluster in clusters:
+            for member in cluster.get("members", []):
+                name = (member.get("domain") or "").strip().lower()
+                if name:
+                    member_domains.add(name)
+                    normalized = self._normalize_domain_key(name)
+                    if normalized:
+                        member_domains.add(normalized)
+
+        domain_records = await self.database.get_domains_by_names(list(member_domains))
+        excluded_statuses = {
+            DomainStatus.ALLOWLISTED.value,
+            DomainStatus.FALSE_POSITIVE.value,
+            DomainStatus.WATCHLIST.value,
+        }
+
+        seen_normalized: set[str] = set()
+        filtered: list[dict] = []
+        for cluster in clusters:
+            kept_members: list[dict] = []
+            new_keys: set[str] = set()
+            for member in cluster.get("members", []):
+                domain_name = (member.get("domain") or "").strip()
+                if not domain_name:
+                    continue
+
+                normalized_key = self._normalize_domain_key(domain_name)
+                record = domain_records.get(domain_name.lower()) or domain_records.get(normalized_key)
+                status = (record.get("status") if record else "") or ""
+                verdict = (record.get("verdict") if record else "") or ""
+
+                # Treat config allowlist as authoritative even if DB record missing
+                if self._is_allowlisted_domain(domain_name):
+                    status = DomainStatus.ALLOWLISTED.value
+
+                if status in excluded_statuses:
+                    continue
+
+                if normalized_key and normalized_key in seen_normalized:
+                    continue
+
+                enriched = dict(member)
+                if record:
+                    enriched.update(record)
+                if status:
+                    enriched["status"] = status
+                if verdict and not enriched.get("verdict"):
+                    enriched["verdict"] = verdict
+                kept_members.append(enriched)
+                if normalized_key:
+                    new_keys.add(normalized_key)
+
+            if kept_members:
+                seen_normalized.update(new_keys)
+                new_cluster = dict(cluster)
+                new_cluster["members"] = kept_members
+                filtered.append(new_cluster)
+
+        return filtered
+
     def _get_cluster_for_domain(self, domain: str) -> dict | None:
         """Get cluster info for a specific domain."""
+        if self._is_allowlisted_domain(domain):
+            return None
         clusters = self._load_clusters()
         for cluster in clusters:
             members = cluster.get("members", [])
@@ -4181,7 +4273,11 @@ class DashboardServer:
         if not cluster:
             return []
         members = cluster.get("members", [])
-        return [m for m in members if m.get("domain") != domain]
+        current_key = self._normalize_domain_key(domain)
+        return [
+            m for m in members
+            if self._normalize_domain_key(m.get("domain")) != current_key
+        ]
 
     async def _enrich_related_domains_with_ids(self, related_domains: list[dict]) -> list[dict]:
         """Look up domain IDs from database and add them to related_domains."""
@@ -4528,13 +4624,13 @@ class DashboardServer:
         return web.Response(text=html_out, content_type="text/html")
 
     async def _public_clusters(self, request: web.Request) -> web.Response:
-        clusters = self._load_clusters()
+        clusters = await self._filter_clusters(self._load_clusters())
         body = _render_clusters_list(clusters, admin=False)
         html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=False)
         return web.Response(text=html_out, content_type="text/html")
 
     async def _admin_clusters(self, request: web.Request) -> web.Response:
-        clusters = self._load_clusters()
+        clusters = await self._filter_clusters(self._load_clusters())
         body = _render_clusters_list(clusters, admin=True)
         html_out = _layout(title="SeedBuster - Threat Clusters", body=body, admin=True)
         return web.Response(text=html_out, content_type="text/html")
@@ -5156,8 +5252,12 @@ class DashboardServer:
         evidence = {}
         instruction_files: list[str] = []
         cluster = self._get_cluster_for_domain(row["domain"])
+        filtered_cluster = None
+        if cluster:
+            filtered = await self._filter_clusters([cluster])
+            filtered_cluster = filtered[0] if filtered else None
         related_domains = await self._enrich_related_domains_with_ids(
-            self._get_related_domains(row["domain"], cluster)
+            self._get_related_domains(row["domain"], filtered_cluster)
         )
         try:
             domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
@@ -5179,7 +5279,7 @@ class DashboardServer:
                 "domain": row,
                 "reports": reports,
                 "evidence": evidence,
-                "cluster": cluster,
+                "cluster": filtered_cluster,
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
             }
@@ -5343,21 +5443,18 @@ class DashboardServer:
         return web.json_response({"files": files})
 
     async def _admin_api_clusters(self, request: web.Request) -> web.Response:
-        clusters = self._load_clusters()
+        clusters = await self._filter_clusters(self._load_clusters())
         return web.json_response({"clusters": clusters})
 
     async def _admin_api_cluster(self, request: web.Request) -> web.Response:
         cluster_id = (request.match_info.get("cluster_id") or "").strip()
         if not cluster_id:
             raise web.HTTPBadRequest(text="cluster_id required")
-        clusters = self._load_clusters()
+        clusters = await self._filter_clusters(self._load_clusters())
         cluster = next((c for c in clusters if str(c.get("cluster_id")) == cluster_id), None)
         if not cluster:
             raise web.HTTPNotFound(text="Cluster not found")
-        domains = [m.get("domain") for m in cluster.get("members", []) if m.get("domain")]
-        enriched = await self._enrich_related_domains_with_ids(
-            [{"domain": d} for d in domains if d]
-        )
+        enriched = await self._enrich_related_domains_with_ids(cluster.get("members", []))
         return web.json_response({"cluster": cluster, "domains": enriched})
 
     async def _admin_api_update_notes(self, request: web.Request) -> web.Response:

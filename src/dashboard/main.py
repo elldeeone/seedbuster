@@ -178,6 +178,7 @@ async def run_dashboard() -> None:
             port=config.dashboard_port,
             admin_user=config.dashboard_admin_user,
             admin_password=config.dashboard_admin_password,
+            allowlist=config.allowlist,
             health_url=(
                 f"http://{'127.0.0.1' if config.health_host == '0.0.0.0' else config.health_host}:{config.health_port}/healthz"
                 if getattr(config, "health_enabled", False)
