@@ -7,7 +7,7 @@ const backend =
   "http://localhost:8080";
 
 export default defineConfig({
-  base: "/admin/",
+  base: "/",
   plugins: [react()],
   server: {
     port: 5173,
