@@ -66,15 +66,20 @@ export async function fetchDomains(params: {
   q?: string;
   page?: number;
   limit?: number;
+  excludeStatuses?: string[];
 }): Promise<DomainsResponse> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
   if (params.verdict) qs.set("verdict", params.verdict);
   if (params.q) qs.set("q", params.q);
+  if (params.excludeStatuses && params.excludeStatuses.length > 0) {
+    qs.set("exclude_statuses", params.excludeStatuses.join(","));
+  }
   qs.set("page", String(params.page || 1));
   qs.set("limit", String(params.limit || 100));
   return request<DomainsResponse>(`/domains?${qs.toString()}`);
 }
+
 
 export async function fetchDomainDetail(domainId: number): Promise<DomainDetailResponse> {
   return request<DomainDetailResponse>(`/domains/${domainId}`);

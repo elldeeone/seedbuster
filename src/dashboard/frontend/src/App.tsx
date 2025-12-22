@@ -26,9 +26,12 @@ type Route =
   | { name: "clusters" }
   | { name: "cluster"; id: string };
 
-const STATUS_OPTIONS = ["", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
+const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
+
+// Statuses to exclude when using "dangerous" filter mode
+const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
 
 const parseHash = (): Route => {
   const raw = window.location.hash.replace(/^#/, "");
@@ -285,10 +288,11 @@ const DomainTable = ({
           >
             {STATUS_OPTIONS.map((s) => (
               <option key={s || "any"} value={s}>
-                {s ? s.toUpperCase() : "All Statuses"}
+                {s === "dangerous" ? "Dangerous Only" : s ? s.toUpperCase() : "All Statuses"}
               </option>
             ))}
           </select>
+
         </div>
         <div className="col-3">
           <label className="sb-label">Verdict</label>
@@ -566,7 +570,7 @@ export default function App() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsUpdatedAt, setStatsUpdatedAt] = useState<Date | null>(null);
 
-  const [filters, setFilters] = useState({ status: "", verdict: "", q: "", limit: 100, page: 1 });
+  const [filters, setFilters] = useState({ status: "dangerous", verdict: "", q: "", limit: 100, page: 1 });
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainsTotal, setDomainsTotal] = useState(0);
   const [domainsLoading, setDomainsLoading] = useState(true);
@@ -653,7 +657,13 @@ export default function App() {
     setDomainsLoading(true);
     setDomainsError(null);
     try {
-      const res = await fetchDomains(filters);
+      // Handle special "dangerous" filter mode
+      const apiParams = {
+        ...filters,
+        status: filters.status === "dangerous" ? "" : filters.status,
+        excludeStatuses: filters.status === "dangerous" ? EXCLUDED_STATUSES : undefined,
+      };
+      const res = await fetchDomains(apiParams);
       setDomains(res.domains);
       const total = res.total ?? res.count ?? res.domains.length;
       setDomainsTotal(total);

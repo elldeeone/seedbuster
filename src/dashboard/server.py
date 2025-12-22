@@ -5214,9 +5214,15 @@ class DashboardServer:
         status = (request.query.get("status") or "").strip().lower()
         verdict = (request.query.get("verdict") or "").strip().lower()
         q = (request.query.get("q") or "").strip().lower()
+        exclude_statuses_raw = (request.query.get("exclude_statuses") or "").strip().lower()
         limit = _coerce_int(request.query.get("limit"), default=50, min_value=1, max_value=500)
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
+
+        # Parse comma-separated exclude_statuses (only used if status is not set)
+        exclude_statuses = None
+        if exclude_statuses_raw and not status:
+            exclude_statuses = [s.strip() for s in exclude_statuses_raw.split(",") if s.strip()]
 
         domains = await self.database.list_domains(
             limit=limit,
@@ -5224,11 +5230,13 @@ class DashboardServer:
             status=status or None,
             verdict=verdict or None,
             query=q or None,
+            exclude_statuses=exclude_statuses,
         )
         total = await self.database.count_domains(
             status=status or None,
             verdict=verdict or None,
             query=q or None,
+            exclude_statuses=exclude_statuses,
         )
         return web.json_response(
             {
@@ -5239,6 +5247,7 @@ class DashboardServer:
                 "total": total,
             }
         )
+
 
     async def _admin_api_domain(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)

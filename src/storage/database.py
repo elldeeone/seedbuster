@@ -533,8 +533,13 @@ class Database:
         status: str | None = None,
         verdict: str | None = None,
         query: str | None = None,
+        exclude_statuses: list[str] | None = None,
     ) -> list[dict]:
-        """List domains with optional filters and pagination."""
+        """List domains with optional filters and pagination.
+
+        Args:
+            exclude_statuses: List of status values to exclude (e.g. ['watchlist', 'false_positive'])
+        """
         limit = max(1, min(int(limit), 500))
         offset = max(0, int(offset))
 
@@ -544,6 +549,10 @@ class Database:
         if status:
             where.append("status = ?")
             params.append(status.strip().lower())
+        elif exclude_statuses:
+            placeholders = ",".join("?" for _ in exclude_statuses)
+            where.append(f"status NOT IN ({placeholders})")
+            params.extend(s.strip().lower() for s in exclude_statuses)
         if verdict:
             where.append("verdict = ?")
             params.append(verdict.strip().lower())
@@ -568,14 +577,23 @@ class Database:
         status: str | None = None,
         verdict: str | None = None,
         query: str | None = None,
+        exclude_statuses: list[str] | None = None,
     ) -> int:
-        """Return total domains matching filters (for pagination)."""
+        """Return total domains matching filters (for pagination).
+
+        Args:
+            exclude_statuses: List of status values to exclude (e.g. ['watchlist', 'false_positive'])
+        """
         where: list[str] = []
         params: list[object] = []
 
         if status:
             where.append("status = ?")
             params.append(status.strip().lower())
+        elif exclude_statuses:
+            placeholders = ",".join("?" for _ in exclude_statuses)
+            where.append(f"status NOT IN ({placeholders})")
+            params.extend(s.strip().lower() for s in exclude_statuses)
         if verdict:
             where.append("verdict = ?")
             params.append(verdict.strip().lower())
