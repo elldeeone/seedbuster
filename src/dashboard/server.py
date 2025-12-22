@@ -4568,6 +4568,7 @@ class DashboardServer:
         except Exception:
             raise web.HTTPInternalServerError(text="Failed to read frontend bundle.")
 
+        # Explicitly set mode: /admin -> admin, everything else -> public
         mode = "admin" if (request.path or "").startswith("/admin") else "public"
         mode_script = f"<script>window.__SB_MODE=\"{mode}\";</script>"
         if "</head>" in html_out:
