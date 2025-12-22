@@ -239,8 +239,8 @@ async def test_public_clusters_navigation(public_page, running_server):
     """Test navigating to clusters page."""
     await public_page.goto(running_server["base_url"])
 
-    # Click clusters link
-    await public_page.click("text=Clusters")
+    # Click campaigns link in nav
+    await public_page.click("text=Threat Campaigns")
 
     # Should navigate to clusters page
     await public_page.wait_for_url("**/clusters**")
@@ -288,10 +288,10 @@ async def test_admin_submit_domain_form(admin_page, running_server):
     await admin_page.goto(f"{running_server['base_url']}/admin")
 
     # Find and fill the submit form
-    await admin_page.fill('input[name="target"]', "newdomain.test.com")
+    await admin_page.fill('input[placeholder*="example.com"]', "newdomain.test.com")
 
     # Submit the form
-    await admin_page.click('button[type="submit"]:has-text("Submit")')
+    await admin_page.click('button:has-text("Submit New")')
 
     # Wait for redirect/refresh
     await admin_page.wait_for_load_state("networkidle")
@@ -304,23 +304,21 @@ async def test_admin_submit_domain_form(admin_page, running_server):
 async def test_admin_update_notes(admin_page, running_server):
     """Test updating domain operator notes."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
-    # Find notes textarea and fill it
-    notes_input = admin_page.locator('textarea[name="notes"]')
-    if await notes_input.count() > 0:
-        await notes_input.fill("This is a confirmed phishing site targeting crypto wallets.")
+    # Find notes textarea and fill it (SPA control)
+    notes_input = admin_page.locator('textarea[placeholder*="Enter a note"]')
+    await expect(notes_input).to_be_visible(timeout=5000)
+    await notes_input.fill("This is a confirmed phishing site targeting crypto wallets.")
 
-        # Find and click save/update button
-        save_btn = admin_page.locator('button:has-text("Save"), button:has-text("Update")')
-        if await save_btn.count() > 0:
-            await save_btn.first.click()
-            await admin_page.wait_for_load_state("networkidle")
+    # Click Add Note
+    await admin_page.click('button:has-text("Add Note")')
+    await admin_page.wait_for_timeout(500)
 
-            # Verify notes were saved
-            db = running_server["database"]
-            domain = await db.get_domain_by_id(domain_id)
-            assert "confirmed phishing" in (domain.get("operator_notes") or "").lower()
+    # Verify notes were saved
+    db = running_server["database"]
+    domain = await db.get_domain_by_id(domain_id)
+    assert "confirmed phishing" in (domain.get("operator_notes") or "").lower()
 
 
 # =============================================================================
@@ -332,7 +330,7 @@ async def test_admin_update_notes(admin_page, running_server):
 async def test_admin_rescan_button(admin_page, running_server):
     """Test the rescan button triggers rescan callback."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Look for rescan button
     rescan_btn = admin_page.locator('button:has-text("Rescan"), .js-rescan')
@@ -341,7 +339,7 @@ async def test_admin_rescan_button(admin_page, running_server):
         await rescan_btn.first.click()
 
         # Wait for the action to complete
-        await admin_page.wait_for_timeout(500)
+        await admin_page.wait_for_timeout(1500)
 
         # Check rescan callback was triggered
         assert "phishing-test.example.com" in running_server["rescanned"]
@@ -351,7 +349,7 @@ async def test_admin_rescan_button(admin_page, running_server):
 async def test_admin_false_positive_button(admin_page, running_server):
     """Test marking domain as false positive."""
     domain_id = running_server["domain_ids"]["medium"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Look for false positive button
     fp_btn = admin_page.locator('button:has-text("False Positive"), button:has-text("Mark FP")')
@@ -377,30 +375,13 @@ async def test_toast_appears_on_action(admin_page, running_server):
     await admin_page.goto(f"{running_server['base_url']}/admin")
 
     # Submit a domain to trigger a toast
-    await admin_page.fill('input[name="target"]', "toast-test.example.com")
-    await admin_page.click('button[type="submit"]:has-text("Submit")')
+    await admin_page.fill('input[placeholder*="example.com"]', "toast-test.example.com")
+    await admin_page.click('button:has-text("Submit New")')
 
     # Wait for toast to appear (either on page refresh message or AJAX)
-    await admin_page.wait_for_timeout(500)
-
-    # Check for success message in URL or page content
-    content = await admin_page.content()
-    # The page should show some success indication
-    assert "toast-test.example.com" in running_server["submitted"]
-
-
-@pytest.mark.asyncio
-async def test_toast_from_javascript(admin_page, running_server):
-    """Test programmatic toast creation."""
-    await admin_page.goto(f"{running_server['base_url']}/admin")
-
-    # Manually trigger a toast via JavaScript
-    await admin_page.evaluate("sbToast('Test notification', 'success')")
-
-    # Check toast container exists and has content
     toast = admin_page.locator(".sb-toast")
-    await expect(toast).to_be_visible(timeout=2000)
-    await expect(toast).to_contain_text("Test notification")
+    await expect(toast).to_be_visible(timeout=4000)
+    assert "toast-test.example.com" in running_server["submitted"]
 
 
 # =============================================================================
@@ -412,7 +393,7 @@ async def test_toast_from_javascript(admin_page, running_server):
 async def test_copy_button_visual_feedback(admin_page, running_server):
     """Test copy button shows visual feedback."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Find a copy button
     copy_btn = admin_page.locator('button:has-text("Copy")').first
@@ -441,7 +422,7 @@ async def test_copy_button_visual_feedback(admin_page, running_server):
 async def test_manual_report_modal_opens(admin_page, running_server):
     """Test manual report modal opens correctly."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Look for manual report button
     manual_btn = admin_page.locator('button:has-text("Manual Report"), button:has-text("Manual")')
@@ -463,7 +444,7 @@ async def test_manual_report_modal_opens(admin_page, running_server):
 async def test_modal_closes_on_escape(admin_page, running_server):
     """Test modal closes when ESC key is pressed."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Open modal
     manual_btn = admin_page.locator('button:has-text("Manual Report"), button:has-text("Manual")')
@@ -486,7 +467,7 @@ async def test_modal_closes_on_escape(admin_page, running_server):
 async def test_modal_close_button(admin_page, running_server):
     """Test modal closes when close button is clicked."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     manual_btn = admin_page.locator('button:has-text("Manual Report"), button:has-text("Manual")')
 
@@ -571,7 +552,7 @@ async def test_search_filter(admin_page, running_server):
 async def test_ajax_rescan_request(admin_page, running_server):
     """Test AJAX rescan request via JavaScript."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Find JS rescan button (AJAX-powered)
     rescan_btn = admin_page.locator(".js-rescan")
@@ -589,7 +570,7 @@ async def test_ajax_rescan_request(admin_page, running_server):
 async def test_ajax_report_request(admin_page, running_server):
     """Test AJAX report request."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     report_btn = admin_page.locator(".js-report")
 
@@ -628,7 +609,7 @@ async def test_admin_to_public_navigation(admin_page, running_server):
 async def test_domain_detail_back_navigation(admin_page, running_server):
     """Test navigating back from domain detail."""
     domain_id = running_server["domain_ids"]["high"]
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/{domain_id}")
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/{domain_id}")
 
     # Use browser back
     await admin_page.go_back()
@@ -693,12 +674,12 @@ async def test_dark_theme_loads(admin_page, running_server):
 
 @pytest.mark.asyncio
 async def test_404_page(admin_page, running_server):
-    """Test 404 page for non-existent domain."""
-    await admin_page.goto(f"{running_server['base_url']}/admin/domains/99999")
-
-    # Should show 404 or error message
-    content = await admin_page.content()
-    assert "404" in content or "not found" in content.lower() or "error" in content.lower()
+    """SPA should still render shell; API returns 404 for missing domain."""
+    await admin_page.goto(f"{running_server['base_url']}/admin#/domains/99999")
+    await expect(admin_page.locator(".sb-logo-text")).to_be_visible()
+    # Confirm API returns 404
+    resp = await admin_page.evaluate("fetch('/admin/api/domains/99999', {headers: {Authorization: 'Basic ' + btoa('admin:testpass')}}).then(r => r.status)")
+    assert resp == 404
 
 
 @pytest.mark.asyncio
@@ -707,9 +688,8 @@ async def test_invalid_filter_handled(admin_page, running_server):
     await admin_page.goto(f"{running_server['base_url']}/admin?status=invalid_status")
 
     # Page should still load
-    title = await page.title() if 'page' in dir() else await admin_page.title()
-    # Should not crash
-    assert admin_page.url is not None
+    title = await admin_page.title()
+    assert "SeedBuster" in title or admin_page.url is not None
 
 
 # =============================================================================
@@ -726,13 +706,13 @@ async def test_full_admin_workflow(admin_page, running_server):
 
     # Step 2: Click on a domain to view details (use first match)
     await admin_page.locator("text=phishing-test.example.com").first.click()
-    await admin_page.wait_for_url("**/admin/domains/**")
+    await admin_page.wait_for_timeout(500)
 
     # Step 3: Verify domain detail page (use first match)
     await expect(admin_page.locator("text=phishing-test.example.com").first).to_be_visible()
 
     # Step 4: Trigger an action (rescan via AJAX if available)
-    rescan_btn = admin_page.locator(".js-rescan")
+    rescan_btn = admin_page.locator('button:has-text("Rescan")')
     if await rescan_btn.count() > 0:
         await rescan_btn.first.click()
         await admin_page.wait_for_timeout(500)
@@ -749,8 +729,8 @@ async def test_submit_and_view_new_domain(admin_page, running_server):
     await admin_page.goto(f"{running_server['base_url']}/admin")
 
     # Submit new domain
-    await admin_page.fill('input[name="target"]', "workflow-new.test.com")
-    await admin_page.click('button[type="submit"]:has-text("Submit")')
+    await admin_page.fill('input[placeholder*="example.com"]', "workflow-new.test.com")
+    await admin_page.click('button:has-text("Submit New")')
     await admin_page.wait_for_load_state("networkidle")
 
     # Verify it was submitted

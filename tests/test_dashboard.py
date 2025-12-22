@@ -21,7 +21,7 @@ from src.dashboard.server import (
     _status_badge,
     _verdict_badge,
 )
-from src.storage.database import Database, DomainStatus, Verdict
+from src.storage.database import Database, Verdict
 
 
 # =============================================================================
@@ -256,10 +256,9 @@ async def test_public_index_returns_html(dashboard_server):
 
 @pytest.mark.asyncio
 async def test_public_index_with_domains(dashboard_server, database):
-    """Test public index shows domains."""
+    """Public API serves domains."""
     from aiohttp.test_utils import TestClient, TestServer
 
-    # Add some test domains
     domain_id = await database.add_domain(
         domain="phish1.example.com",
         source="certstream",
@@ -274,10 +273,10 @@ async def test_public_index_with_domains(dashboard_server, database):
     )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get("/")
+        resp = await client.get("/api/domains")
         assert resp.status == 200
-        text = await resp.text()
-        assert "phish1.example.com" in text
+        data = await resp.json()
+        assert any(d["domain"] == "phish1.example.com" for d in data["domains"])
 
 
 @pytest.mark.asyncio
@@ -309,10 +308,10 @@ async def test_public_domain_detail(dashboard_server, database):
     )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(f"/domains/{domain_id}")
+        resp = await client.get(f"/api/domains/{domain_id}")
         assert resp.status == 200
-        text = await resp.text()
-        assert "test.phish.com" in text
+        data = await resp.json()
+        assert data["domain"]["domain"] == "test.phish.com"
 
 
 @pytest.mark.asyncio
@@ -321,9 +320,8 @@ async def test_public_clusters_page(dashboard_server):
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get("/clusters")
+        resp = await client.get("/api/clusters")
         assert resp.status == 200
-        assert "text/html" in resp.content_type
 
 
 # =============================================================================
@@ -402,13 +400,13 @@ async def test_admin_no_password_configured(database, evidence_dir, clusters_dir
 
 
 # =============================================================================
-# Admin HTML Route Tests
+# Admin SPA + API tests
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_admin_index_shows_dashboard(dashboard_server):
-    """Test admin index page shows dashboard."""
+async def test_admin_index_serves_spa(dashboard_server):
+    """Admin entry should serve SPA shell with mode flag."""
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
@@ -418,87 +416,13 @@ async def test_admin_index_shows_dashboard(dashboard_server):
         )
         assert resp.status == 200
         text = await resp.text()
-        assert "ADMIN" in text
+        assert "__SB_MODE=\"admin\"" in text
         assert "<!doctype html>" in text.lower()
 
 
 @pytest.mark.asyncio
-async def test_admin_index_with_domains(dashboard_server, database):
-    """Test admin index shows domain list."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    await database.add_domain(
-        domain="admin-test.com",
-        source="manual",
-        domain_score=80,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-        text = await resp.text()
-        assert "admin-test.com" in text
-
-
-@pytest.mark.asyncio
-async def test_admin_domain_detail(dashboard_server, database):
-    """Test admin domain detail page."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="detail.test.com",
-        source="manual",
-        domain_score=70,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            f"/admin/domains/{domain_id}",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-        text = await resp.text()
-        assert "detail.test.com" in text
-
-
-@pytest.mark.asyncio
-async def test_admin_domain_not_found(dashboard_server):
-    """Test admin domain returns 404 for missing domain."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            "/admin/domains/99999",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 404
-
-
-@pytest.mark.asyncio
-async def test_admin_clusters_page(dashboard_server):
-    """Test admin clusters page."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            "/admin/clusters",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-        assert "text/html" in resp.content_type
-
-
-# =============================================================================
-# Admin API Endpoint Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
 async def test_admin_api_domains_list(dashboard_server, database):
-    """Test admin API returns domain list as JSON."""
+    """Admin API returns domain list as JSON."""
     from aiohttp.test_utils import TestClient, TestServer
 
     await database.add_domain(domain="api-test1.com", source="manual", domain_score=80)
@@ -513,18 +437,19 @@ async def test_admin_api_domains_list(dashboard_server, database):
         assert "application/json" in resp.content_type
         data = await resp.json()
         assert "domains" in data
-        assert len(data["domains"]) >= 2
+        assert any(d["domain"] == "api-test1.com" for d in data["domains"])
+        assert any(d["domain"] == "api-test2.com" for d in data["domains"])
 
 
 @pytest.mark.asyncio
 async def test_admin_api_domain_detail(dashboard_server, database):
-    """Test admin API returns domain detail as JSON."""
+    """Admin API domain detail returns JSON."""
     from aiohttp.test_utils import TestClient, TestServer
 
     domain_id = await database.add_domain(
-        domain="api-detail.com",
+        domain="detail.test.com",
         source="manual",
-        domain_score=85,
+        domain_score=70,
     )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
@@ -534,7 +459,35 @@ async def test_admin_api_domain_detail(dashboard_server, database):
         )
         assert resp.status == 200
         data = await resp.json()
-        assert data["domain"]["domain"] == "api-detail.com"
+        assert data["domain"]["domain"] == "detail.test.com"
+
+
+@pytest.mark.asyncio
+async def test_admin_api_domain_not_found(dashboard_server):
+    """Missing domain returns 404 from API."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        resp = await client.get(
+            "/admin/api/domains/99999",
+            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+        )
+        assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_api_clusters(dashboard_server):
+    """Admin API clusters returns JSON."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        resp = await client.get(
+            "/admin/api/clusters",
+            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert "clusters" in data
 
 
 @pytest.mark.asyncio
@@ -663,213 +616,13 @@ async def test_admin_api_evidence(dashboard_server, database, evidence_dir):
 
 
 # =============================================================================
-# CSRF Protection Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_csrf_token_set_on_admin_page(dashboard_server):
-    """Test CSRF token is set when visiting admin page."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-
-        # Check for CSRF cookie
-        csrf_found = False
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_found = True
-                assert len(cookie.value) > 20  # Token should be substantial
-                break
-
-        assert csrf_found, "CSRF cookie should be set"
-
-
-@pytest.mark.asyncio
-async def test_form_submission_requires_csrf(dashboard_server, database):
-    """Test that form submissions require valid CSRF token."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="csrf-test.com",
-        source="manual",
-        domain_score=80,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Submit form without CSRF token
-        resp = await client.post(
-            f"/admin/domains/{domain_id}/update",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"notes": "test notes"},
-        )
-        # Should be rejected (403 Forbidden)
-        assert resp.status == 403
-
-
-@pytest.mark.asyncio
-async def test_form_submission_with_valid_csrf(dashboard_server, database):
-    """Test form submission with valid CSRF token."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="csrf-valid.com",
-        source="manual",
-        domain_score=80,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # First visit admin page to get CSRF token
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert admin_resp.status == 200
-
-        # Extract CSRF cookie
-        csrf_token = None
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_token = cookie.value
-                break
-
-        assert csrf_token, "Should have CSRF token"
-
-        # Submit form with CSRF token
-        resp = await client.post(
-            f"/admin/domains/{domain_id}/update",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"notes": "updated notes", "csrf": csrf_token},
-        )
-        # Should redirect on success (302) or return 200
-        assert resp.status in (200, 302, 303)
-
-
-# =============================================================================
-# Form Submission Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_admin_submit_form(dashboard_server, database):
-    """Test admin domain submission form."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    submitted = []
-
-    def capture_submit(domain: str):
-        submitted.append(domain)
-
-    dashboard_server.submit_callback = capture_submit
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Get CSRF token
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        csrf_token = None
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_token = cookie.value
-
-        # Submit domain (form uses "target" field, not "domain")
-        resp = await client.post(
-            "/admin/submit",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"target": "form-submit.test.com", "csrf": csrf_token},
-            allow_redirects=False,
-        )
-        # Should redirect after successful submission
-        assert resp.status in (302, 303)
-        assert "form-submit.test.com" in submitted
-
-
-@pytest.mark.asyncio
-async def test_admin_update_domain_notes(dashboard_server, database):
-    """Test updating domain operator notes."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="notes-test.com",
-        source="manual",
-        domain_score=80,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Get CSRF token
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        csrf_token = None
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_token = cookie.value
-
-        # Update notes
-        resp = await client.post(
-            f"/admin/domains/{domain_id}/update",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"notes": "These are test notes", "csrf": csrf_token},
-            allow_redirects=False,
-        )
-        assert resp.status in (302, 303)
-
-        # Verify notes were saved
-        domain = await database.get_domain_by_id(domain_id)
-        assert domain["operator_notes"] == "These are test notes"
-
-
-@pytest.mark.asyncio
-async def test_admin_mark_false_positive(dashboard_server, database):
-    """Test marking domain as false positive."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="fp-test.com",
-        source="manual",
-        domain_score=80,
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Get CSRF token
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        csrf_token = None
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_token = cookie.value
-
-        # Mark as false positive
-        resp = await client.post(
-            f"/admin/domains/{domain_id}/false_positive",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"csrf": csrf_token},
-            allow_redirects=False,
-        )
-        assert resp.status in (302, 303)
-
-        # Verify status was updated
-        domain = await database.get_domain_by_id(domain_id)
-        assert domain["status"] == DomainStatus.FALSE_POSITIVE.value
-
-
-# =============================================================================
 # Pagination and Filtering Tests
 # =============================================================================
 
 
 @pytest.mark.asyncio
 async def test_admin_index_pagination(dashboard_server, database):
-    """Test admin index pagination parameters."""
+    """Test admin API pagination parameters."""
     from aiohttp.test_utils import TestClient, TestServer
 
     # Add multiple domains
@@ -881,24 +634,27 @@ async def test_admin_index_pagination(dashboard_server, database):
         )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Test page 1
-        resp = await client.get(
-            "/admin?page=1&per_page=10",
+        resp_page1 = await client.get(
+            "/admin/api/domains?limit=10&page=1",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
-        assert resp.status == 200
-
-        # Test page 2
-        resp = await client.get(
-            "/admin?page=2&per_page=10",
+        resp_page2 = await client.get(
+            "/admin/api/domains?limit=10&page=2",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
-        assert resp.status == 200
+        assert resp_page1.status == 200
+        assert resp_page2.status == 200
+        data1 = await resp_page1.json()
+        data2 = await resp_page2.json()
+        assert data1["page"] == 1
+        assert data2["page"] == 2
+        assert len(data1["domains"]) <= 10
+        assert len(data2["domains"]) <= 10
 
 
 @pytest.mark.asyncio
 async def test_admin_index_status_filter(dashboard_server, database):
-    """Test admin index status filtering."""
+    """Test admin API status filtering."""
     from aiohttp.test_utils import TestClient, TestServer
 
     # Add domains with different statuses
@@ -914,19 +670,18 @@ async def test_admin_index_status_filter(dashboard_server, database):
     )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Filter by analyzed status
         resp = await client.get(
-            "/admin?status=analyzed",
+            "/admin/api/domains?status=analyzed",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
         assert resp.status == 200
-        text = await resp.text()
-        assert "analyzed.test.com" in text
+        data = await resp.json()
+        assert any(d["domain"] == "analyzed.test.com" for d in data["domains"])
 
 
 @pytest.mark.asyncio
 async def test_admin_index_verdict_filter(dashboard_server, database):
-    """Test admin index verdict filtering."""
+    """Test admin API verdict filtering."""
     from aiohttp.test_utils import TestClient, TestServer
 
     domain_id = await database.add_domain(domain="high-verdict.test.com", source="manual", domain_score=90)
@@ -940,12 +695,12 @@ async def test_admin_index_verdict_filter(dashboard_server, database):
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         resp = await client.get(
-            "/admin?verdict=high",
+            "/admin/api/domains?verdict=high",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
         assert resp.status == 200
-        text = await resp.text()
-        assert "high-verdict.test.com" in text
+        data = await resp.json()
+        assert any(d["domain"] == "high-verdict.test.com" for d in data["domains"])
 
 
 # =============================================================================
@@ -1120,116 +875,6 @@ async def test_public_index_escapes_domain_names(dashboard_server, database):
         # Script tags should be escaped
         assert "<script>alert" not in text
         assert "&lt;script&gt;" in text or "script" not in text.lower() or resp.status == 200
-
-
-@pytest.mark.asyncio
-async def test_admin_domain_detail_has_action_buttons(dashboard_server, database):
-    """Test admin domain detail has expected action buttons."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    domain_id = await database.add_domain(
-        domain="actions.test.com",
-        source="manual",
-        domain_score=85,
-    )
-    await database.update_domain_analysis(
-        domain_id=domain_id,
-        analysis_score=90,
-        verdict=Verdict.HIGH,
-        verdict_reasons="Test detection",
-        evidence_path="/tmp/evidence",
-    )
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            f"/admin/domains/{domain_id}",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-        text = await resp.text()
-        # Should have action forms/buttons
-        assert "form" in text.lower() or "button" in text.lower()
-
-
-# =============================================================================
-# Integration Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_full_domain_workflow(dashboard_server, database):
-    """Test complete domain workflow: submit, view, update, mark done."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    submitted = []
-    reported = []
-
-    def capture_submit(domain: str):
-        submitted.append(domain)
-
-    async def capture_report(domain_id: int, domain: str, platforms: list, manual: bool):
-        reported.append((domain_id, domain, platforms, manual))
-        return {}
-
-    dashboard_server.submit_callback = capture_submit
-    dashboard_server.report_callback = capture_report
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        # Step 1: Get CSRF token
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        csrf_token = None
-        for cookie in client.session.cookie_jar:
-            if cookie.key == "sb_admin_csrf":
-                csrf_token = cookie.value
-
-        # Step 2: Submit a domain via form (uses "target" field)
-        resp = await client.post(
-            "/admin/submit",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"target": "workflow.test.com", "csrf": csrf_token},
-            allow_redirects=False,
-        )
-        assert resp.status in (302, 303)
-        assert "workflow.test.com" in submitted
-
-        # Step 3: Manually add domain to database (simulating pipeline)
-        domain_id = await database.add_domain(
-            domain="workflow.test.com",
-            source="manual",
-            domain_score=90,
-        )
-        await database.update_domain_analysis(
-            domain_id=domain_id,
-            analysis_score=95,
-            verdict=Verdict.HIGH,
-            verdict_reasons="Test detection",
-            evidence_path="/tmp/evidence",
-        )
-
-        # Step 4: View domain detail
-        resp = await client.get(
-            f"/admin/domains/{domain_id}",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 200
-        text = await resp.text()
-        assert "workflow.test.com" in text
-
-        # Step 5: Update notes
-        resp = await client.post(
-            f"/admin/domains/{domain_id}/update",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-            data={"notes": "Confirmed phishing site", "csrf": csrf_token},
-            allow_redirects=False,
-        )
-        assert resp.status in (302, 303)
-
-        # Step 6: Verify notes saved
-        domain = await database.get_domain_by_id(domain_id)
-        assert domain["operator_notes"] == "Confirmed phishing site"
 
 
 @pytest.mark.asyncio

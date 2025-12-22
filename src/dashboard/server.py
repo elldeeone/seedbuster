@@ -4486,13 +4486,7 @@ class DashboardServer:
         return removed, freed_bytes
 
     def _register_routes(self) -> None:
-        # Public (legacy server-rendered) routes remain for now
-        self._app.router.add_get("/", self._public_index)
-        self._app.router.add_get("/domains/{domain_id}", self._public_domain)
-        # Public campaign routes - will be updated to serve React SPA below if available
-        # For now, use server-rendered as fallback
-        self._app.router.add_get("/clusters", self._public_clusters)
-        self._app.router.add_get("/clusters/{cluster_id}", self._public_cluster_detail)
+        # Health check
         self._app.router.add_get("/healthz", self._healthz)
 
         # Public API routes (read-only, reuse admin handlers)
@@ -4511,15 +4505,7 @@ class DashboardServer:
         self._app.router.add_get("/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
         self._app.router.add_get("/clusters/{cluster_id}/package", self._admin_cluster_package)
 
-        # Legacy admin form endpoints (kept for backward compatibility)
-        self._app.router.add_post("/admin/submit", self._admin_submit)
-        self._app.router.add_post("/admin/domains/{domain_id}/update", self._admin_update_domain)
-        self._app.router.add_post("/admin/domains/{domain_id}/report", self._admin_report_domain)
-        self._app.router.add_post("/admin/domains/{domain_id}/manual_done", self._admin_manual_done)
-        self._app.router.add_post("/admin/domains/{domain_id}/rescan", self._admin_rescan)
-        self._app.router.add_post("/admin/domains/{domain_id}/false_positive", self._admin_false_positive)
-
-        # New evidence/report generation routes
+        # Admin API routes
         self._app.router.add_get("/admin/api/stats", self._admin_api_stats)
         self._app.router.add_get("/admin/api/domains", self._admin_api_domains)
         self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
@@ -4553,25 +4539,24 @@ class DashboardServer:
                 self._app.router.add_static("/admin/assets", str(assets_dir), show_index=False)
                 # Also serve assets from root for public SPA
                 self._app.router.add_static("/assets", str(assets_dir), show_index=False)
-            # Legacy HTML fallback (for features not yet ported)
-            self._app.router.add_get("/admin/legacy", self._admin_index)
-            self._app.router.add_get("/admin/legacy/domains/{domain_id}", self._admin_domain)
-            self._app.router.add_get("/admin/legacy/clusters", self._admin_clusters)
-            self._app.router.add_get("/admin/legacy/clusters/{cluster_id}", self._admin_cluster_detail)
+            # Admin SPA (protected via middleware)
             self._app.router.add_get("/admin", self._serve_frontend)
             self._app.router.add_get("/admin/", self._serve_frontend)
             self._app.router.add_get("/admin/{tail:.*}", self._serve_frontend)
-            # Public campaigns routes serve the same React SPA (but detect public mode client-side)
+            # Public SPA (campaigns + optional root)
+            self._app.router.add_get("/", self._serve_frontend)
             self._app.router.add_get("/campaigns", self._serve_frontend)
             self._app.router.add_get("/campaigns/{tail:.*}", self._serve_frontend)
         else:
-            self._app.router.add_get("/admin", self._admin_index)
-            self._app.router.add_get("/admin/clusters", self._admin_clusters)
-            self._app.router.add_get("/admin/domains/{domain_id}", self._admin_domain)
-            self._app.router.add_get("/admin/clusters/{cluster_id}", self._admin_cluster_detail)
-            # Fallback public campaigns to server-rendered when frontend not built
-            self._app.router.add_get("/campaigns", self._public_clusters)
-            self._app.router.add_get("/campaigns/{cluster_id}", self._public_cluster_detail)
+            # If frontend not built, return a clear error.
+            async def _frontend_missing(_request: web.Request) -> web.Response:
+                raise web.HTTPNotFound(text="Frontend not built (run npm run build in frontend/)")
+
+            self._app.router.add_get("/admin", _frontend_missing)
+            self._app.router.add_get("/admin/{tail:.*}", _frontend_missing)
+            self._app.router.add_get("/", _frontend_missing)
+            self._app.router.add_get("/campaigns", _frontend_missing)
+            self._app.router.add_get("/campaigns/{tail:.*}", _frontend_missing)
 
     async def _serve_frontend(self, request: web.Request) -> web.Response:
         """Serve built SPA assets for the admin dashboard."""
