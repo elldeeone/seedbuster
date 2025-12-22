@@ -39,6 +39,7 @@ const parseHash = (): Route => {
   const hashParts = rawHash.split("/").filter(Boolean);
   const pathParts = window.location.pathname.split("/").filter(Boolean);
   const parts = hashParts.length ? hashParts : pathParts;
+  const admin = isAdminMode();
 
   if (parts[0] === "domains" && parts[1]) {
     const id = Number(parts[1]);
@@ -52,7 +53,8 @@ const parseHash = (): Route => {
     return { name: "clusters" };
   }
 
-  return { name: "dashboard" };
+  // Default view: admin lands on dashboard, public lands on campaigns
+  return admin ? { name: "dashboard" } : { name: "clusters" };
 };
 
 const formatBytes = (num?: number | null) => {
@@ -728,14 +730,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!isAdmin) return;
     loadStats();
     const id = setInterval(loadStats, 30000);
     return () => clearInterval(id);
-  }, [loadStats]);
+  }, [loadStats, isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) return;
     loadDomains();
-  }, [loadDomains]);
+  }, [loadDomains, isAdmin]);
 
   useEffect(() => {
     if (route.name === "domain") {
@@ -1589,14 +1593,16 @@ export default function App() {
     <div className="sb-container">
       <header className="sb-header">
         <div className="sb-brand">
-          <a className="sb-logo" href="#/">
+          <a className="sb-logo" href={isAdmin ? "#/" : "#/campaigns"}>
             <div className="sb-logo-icon">SB</div>
             <span className="sb-logo-text">SeedBuster</span>
           </a>
-          <span className="sb-mode mode-admin">ADMIN</span>
+          <span className={`sb-mode ${isAdmin ? "mode-admin" : "mode-public"}`}>
+            {isAdmin ? "ADMIN" : "PUBLIC"}
+          </span>
         </div>
         <nav className="sb-nav">
-          <a className="sb-btn" href="#/">Dashboard</a>
+          {isAdmin && <a className="sb-btn" href="#/">Dashboard</a>}
           <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
 
           {/* Settings Cog */}
