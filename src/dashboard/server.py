@@ -95,6 +95,23 @@ def _report_badge(value: str | None) -> str:
     badge_class = f"sb-badge sb-badge-{status}"
     return f'<span class="{badge_class}">{_escape(status)}</span>'
 
+# Keep filter options in sync with the admin SPA
+STATUS_FILTER_OPTIONS = [
+    "dangerous",
+    "",
+    "pending",
+    "analyzing",
+    "analyzed",
+    "reported",
+    "failed",
+    "watchlist",
+    "allowlisted",
+    "false_positive",
+]
+
+VERDICT_FILTER_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"]
+DANGEROUS_EXCLUDE_STATUSES = ["watchlist", "false_positive", "allowlisted"]
+
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
     # Build navigation links
@@ -2624,7 +2641,7 @@ def _build_query_link(base: str, **params: object) -> str:
     return f"{base}?{urlencode(clean, doseq=True)}"
 
 
-def _render_stats(stats: dict) -> str:
+def _render_stats(stats: dict, *, admin: bool) -> str:
     by_status = stats.get("by_status") or {}
     by_verdict = stats.get("by_verdict") or {}
     by_reports = stats.get("reports") or {}
@@ -2642,6 +2659,46 @@ def _render_stats(stats: dict) -> str:
                 f'</div>'
             )
         return f'<div class="sb-breakdown">{"".join(parts)}</div>'
+
+    reports_section = (
+        ""
+        if not admin
+        else f"""
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Reports</div>
+            {_breakdown(by_reports)}
+          </div>
+        </div>
+        """
+    )
+
+    actions_section = (
+        ""
+        if not admin
+        else f"""
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Dashboard Actions</div>
+            {_breakdown(by_actions)}
+          </div>
+        </div>
+        """
+    )
+
+    evidence_section = (
+        ""
+        if not admin
+        else f"""
+        <div class="col-4">
+          <div class="sb-stat">
+            <div class="sb-stat-label">Evidence Storage</div>
+            <div class="sb-stat-value">{_escape(_format_bytes(stats.get("evidence_bytes", 0)))}</div>
+            <div class="sb-stat-meta">Approximate size of evidence directory</div>
+          </div>
+        </div>
+        """
+    )
 
     return f"""
       <div class="sb-grid" style="margin-bottom: 24px;">
@@ -2664,25 +2721,9 @@ def _render_stats(stats: dict) -> str:
             {_breakdown(by_verdict)}
           </div>
         </div>
-        <div class="col-4">
-          <div class="sb-stat">
-            <div class="sb-stat-label">Reports</div>
-            {_breakdown(by_reports)}
-          </div>
-        </div>
-        <div class="col-4">
-          <div class="sb-stat">
-            <div class="sb-stat-label">Dashboard Actions</div>
-            {_breakdown(by_actions)}
-          </div>
-        </div>
-        <div class="col-4">
-          <div class="sb-stat">
-            <div class="sb-stat-label">Evidence Storage</div>
-            <div class="sb-stat-value">{_escape(_format_bytes(stats.get("evidence_bytes", 0)))}</div>
-            <div class="sb-stat-meta">Approximate size of evidence directory</div>
-          </div>
-        </div>
+        {reports_section}
+        {actions_section}
+        {evidence_section}
       </div>
     """
 
@@ -2833,8 +2874,29 @@ def _render_pending_reports(pending: list[dict], *, admin: bool, limit: int = 50
     """
 
 
-def _render_filters(*, status: str, verdict: str, q: str, admin: bool, limit: int, page: int) -> str:
+def _render_filters(*, status: str, verdict: str, q: str, admin: bool, limit: int, page: int, include_dangerous: bool = False) -> str:
     action = "/admin" if admin else "/"
+
+    def _render_status_options() -> str:
+        options: list[str] = []
+        for value in STATUS_FILTER_OPTIONS:
+            if value == "dangerous" and not include_dangerous:
+                continue
+            label = "All Statuses" if value == "" else ("Dangerous Only" if value == "dangerous" else value)
+            options.append(
+                f'<option value="{_escape(value)}" {"selected" if status == value else ""}>{_escape(label)}</option>'
+            )
+        return "".join(options)
+
+    def _render_verdict_options() -> str:
+        options: list[str] = []
+        for value in VERDICT_FILTER_OPTIONS:
+            label = "All Verdicts" if value == "" else value
+            options.append(
+                f'<option value="{_escape(value)}" {"selected" if verdict == value else ""}>{_escape(label)}</option>'
+            )
+        return "".join(options)
+
     return f"""
       <div class="sb-panel" style="margin-bottom: 16px;">
         <div class="sb-panel-header">
@@ -2845,21 +2907,13 @@ def _render_filters(*, status: str, verdict: str, q: str, admin: bool, limit: in
             <div class="col-3">
               <label class="sb-label">Status</label>
               <select class="sb-select" name="status">
-                <option value="" {"selected" if not status else ""}>All Statuses</option>
-                {''.join(
-                    f'<option value="{_escape(s.value)}" {"selected" if status == s.value else ""}>{_escape(s.value)}</option>'
-                    for s in DomainStatus
-                )}
+                {_render_status_options()}
               </select>
             </div>
             <div class="col-3">
               <label class="sb-label">Verdict</label>
               <select class="sb-select" name="verdict">
-                <option value="" {"selected" if not verdict else ""}>All Verdicts</option>
-                {''.join(
-                    f'<option value="{_escape(v.value)}" {"selected" if verdict == v.value else ""}>{_escape(v.value)}</option>'
-                    for v in Verdict
-                )}
+                {_render_verdict_options()}
               </select>
             </div>
             <div class="col-3">
@@ -4549,7 +4603,9 @@ class DashboardServer:
         return web.json_response({"ok": True})
 
     async def _public_index(self, request: web.Request) -> web.Response:
-        status = (request.query.get("status") or "").strip().lower()
+        status_param_present = "status" in request.query
+        status_raw = (request.query.get("status") or "").strip().lower()
+        status = status_raw if status_param_present else "dangerous"
         verdict = (request.query.get("verdict") or "").strip().lower()
         q = (request.query.get("q") or "").strip().lower()
         limit = _coerce_int(request.query.get("limit"), default=100, min_value=1, max_value=500)
@@ -4557,22 +4613,32 @@ class DashboardServer:
         offset = (page - 1) * limit
 
         stats = await self.database.get_stats()
-        stats["evidence_bytes"] = self._compute_evidence_bytes()
+
+        status_filter = None if status == "dangerous" else (status or None)
+        exclude_statuses = DANGEROUS_EXCLUDE_STATUSES if status == "dangerous" else None
+
         await self._fetch_health_status()
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
-            status=status or None,
+            status=status_filter,
             verdict=verdict or None,
             query=q or None,
+            exclude_statuses=exclude_statuses,
         )
-        pending_reports = await self.database.get_pending_reports()
 
         body = (
             _flash(request.query.get("msg"))
-            + _render_stats(stats)
-            + _render_pending_reports(pending_reports, admin=False)
-            + _render_filters(status=status, verdict=verdict, q=q, admin=False, limit=limit, page=page)
+            + _render_stats(stats, admin=False)
+            + _render_filters(
+                status=status,
+                verdict=verdict,
+                q=q,
+                admin=False,
+                limit=limit,
+                page=page,
+                include_dangerous=True,
+            )
             + _render_domains_table(domains, admin=False)
             + _render_pagination(
                 status=status,
@@ -4646,12 +4712,16 @@ class DashboardServer:
         stats = await self.database.get_stats()
         stats["evidence_bytes"] = self._compute_evidence_bytes()
         health_status = await self._fetch_health_status()
+
+        status_filter = None if status == "dangerous" else (status or None)
+        exclude_statuses = DANGEROUS_EXCLUDE_STATUSES if status == "dangerous" else None
         domains = await self.database.list_domains(
             limit=limit,
             offset=offset,
-            status=status or None,
+            status=status_filter,
             verdict=verdict or None,
             query=q or None,
+            exclude_statuses=exclude_statuses,
         )
         pending_reports = await self.database.get_pending_reports()
 
@@ -4691,11 +4761,19 @@ class DashboardServer:
             title="SeedBuster Dashboard",
             body=(
                 _flash(msg, error=error)
-                + _render_stats(stats)
+                + _render_stats(stats, admin=True)
                 + _render_health(getattr(self.config, "health_url", ""), health_status)
                 + submit_panel
                 + _render_pending_reports(pending_reports, admin=True)
-                + _render_filters(status=status, verdict=verdict, q=q, admin=True, limit=limit, page=page)
+                + _render_filters(
+                    status=status,
+                    verdict=verdict,
+                    q=q,
+                    admin=True,
+                    limit=limit,
+                    page=page,
+                    include_dangerous=True,
+                )
                 + _render_domains_table(domains, admin=True)
                 + _render_pagination(
                     status=status,
