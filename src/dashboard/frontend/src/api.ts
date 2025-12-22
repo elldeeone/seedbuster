@@ -161,3 +161,25 @@ export async function fetchPlatformInfo(): Promise<{
 }> {
   return request("/platforms");
 }
+
+export async function updateOperatorNotes(
+  domainId: number,
+  notes: string,
+): Promise<void> {
+  await request(`/domains/${domainId}/notes`, {
+    method: "PATCH",
+    body: JSON.stringify({ notes }),
+    skipJson: true,
+  });
+}
+
+export async function updateClusterName(
+  clusterId: string,
+  name: string,
+): Promise<void> {
+  await request(`/clusters/${encodeURIComponent(clusterId)}/name`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+    skipJson: true,
+  });
+}

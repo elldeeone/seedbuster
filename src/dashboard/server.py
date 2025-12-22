@@ -4330,6 +4330,8 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
         self._app.router.add_get("/admin/api/clusters", self._admin_api_clusters)
         self._app.router.add_get("/admin/api/clusters/{cluster_id}", self._admin_api_cluster)
+        self._app.router.add_patch("/admin/api/domains/{domain_id}/notes", self._admin_api_update_notes)
+        self._app.router.add_patch("/admin/api/clusters/{cluster_id}/name", self._admin_api_update_cluster_name)
         self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
@@ -5357,6 +5359,72 @@ class DashboardServer:
             [{"domain": d} for d in domains if d]
         )
         return web.json_response({"cluster": cluster, "domains": enriched})
+
+    async def _admin_api_update_notes(self, request: web.Request) -> web.Response:
+        """Update operator notes for a domain (PATCH /admin/api/domains/{domain_id}/notes)."""
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        domain = await self.database.get_domain_by_id(domain_id)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        data = await request.json()
+        notes = data.get("notes", "")
+
+        # Update notes via database
+        await self.database.update_domain_admin_fields(
+            domain_id,
+            operator_notes=notes,
+        )
+        return web.json_response({"status": "ok"})
+
+    async def _admin_api_update_cluster_name(self, request: web.Request) -> web.Response:
+        """Update cluster name (PATCH /admin/api/clusters/{cluster_id}/name)."""
+        cluster_id = (request.match_info.get("cluster_id") or "").strip()
+        if not cluster_id:
+            raise web.HTTPBadRequest(text="cluster_id required")
+
+        data = await request.json()
+        new_name = (data.get("name") or "").strip()
+        if not new_name:
+            return web.json_response({"error": "Name cannot be empty"}, status=400)
+
+        # Load clusters, update, and save
+        if not self.clusters_dir:
+            return web.json_response({"error": "Clusters not configured"}, status=500)
+
+        clusters_file = self.clusters_dir / "clusters.json"
+        if not clusters_file.exists():
+            raise web.HTTPNotFound(text="Cluster file not found")
+
+        try:
+            with open(clusters_file, "r") as f:
+                data_file = json.load(f)
+
+            clusters = data_file.get("clusters", [])
+            found = False
+            for cluster in clusters:
+                if str(cluster.get("cluster_id")) == cluster_id or str(cluster.get("cluster_id", "")).startswith(cluster_id):
+                    cluster["name"] = new_name
+                    cluster["updated_at"] = datetime.now().isoformat()
+                    found = True
+                    break
+
+            if not found:
+                raise web.HTTPNotFound(text="Cluster not found")
+
+            # Save back
+            data_file["saved_at"] = datetime.now().isoformat()
+            with open(clusters_file, "w") as f:
+                json.dump(data_file, f, indent=2)
+
+            return web.json_response({"status": "ok", "name": new_name})
+        except web.HTTPNotFound:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def _admin_domain_pdf(self, request: web.Request) -> web.Response:
         """Generate and download PDF report for a domain."""

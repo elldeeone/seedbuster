@@ -14,6 +14,8 @@ import {
   rescanDomain,
   submitTarget,
   updateDomainStatus,
+  updateOperatorNotes,
+  updateClusterName,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type { Cluster, Domain, DomainDetailResponse, PendingReport, Stats } from "./types";
@@ -601,6 +603,19 @@ export default function App() {
   const [reportPanelSubmitting, setReportPanelSubmitting] = useState(false);
   const [reportPanelManualMode, setReportPanelManualMode] = useState<string | null>(null);
   const [reportPanelManualQueue, setReportPanelManualQueue] = useState<string[]>([]);
+
+  // Visit Website Warning Modal
+  const [visitWarningOpen, setVisitWarningOpen] = useState(false);
+  const [visitWarningUrl, setVisitWarningUrl] = useState("");
+
+  // Operator Notes
+  const [noteInput, setNoteInput] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  // Cluster Name Editing
+  const [clusterNameEditing, setClusterNameEditing] = useState(false);
+  const [clusterNameInput, setClusterNameInput] = useState("");
+  const [clusterNameSaving, setClusterNameSaving] = useState(false);
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -1191,16 +1206,75 @@ export default function App() {
     <div className="sb-grid" style={{ gap: 12 }}>
       <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back</a></div>
       {clusterDetail?.cluster && (
-        <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
-          <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
-            {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
-          </button>
-          <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
-            {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
-          </button>
-          <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Cluster PDF</a>
-          <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Cluster Package</a>
-        </div>
+        <>
+          {/* Campaign name editing section */}
+          <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", marginBottom: 0 }}>
+            <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
+              <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Campaign Details</span>
+            </div>
+            <div className="sb-label">Campaign Name</div>
+            {clusterNameEditing ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="sb-input"
+                  value={clusterNameInput}
+                  onChange={(e) => setClusterNameInput(e.target.value)}
+                  style={{ flex: 1, maxWidth: 400 }}
+                />
+                <button
+                  className="sb-btn sb-btn-primary"
+                  disabled={clusterNameSaving || !clusterNameInput.trim()}
+                  onClick={async () => {
+                    if (!clusterDetail.cluster?.cluster_id) return;
+                    setClusterNameSaving(true);
+                    try {
+                      await updateClusterName(clusterDetail.cluster.cluster_id, clusterNameInput.trim());
+                      showToast("Campaign name updated", "success");
+                      setClusterNameEditing(false);
+                      // Reload cluster
+                      const res = await fetchCluster(clusterDetail.cluster.cluster_id);
+                      setClusterDetail(res);
+                    } catch (err) {
+                      showToast((err as Error).message || "Failed to update name", "error");
+                    } finally {
+                      setClusterNameSaving(false);
+                    }
+                  }}
+                >
+                  {clusterNameSaving ? "Saving..." : "Save"}
+                </button>
+                <button className="sb-btn" onClick={() => setClusterNameEditing(false)}>Cancel</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 600 }}>
+                  {clusterDetail.cluster.name || clusterDetail.cluster.cluster_id}
+                </div>
+                <button
+                  className="sb-btn"
+                  style={{ padding: "4px 10px", fontSize: 12 }}
+                  onClick={() => {
+                    setClusterNameInput(clusterDetail.cluster?.name || "");
+                    setClusterNameEditing(true);
+                  }}
+                >
+                  ✏️ Edit Name
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+            <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
+              {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
+            </button>
+            <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
+              {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
+            </button>
+            <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Cluster PDF</a>
+            <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Cluster Package</a>
+          </div>
+        </>
       )}
       {clusterLoading && <div className="sb-muted">Loading cluster…</div>}
       {!clusterLoading && <ClusterCard cluster={clusterDetail?.cluster} related={clusterDetail?.domains || []} />}
@@ -1215,9 +1289,9 @@ export default function App() {
       )}
       {!domainDetailLoading && domainDetail && (
         <>
-          {(domainDetail.domain.action_required || domainDetail.domain.operator_notes) && (
-            <div className={`sb-flash ${domainDetail.domain.action_required ? "sb-flash-error" : "sb-flash-success"}`}>
-              {domainDetail.domain.action_required || domainDetail.domain.operator_notes}
+          {domainDetail.domain.action_required && (
+            <div className="sb-flash sb-flash-error">
+              {domainDetail.domain.action_required}
             </div>
           )}
 
@@ -1241,6 +1315,15 @@ export default function App() {
                   </button>
                   <button className="sb-btn" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "report")}>
                     {actionBusy[domainDetail.domain.id || 0] === "report" ? "Reporting…" : "Report"}
+                  </button>
+                  <button
+                    className="sb-btn sb-btn-danger"
+                    onClick={() => {
+                      setVisitWarningUrl(`https://${domainDetail.domain.domain}`);
+                      setVisitWarningOpen(true);
+                    }}
+                  >
+                    ↗ Visit Site
                   </button>
                 </div>
                 {/* Status action buttons */}
@@ -1379,10 +1462,45 @@ export default function App() {
               <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Operator Notes</span></div>
                 {domainDetail.domain.operator_notes ? (
-                  <pre className="sb-pre">{domainDetail.domain.operator_notes as any}</pre>
+                  <pre className="sb-pre" style={{ marginBottom: 12 }}>{domainDetail.domain.operator_notes as any}</pre>
                 ) : (
-                  <div className="sb-muted">—</div>
+                  <div className="sb-muted" style={{ marginBottom: 12 }}>No notes yet.</div>
                 )}
+                <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
+                  <div className="sb-label">Add Note</div>
+                  <textarea
+                    className="sb-input"
+                    rows={2}
+                    placeholder="Enter a note..."
+                    value={noteInput}
+                    onChange={(e) => setNoteInput(e.target.value)}
+                    style={{ width: "100%", resize: "vertical", marginBottom: 8, minHeight: 60 }}
+                  />
+                  <button
+                    className="sb-btn sb-btn-primary"
+                    disabled={!noteInput.trim() || noteSaving}
+                    onClick={async () => {
+                      if (!domainDetail?.domain.id) return;
+                      setNoteSaving(true);
+                      try {
+                        const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+                        const existingNotes = (domainDetail.domain.operator_notes || "").trim();
+                        const newNote = `[${timestamp}] ${noteInput.trim()}`;
+                        const combined = existingNotes ? `${existingNotes}\n${newNote}` : newNote;
+                        await updateOperatorNotes(domainDetail.domain.id, combined);
+                        showToast("Note added", "success");
+                        setNoteInput("");
+                        loadDomainDetail(domainDetail.domain.id);
+                      } catch (err) {
+                        showToast((err as Error).message || "Failed to add note", "error");
+                      } finally {
+                        setNoteSaving(false);
+                      }
+                    }}
+                  >
+                    {noteSaving ? "Saving..." : "Add Note"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1670,6 +1788,35 @@ export default function App() {
           </>
         )}
       </div>
+
+      {/* Visit Website Warning Modal */}
+      {visitWarningOpen && (
+        <div className="sb-modal-overlay" onClick={() => setVisitWarningOpen(false)}>
+          <div className="sb-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="sb-modal-header">⚠️ Security Warning</div>
+            <div className="sb-modal-body">
+              <p>You are about to visit a potentially malicious website:</p>
+              <code className="sb-code">{visitWarningUrl}</code>
+              <p style={{ marginTop: 12, color: "var(--accent-amber)" }}>
+                This site may contain phishing content, malware, or other harmful material.
+                Proceed only if you understand the risks.
+              </p>
+            </div>
+            <div className="sb-modal-footer">
+              <button className="sb-btn" onClick={() => setVisitWarningOpen(false)}>Cancel</button>
+              <a
+                className="sb-btn sb-btn-danger"
+                href={visitWarningUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setVisitWarningOpen(false)}
+              >
+                I Understand — Open Website
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
