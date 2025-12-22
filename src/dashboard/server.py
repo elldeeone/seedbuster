@@ -4583,7 +4583,17 @@ class DashboardServer:
     @web.middleware
     async def _admin_auth_middleware(self, request: web.Request, handler):  # type: ignore[override]
         # Only protect /admin and /admin/api; public routes (including /campaigns) should pass through.
-        if not request.path.startswith("/admin"):
+        path = request.path or ""
+        if not path.startswith("/admin"):
+            return await handler(request)
+
+        # Allow static assets and manifest under /admin without auth (used by public SPA).
+        if (
+            path.startswith("/admin/assets")
+            or path.startswith("/admin/manifest")
+            or path.startswith("/admin/favicon")
+            or path.startswith("/admin/.well-known")
+        ):
             return await handler(request)
 
         if not self.config.admin_password:
