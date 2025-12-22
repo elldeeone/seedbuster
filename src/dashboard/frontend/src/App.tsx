@@ -35,16 +35,23 @@ const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
 const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
 
 const parseHash = (): Route => {
-  const raw = window.location.hash.replace(/^#/, "");
-  const parts = raw.split("/").filter(Boolean);
+  const rawHash = window.location.hash.replace(/^#/, "");
+  const hashParts = rawHash.split("/").filter(Boolean);
+  const pathParts = window.location.pathname.split("/").filter(Boolean);
+  const parts = hashParts.length ? hashParts : pathParts;
+
   if (parts[0] === "domains" && parts[1]) {
     const id = Number(parts[1]);
     if (!Number.isNaN(id)) return { name: "domain", id };
   }
-  if (parts[0] === "clusters" && parts[1]) {
-    return { name: "cluster", id: parts[1] };
+
+  if (["clusters", "campaigns"].includes(parts[0] || "")) {
+    if (parts[1]) {
+      return { name: "cluster", id: parts[1] };
+    }
+    return { name: "clusters" };
   }
-  if (parts[0] === "clusters") return { name: "clusters" };
+
   return { name: "dashboard" };
 };
 
@@ -518,7 +525,7 @@ const ClusterCard = ({ cluster, related }: { cluster: Cluster | null | undefined
           <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
           <span className="sb-muted" style={{ marginLeft: 8 }}>Campaign ID: {cluster.cluster_id}</span>
         </div>
-        <a className="sb-btn" href="#/clusters">View all</a>
+        <a className="sb-btn" href="#/campaigns">View all</a>
       </div>
       <div className="sb-grid">
         <div className="col-6">
@@ -1154,7 +1161,7 @@ export default function App() {
                       <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.cluster_id}</div>
                       <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
                     </div>
-                    <a className="sb-btn" href={`#/clusters/${c.cluster_id}`}>View</a>
+                    <a className="sb-btn" href={`#/campaigns/${c.cluster_id}`}>View</a>
                   </div>
                   <div className="sb-breakdown">
                     {(c.members || []).slice(0, 3).map((m) => (
@@ -1185,7 +1192,7 @@ export default function App() {
     if (clusterLoading) {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+          <div className="sb-row"><a className="sb-btn" href="#/campaigns">&larr; Back to Campaigns</a></div>
           <div className="sb-muted">Loading campaign…</div>
         </div>
       );
@@ -1194,7 +1201,7 @@ export default function App() {
     if (!cluster) {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+          <div className="sb-row"><a className="sb-btn" href="#/campaigns">&larr; Back to Campaigns</a></div>
           <div className="sb-muted">Campaign not found.</div>
         </div>
       );
@@ -1208,7 +1215,7 @@ export default function App() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+        <div className="sb-row"><a className="sb-btn" href="#/campaigns">&larr; Back to Campaigns</a></div>
 
         {/* Main Campaign Panel */}
         <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)" }}>
@@ -1590,7 +1597,7 @@ export default function App() {
         </div>
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
-          <a className="sb-btn" href="#/clusters">Threat Campaigns</a>
+          <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
 
           {/* Settings Cog */}
           <div className="sb-settings-container">
