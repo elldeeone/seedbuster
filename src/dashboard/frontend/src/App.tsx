@@ -617,6 +617,9 @@ export default function App() {
   const [clusterNameInput, setClusterNameInput] = useState("");
   const [clusterNameSaving, setClusterNameSaving] = useState(false);
 
+  // Settings Popup
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     window.addEventListener("hashchange", onHash);
@@ -981,81 +984,40 @@ export default function App() {
               <div className="sb-stat-meta">Last 24h: <b>{stats.last_24h}</b></div>
             </div>
           </div>
-          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Status</div><Breakdown items={stats.by_status || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, status: key === "all" ? "" : key, page: 1 }))} /></div></div>
           <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Verdict</div><Breakdown items={stats.by_verdict || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, verdict: key === "all" ? "" : key, page: 1 }))} /></div></div>
           <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Reports</div><Breakdown items={stats.reports || {}} /></div></div>
-          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Dashboard Actions</div><Breakdown items={stats.dashboard_actions || {}} /></div></div>
-          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Evidence Storage</div><div className="sb-stat-value">{formatBytes(stats.evidence_bytes)}</div><div className="sb-stat-meta">Approximate evidence size</div></div></div>
         </div>
         <div className="sb-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 12 }}>{refreshed}</div>
       </>
     );
   }, [stats, statsUpdatedAt, setFilters]);
 
-  const healthPanel = (stats?.evidence_bytes !== undefined || stats?.total !== undefined) && (
-    <div className="sb-panel" id="health-panel" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
-      <div className="sb-panel-header">
-        <span className="sb-panel-title">Health</span>
-        <span className="sb-muted">Pipeline status</span>
-      </div>
-      <div className="sb-row" style={{ alignItems: "center", gap: 8 }}>
-        <span className={`sb-badge sb-badge-${healthLabel.toLowerCase()}`}>{healthLabel}</span>
-        <span className="sb-muted">{(health as any)?.status || (health as any)?.error || "Best-effort check"}</span>
-      </div>
-    </div>
-  );
+
 
   const dashboardView = (
     <>
       {statsBlocks}
 
-      {/* Action panels row - full width, side by side */}
-      <div className="sb-grid" style={{ marginBottom: 16 }}>
-        <div className="col-4">
-          {healthPanel}
+      {/* Manual Submission - full width */}
+      <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
+        <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
+          <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
         </div>
-        <div className="col-4">
-          <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", height: "100%" }}>
-            <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
-              <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
-            </div>
-            <form onSubmit={(e) => handleSubmit(e, "submit")}>
-              <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ marginBottom: 10 }} />
-              <div className="sb-row" style={{ justifyContent: "flex-end", gap: 8 }}>
-                <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
-                  {submitting ? "Working…" : "Force Rescan"}
-                </button>
-                <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
-              </div>
-              {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
-              {submitResult && (
-                <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
-                  {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
-                </div>
-              )}
-            </form>
+        <form onSubmit={(e) => handleSubmit(e, "submit")}>
+          <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+            <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
+              {submitting ? "Working…" : "Force Rescan"}
+            </button>
+            <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
           </div>
-        </div>
-        <div className="col-4">
-          <div className="sb-panel" style={{ borderColor: "rgba(63, 185, 80, 0.3)", height: "100%" }}>
-            <div className="sb-panel-header" style={{ borderColor: "rgba(63, 185, 80, 0.2)" }}>
-              <span className="sb-panel-title" style={{ color: "var(--accent-green)" }}>Evidence Cleanup</span>
+          {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
+          {submitResult && (
+            <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
+              {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
             </div>
-            <div className="sb-row" style={{ alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
-              <input className="sb-input" type="number" min={1} value={cleanupDays} onChange={(e) => setCleanupDays(Number(e.target.value) || 1)} style={{ width: 80 }} />
-              <span className="sb-muted">days old</span>
-              <button className="sb-btn" type="button" disabled={cleanupBusy} onClick={handleCleanupPreview}>{cleanupBusy ? "Working…" : "Preview"}</button>
-              <button className="sb-btn sb-btn-danger" type="button" disabled={cleanupBusy} onClick={handleCleanup}>{cleanupBusy ? "Cleaning…" : "Cleanup"}</button>
-            </div>
-            {cleanupPreview && (
-              <div className="sb-notice" style={{ marginTop: 8 }}>
-                Would remove <b>{cleanupPreview.count}</b> directories (~{formatBytes(cleanupPreview.bytes)})
-              </div>
-            )}
-            {cleanupResult && <div className="sb-muted" style={{ marginTop: 8 }}>{cleanupResult}</div>}
-            {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{cleanupError}</div>}
-          </div>
-        </div>
+          )}
+        </form>
       </div>
 
       {/* Reports Needing Attention - full width when present */}
@@ -1609,6 +1571,76 @@ export default function App() {
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
           <a className="sb-btn" href="#/clusters">Threat Campaigns</a>
+
+          {/* Settings Cog */}
+          <div className="sb-settings-container">
+            <button
+              className={`sb-settings-btn ${settingsOpen ? "active" : ""}`}
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              title="Settings"
+            >
+              ⚙
+            </button>
+
+            {settingsOpen && (
+              <>
+                <div className="sb-settings-overlay" onClick={() => setSettingsOpen(false)} />
+                <div className="sb-settings-popup">
+                  <div className="sb-settings-popup-header">
+                    <span className="sb-settings-popup-title">System Settings</span>
+                    <button className="sb-btn" onClick={() => setSettingsOpen(false)} style={{ padding: "4px 8px" }}>×</button>
+                  </div>
+
+                  {/* Health Status */}
+                  <div className="sb-settings-section">
+                    <div className="sb-settings-section-title">Health Status</div>
+                    <div className="sb-row" style={{ alignItems: "center", gap: 8 }}>
+                      <span className={`sb-badge sb-badge-${healthLabel.toLowerCase()}`}>{healthLabel}</span>
+                      <span className="sb-muted" style={{ fontSize: 12 }}>{(health as any)?.status || (health as any)?.error || "Best-effort check"}</span>
+                    </div>
+                  </div>
+
+                  {/* Evidence Storage */}
+                  <div className="sb-settings-section">
+                    <div className="sb-settings-section-title">Evidence Storage</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{formatBytes(stats?.evidence_bytes)}</div>
+                    <div className="sb-muted" style={{ fontSize: 12 }}>Approximate evidence size</div>
+                  </div>
+
+                  {/* Evidence Cleanup */}
+                  <div className="sb-settings-section">
+                    <div className="sb-settings-section-title">Evidence Cleanup</div>
+                    <div className="sb-row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <input
+                        className="sb-input"
+                        type="number"
+                        min={1}
+                        value={cleanupDays}
+                        onChange={(e) => setCleanupDays(Number(e.target.value) || 1)}
+                        style={{ width: 70 }}
+                      />
+                      <span className="sb-muted">days old</span>
+                    </div>
+                    <div className="sb-row" style={{ marginTop: 10, gap: 8 }}>
+                      <button className="sb-btn" type="button" disabled={cleanupBusy} onClick={handleCleanupPreview}>
+                        {cleanupBusy ? "Working…" : "Preview"}
+                      </button>
+                      <button className="sb-btn sb-btn-danger" type="button" disabled={cleanupBusy} onClick={handleCleanup}>
+                        {cleanupBusy ? "Cleaning…" : "Cleanup"}
+                      </button>
+                    </div>
+                    {cleanupPreview && (
+                      <div className="sb-notice" style={{ marginTop: 8, fontSize: 12 }}>
+                        Would remove <b>{cleanupPreview.count}</b> directories (~{formatBytes(cleanupPreview.bytes)})
+                      </div>
+                    )}
+                    {cleanupResult && <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>{cleanupResult}</div>}
+                    {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8, fontSize: 12 }}>{cleanupError}</div>}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </nav>
       </header>
 

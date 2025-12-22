@@ -1316,3 +1316,98 @@ summary:focus-visible {
   padding-top: 16px;
   border-top: 1px solid var(--border-subtle);
 }
+
+/* Settings Popup */
+.sb-settings-container {
+  position: relative;
+}
+
+.sb-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sb-settings-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border-color: var(--border-emphasis);
+}
+
+.sb-settings-btn.active {
+  background: var(--accent-blue-subtle);
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+}
+
+.sb-settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+}
+
+.sb-settings-popup {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  z-index: 901;
+  padding: 20px;
+}
+
+.sb-settings-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sb-settings-popup-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.sb-settings-section {
+  margin-bottom: 20px;
+}
+
+.sb-settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.sb-settings-section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+
+@media (max-width: 500px) {
+  .sb-settings-popup {
+    width: calc(100vw - 32px);
+    right: -8px;
+  }
+}
