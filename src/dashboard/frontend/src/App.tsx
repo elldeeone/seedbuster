@@ -511,7 +511,7 @@ const ClusterCard = ({ cluster, related }: { cluster: Cluster | null | undefined
       <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
         <div>
           <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
-          <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {cluster.cluster_id}</span>
+          <span className="sb-muted" style={{ marginLeft: 8 }}>Campaign ID: {cluster.cluster_id}</span>
         </div>
         <a className="sb-btn" href="#/clusters">View all</a>
       </div>
@@ -684,7 +684,7 @@ export default function App() {
       const res = await fetchClusters();
       setClusters(res.clusters || []);
     } catch (err) {
-      showToast((err as Error).message || "Failed to load clusters", "error");
+      showToast((err as Error).message || "Failed to load campaigns", "error");
     } finally {
       setClusterLoading(false);
     }
@@ -696,7 +696,7 @@ export default function App() {
       const res = await fetchCluster(id);
       setClusterDetail(res);
     } catch (err) {
-      showToast((err as Error).message || "Failed to load cluster", "error");
+      showToast((err as Error).message || "Failed to load campaign", "error");
       setClusterDetail(null);
     } finally {
       setClusterLoading(false);
@@ -910,10 +910,10 @@ export default function App() {
     if (!clusterDetail) return;
     const domains = (clusterDetail.domains || []).filter((d) => d.id) as Domain[];
     if (!domains.length) {
-      showToast("No domains with IDs to process in this cluster", "error");
+      showToast("No domains with IDs to process in this campaign", "error");
       return;
     }
-    const ok = window.confirm(`Queue ${type} for ${domains.length} domains in this cluster?`);
+    const ok = window.confirm(`Queue ${type} for ${domains.length} domains in this campaign?`);
     if (!ok) return;
     setClusterBulkWorking(type);
     try {
@@ -1148,20 +1148,20 @@ export default function App() {
   const clustersView = (
     <div className="sb-panel">
       <div className="sb-panel-header">
-        <span className="sb-panel-title">Threat Clusters</span>
+        <span className="sb-panel-title">Threat Campaigns</span>
         <div className="sb-row" style={{ gap: 12 }}>
           <input
             className="sb-input"
-            placeholder="Search clusters or domains"
+            placeholder="Search campaigns"
             value={clusterSearch}
             onChange={(e) => setClusterSearch(e.target.value)}
             style={{ width: 280 }}
           />
-          <span className="sb-muted">{filteredClusters.length} clusters</span>
+          <span className="sb-muted">{filteredClusters.length} campaigns</span>
         </div>
       </div>
-      {clusterLoading && <div className="sb-muted">Loading clusters…</div>}
-      {!clusterLoading && filteredClusters.length === 0 && <div className="sb-muted">No clusters yet.</div>}
+      {clusterLoading && <div className="sb-muted">Loading campaigns…</div>}
+      {!clusterLoading && filteredClusters.length === 0 && <div className="sb-muted">No campaigns yet.</div>}
       {!clusterLoading && filteredClusters.length > 0 && (
         <div className="sb-grid" style={{ gap: 16 }}>
           {filteredClusters.map((c) => {
@@ -1202,84 +1202,161 @@ export default function App() {
     </div>
   );
 
-  const clusterDetailView = (
-    <div className="sb-grid" style={{ gap: 12 }}>
-      <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back</a></div>
-      {clusterDetail?.cluster && (
-        <>
-          {/* Campaign name editing section */}
-          <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", marginBottom: 0 }}>
-            <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
-              <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Campaign Details</span>
+  const clusterDetailView = (() => {
+    const cluster = clusterDetail?.cluster;
+    const related = clusterDetail?.domains || [];
+
+    if (clusterLoading) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+          <div className="sb-muted">Loading campaign…</div>
+        </div>
+      );
+    }
+
+    if (!cluster) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+          <div className="sb-muted">Campaign not found.</div>
+        </div>
+      );
+    }
+
+    const indicators = [
+      { label: "Backends", values: cluster.shared_backends || [] },
+      { label: "Kits", values: cluster.shared_kits || [] },
+      { label: "Nameservers", values: cluster.shared_nameservers || [] },
+    ];
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="sb-row"><a className="sb-btn" href="#/clusters">&larr; Back to Campaigns</a></div>
+
+        {/* Main Campaign Panel */}
+        <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)" }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
+            <div>
+              <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
+              <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {cluster.cluster_id}</span>
             </div>
-            <div className="sb-label">Campaign Name</div>
-            {clusterNameEditing ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  className="sb-input"
-                  value={clusterNameInput}
-                  onChange={(e) => setClusterNameInput(e.target.value)}
-                  style={{ flex: 1, maxWidth: 400 }}
-                />
-                <button
-                  className="sb-btn sb-btn-primary"
-                  disabled={clusterNameSaving || !clusterNameInput.trim()}
-                  onClick={async () => {
-                    if (!clusterDetail.cluster?.cluster_id) return;
-                    setClusterNameSaving(true);
-                    try {
-                      await updateClusterName(clusterDetail.cluster.cluster_id, clusterNameInput.trim());
-                      showToast("Campaign name updated", "success");
-                      setClusterNameEditing(false);
-                      // Reload cluster
-                      const res = await fetchCluster(clusterDetail.cluster.cluster_id);
-                      setClusterDetail(res);
-                    } catch (err) {
-                      showToast((err as Error).message || "Failed to update name", "error");
-                    } finally {
-                      setClusterNameSaving(false);
-                    }
-                  }}
-                >
-                  {clusterNameSaving ? "Saving..." : "Save"}
-                </button>
-                <button className="sb-btn" onClick={() => setClusterNameEditing(false)}>Cancel</button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>
-                  {clusterDetail.cluster.name || clusterDetail.cluster.cluster_id}
-                </div>
-                <button
-                  className="sb-btn"
-                  style={{ padding: "4px 10px", fontSize: 12 }}
-                  onClick={() => {
-                    setClusterNameInput(clusterDetail.cluster?.name || "");
-                    setClusterNameEditing(true);
-                  }}
-                >
-                  ✏️ Edit Name
-                </button>
-              </div>
-            )}
+            <div className="sb-row" style={{ gap: 8 }}>
+              <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
+              <a className="sb-btn" href={`/admin/clusters/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
+            </div>
           </div>
 
-          <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          {/* Campaign Name with Edit */}
+          <div className="sb-grid" style={{ marginBottom: 16 }}>
+            <div className="col-8">
+              <div className="sb-label">Campaign Name</div>
+              {clusterNameEditing ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                  <input
+                    className="sb-input"
+                    value={clusterNameInput}
+                    onChange={(e) => setClusterNameInput(e.target.value)}
+                    style={{ flex: 1, maxWidth: 400 }}
+                  />
+                  <button
+                    className="sb-btn sb-btn-primary"
+                    disabled={clusterNameSaving || !clusterNameInput.trim()}
+                    onClick={async () => {
+                      if (!cluster.cluster_id) return;
+                      setClusterNameSaving(true);
+                      try {
+                        await updateClusterName(cluster.cluster_id, clusterNameInput.trim());
+                        showToast("Campaign name updated", "success");
+                        setClusterNameEditing(false);
+                        const res = await fetchCluster(cluster.cluster_id);
+                        setClusterDetail(res);
+                      } catch (err) {
+                        showToast((err as Error).message || "Failed to update name", "error");
+                      } finally {
+                        setClusterNameSaving(false);
+                      }
+                    }}
+                  >
+                    {clusterNameSaving ? "Saving..." : "Save"}
+                  </button>
+                  <button className="sb-btn" onClick={() => setClusterNameEditing(false)}>Cancel</button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                  <div style={{ fontSize: 20, fontWeight: 600 }}>
+                    {cluster.name || cluster.cluster_id}
+                  </div>
+                  <button
+                    className="sb-btn"
+                    style={{ padding: "4px 10px", fontSize: 12 }}
+                    onClick={() => {
+                      setClusterNameInput(cluster.name || "");
+                      setClusterNameEditing(true);
+                    }}
+                  >
+                    ✏️ Edit
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="col-4">
+              <div className="sb-label">Members</div>
+              <div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{cluster.members?.length ?? 0}</div>
+            </div>
+          </div>
+
+          {/* Bulk Actions */}
+          <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
             <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
               {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
             </button>
             <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
               {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
             </button>
-            <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Cluster PDF</a>
-            <a className="sb-btn" href={`/admin/clusters/${clusterDetail.cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Cluster Package</a>
           </div>
-        </>
-      )}
-      {clusterLoading && <div className="sb-muted">Loading cluster…</div>}
-      {!clusterLoading && <ClusterCard cluster={clusterDetail?.cluster} related={clusterDetail?.domains || []} />}
-    </div>
-  );
+
+          {/* Shared Indicators */}
+          <div style={{ marginBottom: 16 }}>
+            <div className="sb-label">Shared Indicators</div>
+            <div className="sb-row" style={{ flexWrap: "wrap", alignItems: "flex-start", marginTop: 8 }}>
+              {indicators.map((ind) => ind.values && ind.values.length ? (
+                <div key={ind.label} style={{ marginRight: 16, marginBottom: 8 }}>
+                  <div className="sb-muted" style={{ fontSize: 12, marginBottom: 4 }}>{ind.label}</div>
+                  <div>
+                    {ind.values.slice(0, 6).map((v) => (
+                      <code key={v} className="sb-code" style={{ display: "inline-block", margin: "2px 4px 2px 0" }}>{v}</code>
+                    ))}
+                    {ind.values.length > 6 && <span className="sb-muted">+{ind.values.length - 6} more</span>}
+                  </div>
+                </div>
+              ) : null)}
+              {indicators.every((i) => !i.values || i.values.length === 0) && <div className="sb-muted">No shared indicators.</div>}
+            </div>
+          </div>
+
+          {/* Related Domains */}
+          <div>
+            <div className="sb-label">Related Domains</div>
+            <div className="sb-breakdown" style={{ marginTop: 8 }}>
+              {(related || []).map((rd) => (
+                <div key={rd.id || rd.domain} className="sb-breakdown-item" style={{ cursor: rd.id ? "pointer" : "default" }}
+                  onClick={() => rd.id && (window.location.hash = `#/domains/${rd.id}`)}>
+                  <span className="sb-breakdown-key">{rd.domain}</span>
+                  <div className="sb-row" style={{ gap: 8 }}>
+                    <span className={badgeClass(rd.status, "status")}>{(rd.status || "").toUpperCase()}</span>
+                    <span className="sb-score">{(rd as any).score ?? ""}</span>
+                  </div>
+                </div>
+              ))}
+              {(!related || related.length === 0) && <div className="sb-muted">No related domains yet.</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
 
   const domainDetailView = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1531,7 +1608,7 @@ export default function App() {
         </div>
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
-          <a className="sb-btn" href="#/clusters">Clusters</a>
+          <a className="sb-btn" href="#/clusters">Threat Campaigns</a>
         </nav>
       </header>
 
