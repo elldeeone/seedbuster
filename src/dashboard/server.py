@@ -24,6 +24,7 @@ from urllib.parse import quote, urlencode, urlparse
 from aiohttp import web
 
 from ..storage.database import Database, DomainStatus, Verdict
+from ..utils.domains import canonicalize_domain
 
 
 def _escape(value: object) -> str:
@@ -4261,7 +4262,7 @@ class DashboardServer:
 
     def _normalize_domain_key(self, domain: str) -> str:
         """Normalize a domain for lookups (strip scheme/path, lowercase)."""
-        return _extract_hostname(domain)
+        return canonicalize_domain(domain) or _extract_hostname(domain)
 
     def _registered_domain(self, domain: str) -> str:
         """Return the registered domain (second-level + suffix) for allowlist checks."""

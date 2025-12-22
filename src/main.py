@@ -27,6 +27,7 @@ from .reporter import ReportManager
 from .reporter.evidence_packager import EvidencePackager
 from .monitoring.health import HealthServer
 from .pipeline.analysis import AnalysisEngine
+from .utils.domains import canonicalize_domain
 
 # Configure logging
 logging.basicConfig(
@@ -182,6 +183,7 @@ class SeedBusterPipeline:
                     f"canceled {canceled} remaining rescans"
                 )
                 return
+            domain = str(domain_record.get("domain") or domain)
 
         # Queue the domain for re-analysis with rescan flag
         # We store the reason in a dict to track rescan context
@@ -199,7 +201,7 @@ class SeedBusterPipeline:
 
     def _allowlist_add(self, domain: str) -> None:
         """Sync Telegram allowlist updates to the in-memory scorer."""
-        value = (domain or "").strip().lower()
+        value = canonicalize_domain(domain) or (domain or "").strip().lower()
         if not value:
             return
         self.scorer.allowlist.add(value)
@@ -209,7 +211,7 @@ class SeedBusterPipeline:
 
     def _allowlist_remove(self, domain: str) -> None:
         """Sync Telegram allowlist removals to the in-memory scorer."""
-        value = (domain or "").strip().lower()
+        value = canonicalize_domain(domain) or (domain or "").strip().lower()
         if not value:
             return
         self.scorer.allowlist.discard(value)

@@ -8,6 +8,7 @@ from typing import Set
 
 import yaml
 from dotenv import load_dotenv
+from .utils.domains import canonicalize_domain
 
 logger = logging.getLogger(__name__)
 
@@ -286,9 +287,15 @@ class Config:
         keywords_path = self.config_dir / "keywords.txt"
 
         if allowlist_path.exists():
-            self.allowlist = self._load_list_file(allowlist_path)
+            raw_allowlist = self._load_list_file(allowlist_path)
+            self.allowlist = {
+                canonicalize_domain(item) or item for item in raw_allowlist
+            }
         if denylist_path.exists():
-            self.denylist = self._load_list_file(denylist_path)
+            raw_denylist = self._load_list_file(denylist_path)
+            self.denylist = {
+                canonicalize_domain(item) or item for item in raw_denylist
+            }
         if keywords_path.exists():
             self.keywords = list(self._load_list_file(keywords_path))
 

@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
+from ..utils.domains import canonicalize_domain
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,6 +73,7 @@ class Database:
                     CREATE TABLE IF NOT EXISTS domains (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         domain TEXT UNIQUE NOT NULL,
+                        canonical_domain TEXT,
                         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         source TEXT DEFAULT 'certstream',
                         domain_score INTEGER DEFAULT 0,
@@ -126,12 +129,14 @@ class Database:
             )
             await self._connection.commit()
 
-            # Migrations must run before creating indexes that reference newer columns,
-            # otherwise existing DBs on older schemas would fail to start up.
-            await self._migrate_domains_table()
-            await self._migrate_reports_table()
-            await self._migrate_deferred_to_watchlist()
-            await self._create_indexes()
+        # Migrations must run before creating indexes that reference newer columns,
+        # otherwise existing DBs on older schemas would fail to start up.
+        await self._migrate_domains_table()
+        await self._migrate_reports_table()
+        await self._migrate_deferred_to_watchlist()
+        await self._backfill_canonical_domains(lock_held=True)
+        await self._merge_canonical_duplicates()
+        await self._create_indexes()
 
     async def _create_indexes(self) -> None:
         """Create indexes (best-effort, safe for older DBs)."""
@@ -139,6 +144,7 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status)",
             "CREATE INDEX IF NOT EXISTS idx_domains_verdict ON domains(verdict)",
             "CREATE INDEX IF NOT EXISTS idx_domains_domain ON domains(domain)",
+            "CREATE INDEX IF NOT EXISTS idx_domains_canonical ON domains(canonical_domain)",
             "CREATE INDEX IF NOT EXISTS idx_reports_domain_platform ON reports(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_next_attempt ON reports(status, next_attempt_at)",
             "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_status ON dashboard_actions(status, id)",
@@ -162,6 +168,8 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN operator_notes TEXT")
         if "watchlist_baseline_timestamp" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN watchlist_baseline_timestamp TEXT")
+        if "canonical_domain" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN canonical_domain TEXT")
 
         for stmt in migrations:
             try:
@@ -170,6 +178,208 @@ class Database:
                 continue
         if migrations:
             await self._connection.commit()
+
+    async def _backfill_canonical_domains(self, *, lock_held: bool = False) -> None:
+        """Populate canonical_domain for existing rows (best-effort)."""
+        if lock_held:
+            cursor = await self._connection.execute(
+                """
+                SELECT id, domain, canonical_domain
+                FROM domains
+                WHERE canonical_domain IS NULL OR canonical_domain = ''
+                """
+            )
+            rows = await cursor.fetchall()
+        else:
+            async with self._lock:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT id, domain, canonical_domain
+                    FROM domains
+                    WHERE canonical_domain IS NULL OR canonical_domain = ''
+                    """
+                )
+                rows = await cursor.fetchall()
+
+        if not rows:
+            return
+
+        updates: list[tuple[str, int]] = []
+        for row in rows:
+            domain = row["domain"] or ""
+            canonical = canonicalize_domain(domain)
+            if not canonical:
+                continue
+            updates.append((canonical, row["id"]))
+
+        if not updates:
+            return
+
+        if lock_held:
+            await self._connection.executemany(
+                "UPDATE domains SET canonical_domain = ? WHERE id = ?",
+                updates,
+            )
+            await self._connection.commit()
+        else:
+            async with self._lock:
+                await self._connection.executemany(
+                    "UPDATE domains SET canonical_domain = ? WHERE id = ?",
+                    updates,
+                )
+                await self._connection.commit()
+
+    async def _merge_canonical_duplicates(self) -> int:
+        """Merge duplicate domain rows that share the same canonical key.
+
+        Returns:
+            Number of canonical groups merged.
+        """
+        # Helper orderings
+        verdict_rank = {
+            "high": 4,
+            "medium": 3,
+            "low": 2,
+            "benign": 1,
+            None: 0,
+            "": 0,
+        }
+        status_rank = {
+            "reported": 5,
+            "analyzed": 4,
+            "watchlist": 3,
+            "pending": 2,
+            "allowlisted": 2,
+            "false_positive": 2,
+            "analyzing": 1,
+            None: 0,
+            "": 0,
+        }
+
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT canonical_domain, GROUP_CONCAT(id) AS ids
+                FROM domains
+                WHERE canonical_domain IS NOT NULL AND canonical_domain != ''
+                GROUP BY canonical_domain
+                HAVING COUNT(*) > 1
+                """
+            )
+            dup_groups = await cursor.fetchall()
+
+        merged_groups = 0
+        for group in dup_groups:
+            canonical = group["canonical_domain"]
+            id_list = [
+                int(p)
+                for p in (group["ids"] or "").split(",")
+                if str(p).strip().isdigit()
+            ]
+            if len(id_list) < 2:
+                continue
+
+            placeholders = ",".join("?" for _ in id_list)
+            async with self._lock:
+                cursor = await self._connection.execute(
+                    f"SELECT * FROM domains WHERE id IN ({placeholders})",
+                    id_list,
+                )
+                rows = [dict(r) for r in await cursor.fetchall()]
+
+            if len(rows) < 2:
+                continue
+
+            def _score(row: dict) -> tuple:
+                analysis_score = row.get("analysis_score")
+                domain_score = row.get("domain_score")
+                verdict = row.get("verdict")
+                status = row.get("status")
+                return (
+                    int(analysis_score) if analysis_score is not None else -1,
+                    int(domain_score) if domain_score is not None else -1,
+                    verdict_rank.get((verdict or "").lower(), 0),
+                    status_rank.get((status or "").lower(), 0),
+                    -int(row.get("id") or 0),
+                )
+
+            rows_sorted = sorted(rows, key=_score, reverse=True)
+            primary = rows_sorted[0]
+            secondary = rows_sorted[1:]
+            primary_id = int(primary["id"])
+            secondary_ids = [int(r["id"]) for r in secondary]
+
+            # Consolidate best values
+            best_domain_score = max(
+                (r.get("domain_score") or 0) for r in rows_sorted
+            )
+            best_analysis_score = max(
+                (r.get("analysis_score") or -1) for r in rows_sorted
+            )
+            best_verdict = max(
+                ((r.get("verdict") or "").lower() for r in rows_sorted),
+                key=lambda v: verdict_rank.get(v, 0),
+                default=primary.get("verdict"),
+            )
+            best_status = max(
+                ((r.get("status") or "").lower() for r in rows_sorted),
+                key=lambda s: status_rank.get(s, 0),
+                default=primary.get("status"),
+            )
+            best_evidence_path = (
+                primary.get("evidence_path")
+                or next((r.get("evidence_path") for r in secondary if r.get("evidence_path")), None)
+            )
+
+            async with self._lock:
+                # Move child rows to primary
+                placeholders_secondary = ",".join("?" for _ in secondary_ids)
+                params = [primary_id] + secondary_ids
+                if secondary_ids:
+                    await self._connection.execute(
+                        f"UPDATE evidence SET domain_id = ? WHERE domain_id IN ({placeholders_secondary})",
+                        params,
+                    )
+                    await self._connection.execute(
+                        f"UPDATE reports SET domain_id = ? WHERE domain_id IN ({placeholders_secondary})",
+                        params,
+                    )
+
+                # Update primary fields if we found better data
+                await self._connection.execute(
+                    """
+                    UPDATE domains
+                    SET domain_score = ?,
+                        analysis_score = CASE WHEN ? >= 0 THEN ? ELSE analysis_score END,
+                        verdict = COALESCE(?, verdict),
+                        status = COALESCE(?, status),
+                        evidence_path = COALESCE(?, evidence_path),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        best_domain_score,
+                        best_analysis_score,
+                        best_analysis_score,
+                        best_verdict,
+                        best_status,
+                        best_evidence_path,
+                        primary_id,
+                    ),
+                )
+
+                # Delete duplicates
+                if secondary_ids:
+                    await self._connection.execute(
+                        f"DELETE FROM domains WHERE id IN ({placeholders_secondary})",
+                        secondary_ids,
+                    )
+
+                await self._connection.commit()
+
+            merged_groups += 1
+
+        return merged_groups
 
     async def _migrate_reports_table(self) -> None:
         """Add columns to reports table for retry scheduling (best-effort)."""
@@ -226,14 +436,35 @@ class Database:
         domain_score: int = 0,
     ) -> Optional[int]:
         """Add a new domain to track. Returns domain ID or None if exists."""
+        normalized = (domain or "").strip().lower()
+        canonical = canonicalize_domain(normalized)
+        if not normalized or not canonical:
+            return None
+
+        # If canonical already exists, return existing ID and update score if higher.
+        existing = await self.get_domain_by_canonical(canonical)
+        if existing:
+            try:
+                current_score = int(existing.get("domain_score") or 0)
+            except Exception:
+                current_score = 0
+            if domain_score > current_score:
+                async with self._lock:
+                    await self._connection.execute(
+                        "UPDATE domains SET domain_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (domain_score, existing["id"]),
+                    )
+                    await self._connection.commit()
+            return int(existing["id"])
+
         async with self._lock:
             try:
                 cursor = await self._connection.execute(
                     """
-                    INSERT INTO domains (domain, source, domain_score, status)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO domains (domain, canonical_domain, source, domain_score, status)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (domain.lower(), source, domain_score, DomainStatus.PENDING.value),
+                    (normalized, canonical, source, domain_score, DomainStatus.PENDING.value),
                 )
                 await self._connection.commit()
                 return cursor.lastrowid
@@ -243,13 +474,45 @@ class Database:
 
     async def get_domain(self, domain: str) -> Optional[dict]:
         """Get domain record by domain name."""
+        domain_lower = (domain or "").strip().lower()
+        canonical = canonicalize_domain(domain_lower)
+
+        async with self._lock:
+            if canonical:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE domain = ? OR canonical_domain = ?
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (domain_lower, canonical),
+                )
+            else:
+                cursor = await self._connection.execute(
+                    "SELECT * FROM domains WHERE domain = ?",
+                    (domain_lower,),
+                )
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_domain_by_canonical(self, domain: str) -> Optional[dict]:
+        """Get domain record by canonicalized domain key."""
+        canonical = canonicalize_domain(domain)
+        if not canonical:
+            return None
         async with self._lock:
             cursor = await self._connection.execute(
-                "SELECT * FROM domains WHERE domain = ?",
-                (domain.lower(),),
+                """
+                SELECT * FROM domains
+                WHERE canonical_domain = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (canonical,),
             )
             row = await cursor.fetchone()
-            return dict(row) if row else None
+        return dict(row) if row else None
 
     async def get_domains_by_names(self, domains: list[str]) -> dict[str, dict]:
         """Fetch multiple domains by name, returned as a mapping of domain -> record."""
@@ -257,15 +520,30 @@ class Database:
         if not normalized:
             return {}
 
-        unique = sorted(set(normalized))
-        placeholders = ",".join("?" for _ in unique)
-        query = f"SELECT * FROM domains WHERE domain IN ({placeholders})"
+        canonical_keys = {canonicalize_domain(d) for d in normalized}
+        canonical_keys.discard("")
+        candidates = sorted(set(normalized) | canonical_keys)
+        if not candidates:
+            return {}
+
+        placeholders = ",".join("?" for _ in candidates)
+        query = (
+            f"SELECT * FROM domains WHERE domain IN ({placeholders})"
+            f" OR canonical_domain IN ({placeholders})"
+        )
 
         async with self._lock:
-            cursor = await self._connection.execute(query, unique)
+            cursor = await self._connection.execute(query, candidates * 2)
             rows = await cursor.fetchall()
 
-        return {row["domain"]: dict(row) for row in rows}
+        result: dict[str, dict] = {}
+        for row in rows:
+            record = dict(row)
+            result[row["domain"]] = record
+            canon = record.get("canonical_domain")
+            if canon:
+                result[canon] = record
+        return result
 
     async def get_domain_by_id(self, domain_id: int) -> Optional[dict]:
         """Get domain record by ID."""
@@ -557,8 +835,9 @@ class Database:
             where.append("verdict = ?")
             params.append(verdict.strip().lower())
         if query:
-            where.append("domain LIKE ?")
-            params.append(f"%{query.strip().lower()}%")
+            like = f"%{query.strip().lower()}%"
+            where.append("(domain LIKE ? OR canonical_domain LIKE ?)")
+            params.extend([like, like])
 
         sql = "SELECT * FROM domains"
         if where:
@@ -598,8 +877,9 @@ class Database:
             where.append("verdict = ?")
             params.append(verdict.strip().lower())
         if query:
-            where.append("domain LIKE ?")
-            params.append(f"%{query.strip().lower()}%")
+            like = f"%{query.strip().lower()}%"
+            where.append("(domain LIKE ? OR canonical_domain LIKE ?)")
+            params.extend([like, like])
 
         sql = "SELECT COUNT(*) as count FROM domains"
         if where:
@@ -815,10 +1095,20 @@ class Database:
 
     async def domain_exists(self, domain: str) -> bool:
         """Check if domain already exists in database."""
+        domain_lower = (domain or "").strip().lower()
+        canonical = canonicalize_domain(domain_lower)
+
         async with self._lock:
+            if canonical:
+                cursor = await self._connection.execute(
+                    "SELECT 1 FROM domains WHERE canonical_domain = ? LIMIT 1",
+                    (canonical,),
+                )
+                if await cursor.fetchone():
+                    return True
             cursor = await self._connection.execute(
-                "SELECT 1 FROM domains WHERE domain = ?",
-                (domain.lower(),),
+                "SELECT 1 FROM domains WHERE domain = ? LIMIT 1",
+                (domain_lower,),
             )
             return await cursor.fetchone() is not None
 
