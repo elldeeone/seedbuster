@@ -1381,7 +1381,7 @@ export default function App() {
                 {domainDetail.domain.operator_notes ? (
                   <pre className="sb-pre">{domainDetail.domain.operator_notes as any}</pre>
                 ) : (
-                  <div className="sb-muted">\u2014</div>
+                  <div className="sb-muted">—</div>
                 )}
               </div>
             </div>
