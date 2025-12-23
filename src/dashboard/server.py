@@ -5667,25 +5667,29 @@ class DashboardServer:
         if not domain:
             raise web.HTTPNotFound(text="Domain not found")
 
-        platforms = self.get_available_platforms()
         platform_info = self.get_platform_info()
-        if not platforms:
+        available_platforms = self.get_available_platforms()
+        if not available_platforms:
             return web.json_response({"error": "No reporting platforms configured"}, status=503)
 
         manual_data: dict[str, dict] = {}
         if self.get_manual_report_options:
             try:
-                manual_data = await self.get_manual_report_options(domain_id, domain.get("domain", ""), platforms)
+                manual_data = await self.get_manual_report_options(
+                    domain_id,
+                    domain.get("domain", ""),
+                    available_platforms,
+                )
             except Exception as e:
                 raise web.HTTPServiceUnavailable(text=f"Manual instructions unavailable: {e}")
         else:
             raise web.HTTPServiceUnavailable(text="Manual instructions not configured")
 
         engagement_counts = await self.database.get_report_engagement_counts(domain_id)
-        total_engagements = await self.database.get_report_engagement_total(domain_id)
+        total_engagements = sum(engagement_counts.get(p, 0) for p in manual_data.keys())
 
         entries = []
-        for platform in platforms:
+        for platform in manual_data.keys():
             info = platform_info.get(platform, {}) if isinstance(platform_info, dict) else {}
             raw_instruction = manual_data.get(platform)
             instructions = None
@@ -5698,8 +5702,8 @@ class DashboardServer:
             entries.append(
                 {
                     "id": platform,
-                    "name": info.get("name") or platform,
-                    "manual_only": True,
+                    "name": info.get("name") or " ".join(part.capitalize() for part in platform.split("_")),
+                    "manual_only": bool(info.get("manual_only", True)),
                     "url": info.get("url", ""),
                     "engagement_count": engagement_counts.get(platform, 0),
                     "instructions": instructions,

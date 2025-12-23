@@ -553,7 +553,7 @@ class ReportManager:
 
         Returns dict mapping platform name to info dict:
         {
-            "cloudflare": {"manual_only": False, "url": "https://..."},
+            "cloudflare": {"manual_only": False, "url": "https://...", "name": "Cloudflare"},
             "microsoft": {"manual_only": True, "url": "https://..."},
             ...
         }
@@ -563,11 +563,202 @@ class ReportManager:
         for name in platforms:
             reporter = self.reporters.get(name)
             if reporter:
+                display = (
+                    getattr(reporter, "display_name", None)
+                    or getattr(reporter, "platform_display_name", None)
+                    or " ".join(part.capitalize() for part in name.split("_"))
+                )
                 info[name] = {
                     "manual_only": getattr(reporter, "manual_only", False),
                     "url": getattr(reporter, "platform_url", ""),
+                    "name": display,
                 }
         return info
+
+    @staticmethod
+    def _normalize_hint(value: Optional[str]) -> str:
+        """Normalize provider/registrar strings for comparison."""
+        return (value or "").strip().lower()
+
+    def _canonical_provider(self, value: str) -> str:
+        """Map provider aliases to platform keys used by reporters."""
+        key = self._normalize_hint(value)
+        if not key:
+            return ""
+        aliases = {
+            "amazon": "aws",
+            "amazon web services": "aws",
+            "aws": "aws",
+            "google cloud": "gcp",
+            "google": "gcp",
+            "gcp": "gcp",
+            "microsoft": "azure",
+            "azure": "azure",
+            "msft": "azure",
+            "fly.io": "fly_io",
+            "flyio": "fly_io",
+            "fly": "fly_io",
+        }
+        return aliases.get(key, key)
+
+    def _collect_hosting_hints(self, evidence: ReportEvidence) -> set[str]:
+        """Collect hosting/provider hints from analysis outputs and endpoints."""
+        hints: set[str] = set()
+
+        candidates = [
+            evidence.hosting_provider,
+            (evidence.analysis_json or {}).get("hosting_provider"),
+        ]
+        try:
+            infra = (evidence.analysis_json or {}).get("infrastructure") or {}
+            candidates.append(infra.get("hosting_provider"))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            canon = self._canonical_provider(candidate or "")
+            if canon:
+                hints.add(canon)
+
+        haystack_parts: list[str] = []
+        for item in [evidence.url] + (evidence.backend_domains or []) + (evidence.suspicious_endpoints or []):
+            if isinstance(item, str):
+                haystack_parts.append(item.lower())
+
+        haystack = " ".join(haystack_parts)
+        patterns: dict[str, list[str]] = {
+            "digitalocean": ["ondigitalocean.app", "digitaloceanspaces.com", "digitalocean"],
+            "vercel": ["vercel.app", ".vercel.com", "vercel"],
+            "netlify": ["netlify.app", ".netlify.com", "netlify"],
+            "render": ["onrender.com", ".render.com", "render.com"],
+            "fly_io": [".fly.dev", "fly.dev"],
+            "railway": ["railway.app", ".railway.app"],
+            "heroku": ["herokuapp.com", ".herokuapp.com", "heroku"],
+            "aws": ["amazonaws.com", "cloudfront.net", ".awsstatic", "aws"],
+            "gcp": ["appspot.com", "cloudfunctions.net", "googleusercontent.com", "firebaseapp.com", ".web.app", "gcp"],
+            "azure": ["azurewebsites.net", "azureedge.net", "cloudapp.azure.com", "azure"],
+            "cloudflare": ["workers.dev", "pages.dev", "cloudflare"],
+        }
+        for provider, needles in patterns.items():
+            if any(needle in haystack for needle in needles):
+                hints.add(provider)
+
+        return {h for h in hints if h}
+
+    def _collect_service_hints(self, evidence: ReportEvidence) -> set[str]:
+        """Detect platform-specific service usage (e.g., Telegram bots, Discord webhooks)."""
+        hints: set[str] = set()
+        haystack_parts: list[str] = []
+        for item in [evidence.url] + (evidence.backend_domains or []) + (evidence.suspicious_endpoints or []):
+            if isinstance(item, str):
+                haystack_parts.append(item.lower())
+        haystack = " ".join(haystack_parts)
+
+        if any(token in haystack for token in ["t.me/", "telegram.me", "telegram.org", "telegram"]):
+            hints.add("telegram")
+        if any(token in haystack for token in ["discord.gg", "discord.com", "discordapp.com", "discordapp.net", "discordapp.io"]):
+            hints.add("discord")
+        return hints
+
+    async def _detect_registrar_hint(self, evidence: ReportEvidence) -> tuple[Optional[str], Optional[str]]:
+        """Best-effort registrar lookup using cached analysis or RDAP."""
+        registrar = None
+        abuse_email = None
+        try:
+            registrar = (evidence.analysis_json or {}).get("registrar")
+            infra = (evidence.analysis_json or {}).get("infrastructure") or {}
+            registrar = registrar or infra.get("registrar")
+            abuse_email = infra.get("registrar_abuse_email")
+        except Exception:
+            pass
+
+        if not registrar and not abuse_email:
+            try:
+                from .rdap import lookup_registrar_via_rdap
+
+                lookup = await lookup_registrar_via_rdap(evidence.domain)
+                registrar = lookup.registrar_name
+                abuse_email = lookup.abuse_email
+            except Exception as e:
+                logger.debug(f"RDAP lookup failed for {evidence.domain}: {e}")
+
+        return self._normalize_hint(registrar), abuse_email
+
+    @staticmethod
+    def _registrar_platforms_for(registrar_name: Optional[str]) -> set[str]:
+        """Map registrar names to specific platform reporters."""
+        name = (registrar_name or "").lower()
+        if not name:
+            return set()
+        mapping = {
+            "godaddy": "godaddy",
+            "namecheap": "namecheap",
+            "porkbun": "porkbun",
+            "tucows": "tucows",
+            "hover": "tucows",
+            "google": "google_domains",
+        }
+        return {platform for needle, platform in mapping.items() if needle in name}
+
+    def _platform_applicable(
+        self,
+        platform: str,
+        reporter: BaseReporter,
+        evidence: ReportEvidence,
+        hosting_hints: set[str],
+        registrar_name: Optional[str],
+        registrar_matches: set[str],
+        service_hints: set[str],
+        registrar_abuse_email: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """Determine whether a reporter is relevant for the given evidence."""
+        is_applicable, reason = reporter.is_applicable(evidence)
+        if not is_applicable:
+            return False, reason
+
+        hosting_specific = {
+            "digitalocean",
+            "aws",
+            "gcp",
+            "azure",
+            "vercel",
+            "netlify",
+            "render",
+            "fly_io",
+            "railway",
+            "heroku",
+            "cloudflare",
+            "hosting_provider",
+        }
+        registrar_specific = {
+            "registrar",
+            "godaddy",
+            "namecheap",
+            "porkbun",
+            "google_domains",
+            "tucows",
+        }
+        service_specific = {"telegram", "discord"}
+
+        if platform in hosting_specific:
+            if platform == "hosting_provider":
+                return (is_applicable, reason or "No hosting provider identified")
+            if platform == "digitalocean":
+                if is_applicable or platform in hosting_hints:
+                    return True, ""
+                return False, "No DigitalOcean infrastructure detected"
+            return (platform in hosting_hints, f"Not hosted on {platform}")
+
+        if platform in registrar_specific:
+            has_registrar_signal = bool(registrar_name or registrar_abuse_email)
+            if platform == "registrar":
+                return (has_registrar_signal, "Registrar not identified")
+            return (platform in registrar_matches, f"Registrar not matched: {registrar_name or 'unknown'}")
+
+        if platform in service_specific:
+            return (platform in service_hints, f"No {platform} endpoints detected")
+
+        return True, ""
 
     async def get_manual_report_options(
         self,
@@ -590,14 +781,87 @@ class ReportManager:
         if not evidence:
             return {}
 
+        hosting_hints: set[str] = set()
+        service_hints: set[str] = set()
+        registrar_name: Optional[str] = None
+        registrar_abuse_email: Optional[str] = None
+        registrar_matches: set[str] = set()
+
+        hosting_specific = {
+            "digitalocean",
+            "aws",
+            "gcp",
+            "azure",
+            "vercel",
+            "netlify",
+            "render",
+            "fly_io",
+            "railway",
+            "heroku",
+            "cloudflare",
+            "hosting_provider",
+        }
+        registrar_specific = {
+            "registrar",
+            "godaddy",
+            "namecheap",
+            "porkbun",
+            "google_domains",
+            "tucows",
+        }
+        service_specific = {"telegram", "discord"}
+
+        if any(p in hosting_specific for p in platforms):
+            hosting_hints = self._collect_hosting_hints(evidence)
+        if any(p in registrar_specific for p in platforms):
+            registrar_name, registrar_abuse_email = await self._detect_registrar_hint(evidence)
+            registrar_matches = self._registrar_platforms_for(registrar_name)
+        if any(p in service_specific for p in platforms):
+            service_hints = self._collect_service_hints(evidence)
+
         results: dict[str, dict] = {}
         for platform in platforms:
             reporter = self.reporters.get(platform)
             if not reporter or not reporter.is_configured():
                 continue
+            applicable, reason = self._platform_applicable(
+                platform=platform,
+                reporter=reporter,
+                evidence=evidence,
+                hosting_hints=hosting_hints,
+                registrar_name=registrar_name,
+                registrar_matches=registrar_matches,
+                service_hints=service_hints,
+                registrar_abuse_email=registrar_abuse_email,
+            )
+            if not applicable:
+                logger.debug(f"Skipping {platform} for {domain}: {reason}")
+                continue
             try:
                 manual = reporter.generate_manual_submission(evidence)
-                results[platform] = manual.to_dict() if hasattr(manual, "to_dict") else dict(manual)
+                data = manual.to_dict() if hasattr(manual, "to_dict") else dict(manual)
+
+                # Add quick context so public users know why a platform is shown.
+                if isinstance(data, dict):
+                    notes = data.get("notes")
+                    if not isinstance(notes, list):
+                        notes = []
+                        data["notes"] = notes
+                    if platform in hosting_hints:
+                        context = f"Hosting detected: {platform.replace('_', ' ').title()}"
+                        if context not in notes:
+                            notes.insert(0, context)
+                    if platform in registrar_specific or platform == "registrar":
+                        if registrar_name:
+                            context = f"Registrar detected: {registrar_name.title()}"
+                            if context not in notes:
+                                notes.insert(0, context)
+                        elif registrar_abuse_email:
+                            context = f"Registrar abuse contact found: {registrar_abuse_email}"
+                            if context not in notes:
+                                notes.insert(0, context)
+
+                results[platform] = data
             except Exception as e:
                 results[platform] = {"error": str(e)}
         return results
