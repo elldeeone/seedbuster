@@ -15,8 +15,9 @@ import json
 import os
 import hashlib
 import secrets
+import ipaddress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlencode, urlparse
@@ -116,7 +117,7 @@ DANGEROUS_EXCLUDE_STATUSES = ["watchlist", "false_positive", "allowlisted"]
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
     # Build navigation links
-    clusters_href = "/admin/clusters" if admin else "/campaigns"
+    clusters_href = "/admin/clusters" if admin else "/clusters"
     nav_items = [f'<a class="nav-link" href="{clusters_href}">Threat Campaigns</a>']
     if admin:
         nav_items.append('<a class="nav-link" href="/">Public View</a>')
@@ -4205,6 +4206,7 @@ class DashboardServer:
         mark_manual_done_callback: Callable[[int, str, Optional[list[str]], str], object] | None = None,
         get_available_platforms: Callable[[], list[str]] | None = None,
         get_platform_info: Callable[[], dict[str, dict]] | None = None,
+        get_manual_report_options: Callable[[int, str, Optional[list[str]]], object] | None = None,
         # New callbacks for enhanced reporting
         generate_domain_pdf_callback: Callable[[str, int | None], Path | None] | None = None,
         generate_domain_package_callback: Callable[[str, int | None], Path | None] | None = None,
@@ -4231,6 +4233,7 @@ class DashboardServer:
         self.mark_manual_done_callback = mark_manual_done_callback
         self.get_available_platforms = get_available_platforms or (lambda: [])
         self.get_platform_info = get_platform_info or (lambda: {})
+        self.get_manual_report_options = get_manual_report_options
         # New callbacks
         self.generate_domain_pdf_callback = generate_domain_pdf_callback
         self.generate_domain_package_callback = generate_domain_package_callback
@@ -4242,6 +4245,8 @@ class DashboardServer:
 
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        # Simple per-IP rate limiter for public submission endpoint
+        self._public_rate_limits: dict[str, list[float]] = {}
 
         self._app = web.Application(middlewares=[self._admin_auth_middleware])
         self._register_routes()
@@ -4279,6 +4284,53 @@ class DashboardServer:
         host = self._normalize_domain_key(domain)
         registered = self._registered_domain(domain)
         return (host in self._allowlist) or (registered in self._allowlist)
+
+    def _client_ip(self, request: web.Request) -> str:
+        """Best-effort client IP extraction (supports X-Forwarded-For)."""
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        # aiohttp's request.remote may include port, so strip it for rate limiting
+        remote = (request.remote or "").split(":")[0]
+        return remote or "unknown"
+
+    def _session_hash(self, request: web.Request) -> str:
+        """Generate a stable, non-PII session hash for deduping."""
+        raw = f"{self._client_ip(request)}:{request.headers.get('User-Agent', 'unknown')}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+    def _is_disallowed_public_host(self, host: str) -> bool:
+        """Block localhost/private/internal submissions."""
+        candidate = (host or "").strip().lower().strip("[]")
+        # Handle simple host:port pattern
+        host_only = candidate.split(":", 1)[0] if ":" in candidate and candidate.count(":") == 1 else candidate
+        try:
+            ip_obj = ipaddress.ip_address(host_only)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_reserved or ip_obj.is_link_local or ip_obj.is_multicast:
+                return True
+        except ValueError:
+            pass
+
+        if host_only in {"localhost", "local", "localhost.localdomain"}:
+            return True
+        if host_only.endswith((".local", ".internal", ".localhost")):
+            return True
+        return False
+
+    def _rate_limit_allowed(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        """
+        Simple sliding-window rate limiter keyed by arbitrary string (e.g., IP).
+        Returns True when within limit.
+        """
+        now = datetime.utcnow().timestamp()
+        window_start = now - float(window_seconds)
+        entries = [t for t in self._public_rate_limits.get(key, []) if t >= window_start]
+        if len(entries) >= limit:
+            self._public_rate_limits[key] = entries
+            return False
+        entries.append(now)
+        self._public_rate_limits[key] = entries
+        return True
 
     async def _filter_clusters(self, clusters: list[dict]) -> list[dict]:
         """Hide campaigns whose members are all allowlisted/watchlist/false positive."""
@@ -4496,6 +4548,9 @@ class DashboardServer:
         self._app.router.add_get("/api/clusters/{cluster_id}", self._admin_api_cluster)
         self._app.router.add_get("/api/domains/{domain_id}", self._admin_api_domain)
         self._app.router.add_get("/api/platforms", self._admin_api_platforms)
+        self._app.router.add_post("/api/public/submit", self._public_api_submit)
+        self._app.router.add_get("/api/domains/{domain_id}/report-options", self._public_api_report_options)
+        self._app.router.add_post("/api/domains/{domain_id}/report-engagement", self._public_api_report_engagement)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -4522,6 +4577,10 @@ class DashboardServer:
         self._app.router.add_patch("/admin/api/domains/{domain_id}/notes", self._admin_api_update_notes)
         self._app.router.add_patch("/admin/api/clusters/{cluster_id}/name", self._admin_api_update_cluster_name)
         self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
+        self._app.router.add_get("/admin/api/submissions", self._admin_api_submissions)
+        self._app.router.add_get("/admin/api/submissions/{submission_id}", self._admin_api_submission)
+        self._app.router.add_post("/admin/api/submissions/{submission_id}/approve", self._admin_api_approve_submission)
+        self._app.router.add_post("/admin/api/submissions/{submission_id}/reject", self._admin_api_reject_submission)
         
         self._app.router.add_get("/admin/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
@@ -5369,6 +5428,7 @@ class DashboardServer:
     async def _admin_api_stats(self, request: web.Request) -> web.Response:
         stats = await self.database.get_stats()
         stats["evidence_bytes"] = self._compute_evidence_bytes()
+        stats["public_submissions_pending"] = await self.database.count_public_submissions(status="pending_review")
         pending_reports = await self.database.get_pending_reports()
         health_status = await self._fetch_health_status()
         return web.json_response(
@@ -5520,6 +5580,302 @@ class DashboardServer:
         platforms = self.get_available_platforms()
         info = self.get_platform_info()
         return web.json_response({"platforms": platforms, "info": info})
+
+    # -------------------------------------------------------------------------
+    # Public submission + reporting APIs
+    # -------------------------------------------------------------------------
+
+    async def _public_api_submit(self, request: web.Request) -> web.Response:
+        """Public endpoint to submit a suspicious domain for review."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON payload"}, status=400)
+
+        # Honeypot to catch bots
+        honeypot = (data.get("hp") or data.get("honeypot") or "").strip()
+        if honeypot:
+            return web.json_response({"status": "submitted", "message": "Thank you"})
+
+        target = (data.get("domain") or data.get("target") or "").strip()
+        if not target:
+            return web.json_response({"error": "domain is required"}, status=400)
+
+        domain = _extract_hostname(target)
+        canonical = canonicalize_domain(domain)
+        if not canonical:
+            return web.json_response({"error": "Invalid domain/URL"}, status=400)
+
+        if self._is_disallowed_public_host(canonical):
+            return web.json_response({"error": "Local/private hosts are not allowed"}, status=400)
+
+        client_ip = self._client_ip(request)
+        if not self._rate_limit_allowed(client_ip, limit=10, window_seconds=3600):
+            return web.json_response(
+                {"error": "Too many submissions. Please try again later."},
+                status=429,
+            )
+
+        source_url = str(data.get("source_url") or "").strip() or None
+        reporter_notes = (data.get("notes") or "").strip()
+        if reporter_notes and len(reporter_notes) > 1000:
+            reporter_notes = reporter_notes[:1000]
+
+        submission_id, duplicate = await self.database.add_public_submission(
+            domain=canonical,
+            canonical_domain=canonical,
+            source_url=source_url,
+            reporter_notes=reporter_notes or None,
+        )
+
+        message = (
+            "Thank you for your submission. It will be reviewed by our team."
+            if not duplicate
+            else "This domain was already submitted. We've updated the count."
+        )
+
+        return web.json_response(
+            {
+                "status": "submitted",
+                "domain": canonical,
+                "submission_id": submission_id,
+                "duplicate": duplicate,
+                "message": message,
+            }
+        )
+
+    async def _public_api_report_options(self, request: web.Request) -> web.Response:
+        """Return manual report options + counters for a domain."""
+        domain_id = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        domain = await self.database.get_domain_by_id(domain_id)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        platforms = self.get_available_platforms()
+        platform_info = self.get_platform_info()
+        if not platforms:
+            return web.json_response({"error": "No reporting platforms configured"}, status=503)
+
+        manual_data: dict[str, dict] = {}
+        if self.get_manual_report_options:
+            try:
+                manual_data = await self.get_manual_report_options(domain_id, domain.get("domain", ""), platforms)
+            except Exception as e:
+                raise web.HTTPServiceUnavailable(text=f"Manual instructions unavailable: {e}")
+        else:
+            raise web.HTTPServiceUnavailable(text="Manual instructions not configured")
+
+        engagement_counts = await self.database.get_report_engagement_counts(domain_id)
+        total_engagements = await self.database.get_report_engagement_total(domain_id)
+
+        entries = []
+        for platform in platforms:
+            info = platform_info.get(platform, {}) if isinstance(platform_info, dict) else {}
+            raw_instruction = manual_data.get(platform)
+            instructions = None
+            error = None
+            if isinstance(raw_instruction, dict):
+                if set(raw_instruction.keys()) == {"error"}:
+                    error = str(raw_instruction.get("error"))
+                else:
+                    instructions = raw_instruction
+            entries.append(
+                {
+                    "id": platform,
+                    "name": info.get("name") or platform,
+                    "manual_only": True,
+                    "url": info.get("url", ""),
+                    "engagement_count": engagement_counts.get(platform, 0),
+                    "instructions": instructions,
+                    "error": error,
+                }
+            )
+
+        return web.json_response(
+            {
+                "domain": domain.get("domain"),
+                "domain_id": domain_id,
+                "platforms": entries,
+                "total_engagements": total_engagements,
+            }
+        )
+
+    async def _public_api_report_engagement(self, request: web.Request) -> web.Response:
+        """Record a public report click/engagement with cooldown."""
+        domain_id = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        domain = await self.database.get_domain_by_id(domain_id)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON payload"}, status=400)
+
+        platform = (data.get("platform") or "").strip().lower()
+        if not platform:
+            return web.json_response({"error": "platform is required"}, status=400)
+
+        available_platforms = {p.strip().lower() for p in self.get_available_platforms()}
+        if platform not in available_platforms:
+            return web.json_response({"error": "Unknown platform"}, status=400)
+
+        session_hash = self._session_hash(request)
+        count, cooldown = await self.database.record_report_engagement(
+            domain_id=domain_id,
+            platform=platform,
+            session_hash=session_hash,
+            cooldown_hours=24,
+        )
+
+        return web.json_response(
+            {
+                "status": "cooldown" if cooldown else "recorded",
+                "platform": platform,
+                "new_count": count,
+                "message": "You've already reported recently." if cooldown else "Thank you for reporting!",
+            }
+        )
+
+    # -------------------------------------------------------------------------
+    # Admin submission review APIs
+    # -------------------------------------------------------------------------
+
+    async def _admin_api_submissions(self, request: web.Request) -> web.Response:
+        status = (request.query.get("status") or "pending_review").strip() or None
+        limit = _coerce_int(request.query.get("limit"), default=100, min_value=1, max_value=500)
+        page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
+        offset = (page - 1) * limit
+
+        submissions = await self.database.get_public_submissions(status=status, limit=limit, offset=offset)
+        total = await self.database.count_public_submissions(status=status)
+        total_pending = await self.database.count_public_submissions(status="pending_review")
+
+        return web.json_response(
+            {
+                "submissions": submissions,
+                "page": page,
+                "limit": limit,
+                "count": len(submissions),
+                "total": total,
+                "total_pending": total_pending,
+            }
+        )
+
+    async def _admin_api_submission(self, request: web.Request) -> web.Response:
+        submission_id = _coerce_int(request.match_info.get("submission_id"), default=0, min_value=1)
+        if not submission_id:
+            raise web.HTTPBadRequest(text="submission_id required")
+        submission = await self.database.get_public_submission(submission_id)
+        if not submission:
+            raise web.HTTPNotFound(text="Submission not found")
+        return web.json_response({"submission": submission})
+
+    async def _admin_api_approve_submission(self, request: web.Request) -> web.Response:
+        submission_id = _coerce_int(request.match_info.get("submission_id"), default=0, min_value=1)
+        if not submission_id:
+            raise web.HTTPBadRequest(text="submission_id required")
+
+        submission = await self.database.get_public_submission(submission_id)
+        if not submission:
+            raise web.HTTPNotFound(text="Submission not found")
+
+        if str(submission.get("status") or "").strip().lower() != "pending_review":
+            return web.json_response({"error": "Submission already reviewed"}, status=400)
+
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        reviewer_notes = (data.get("notes") or "").strip()
+        if reviewer_notes and len(reviewer_notes) > 1000:
+            reviewer_notes = reviewer_notes[:1000]
+
+        domain_value = (submission.get("canonical_domain") or submission.get("domain") or "").strip()
+        canonical = canonicalize_domain(domain_value)
+        if not canonical:
+            return web.json_response({"error": "Invalid domain"}, status=400)
+
+        existing = await self.database.get_domain_by_canonical(canonical)
+        if existing:
+            await self.database.update_public_submission_status(
+                submission_id=submission_id,
+                status="duplicate",
+                reviewer_notes=reviewer_notes or "Already tracked",
+                promoted_domain_id=int(existing.get("id") or 0),
+            )
+            return web.json_response(
+                {
+                    "status": "duplicate",
+                    "domain": existing.get("domain"),
+                    "domain_id": existing.get("id"),
+                }
+            )
+
+        # Create domain and queue for analysis
+        domain_id = await self.database.add_domain(
+            domain=canonical,
+            source="public_submission",
+            domain_score=0,
+        )
+
+        if not domain_id:
+            existing = await self.database.get_domain_by_canonical(canonical)
+            domain_id = int(existing.get("id") or 0) if existing else 0
+
+        if not domain_id:
+            return web.json_response({"error": "Failed to create domain"}, status=500)
+
+        if not self.submit_callback:
+            raise web.HTTPServiceUnavailable(text="Submit callback not configured")
+
+        self.submit_callback(canonical)
+        await self.database.update_public_submission_status(
+            submission_id=submission_id,
+            status="approved",
+            reviewer_notes=reviewer_notes or None,
+            promoted_domain_id=domain_id,
+        )
+
+        return web.json_response(
+            {"status": "approved", "domain": canonical, "domain_id": domain_id}
+        )
+
+    async def _admin_api_reject_submission(self, request: web.Request) -> web.Response:
+        submission_id = _coerce_int(request.match_info.get("submission_id"), default=0, min_value=1)
+        if not submission_id:
+            raise web.HTTPBadRequest(text="submission_id required")
+
+        submission = await self.database.get_public_submission(submission_id)
+        if not submission:
+            raise web.HTTPNotFound(text="Submission not found")
+
+        if str(submission.get("status") or "").strip().lower() != "pending_review":
+            return web.json_response({"error": "Submission already reviewed"}, status=400)
+
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+        reason = (data.get("reason") or "rejected").strip().lower()
+        notes = (data.get("notes") or "").strip()
+        if notes and len(notes) > 1000:
+            notes = notes[:1000]
+
+        await self.database.update_public_submission_status(
+            submission_id=submission_id,
+            status=reason or "rejected",
+            reviewer_notes=notes or None,
+            promoted_domain_id=None,
+        )
+        return web.json_response({"status": "rejected", "reason": reason})
 
     async def _admin_api_false_positive(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)

@@ -194,6 +194,7 @@ async def run_dashboard() -> None:
         mark_manual_done_callback=manual_done_callback,
         get_available_platforms=report_manager.get_available_platforms,
         get_platform_info=report_manager.get_platform_info,
+        get_manual_report_options=report_manager.get_manual_report_options,
         # New callbacks for enhanced reporting
         generate_domain_pdf_callback=generate_domain_pdf_callback,
         generate_domain_package_callback=generate_domain_package_callback,

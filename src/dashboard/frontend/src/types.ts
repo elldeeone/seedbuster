@@ -2,6 +2,7 @@ export interface Stats {
   total: number;
   last_24h: number;
   evidence_bytes?: number;
+  public_submissions_pending?: number;
   by_status: Record<string, number>;
   by_verdict: Record<string, number>;
   reports?: Record<string, number>;
@@ -35,6 +36,9 @@ export interface Domain {
   created_at?: string;
   updated_at?: string;
   last_checked_at?: string;
+  takedown_status?: string | null;
+  takedown_detected_at?: string | null;
+  takedown_confirmed_at?: string | null;
   action_required?: string | null;
   operator_notes?: string | null;
   verdict_reasons?: string | null;
@@ -75,6 +79,52 @@ export interface DomainDetailResponse {
   related_domains?: Domain[];
   cluster?: Cluster | null;
   instruction_files?: string[];
+}
+
+export interface ManualSubmissionField {
+  name: string;
+  label: string;
+  value: string;
+  multiline?: boolean;
+}
+
+export interface ManualSubmissionData {
+  form_url: string;
+  reason: string;
+  fields: ManualSubmissionField[];
+  notes?: string[];
+}
+
+export interface ReportPlatformOption {
+  id: string;
+  name: string;
+  manual_only: boolean;
+  url?: string;
+  engagement_count: number;
+  instructions?: ManualSubmissionData;
+  error?: string;
+}
+
+export interface ReportOptionsResponse {
+  domain: string;
+  domain_id: number;
+  platforms: ReportPlatformOption[];
+  total_engagements: number;
+}
+
+export interface PublicSubmission {
+  id: number;
+  domain: string;
+  canonical_domain: string;
+  source_url?: string | null;
+  reporter_notes?: string | null;
+  submission_count?: number;
+  first_submitted_at?: string;
+  last_submitted_at?: string;
+  status: string;
+  reviewed_at?: string | null;
+  reviewer_notes?: string | null;
+  promoted_domain_id?: number | null;
 }
 
 export interface ClusterMember {

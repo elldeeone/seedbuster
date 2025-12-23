@@ -8,18 +8,32 @@ import {
   fetchDomainDetail,
   fetchDomains,
   fetchPlatformInfo,
+  fetchPublicSubmissions,
   fetchStats,
   isAdminMode,
   markFalsePositive,
+  approvePublicSubmission,
+  rejectPublicSubmission,
+  recordReportEngagement,
   reportDomain,
   rescanDomain,
+  submitPublicTarget,
   submitTarget,
   updateDomainStatus,
   updateOperatorNotes,
   updateClusterName,
+  fetchReportOptions,
 } from "./api";
 import type { PlatformInfo } from "./api";
-import type { Cluster, Domain, DomainDetailResponse, PendingReport, Stats } from "./types";
+import type {
+  Cluster,
+  Domain,
+  DomainDetailResponse,
+  PendingReport,
+  PublicSubmission,
+  ReportOptionsResponse,
+  Stats,
+} from "./types";
 
 type Route =
   | { name: "dashboard" }
@@ -39,7 +53,6 @@ const parseHash = (): Route => {
   const hashParts = rawHash.split("/").filter(Boolean);
   const pathParts = window.location.pathname.split("/").filter(Boolean);
   const parts = hashParts.length ? hashParts : pathParts;
-  const admin = isAdminMode();
 
   if (parts[0] === "domains" && parts[1]) {
     const id = Number(parts[1]);
@@ -605,7 +618,7 @@ export default function App() {
   const [submitValue, setSubmitValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitResult, setSubmitResult] = useState<{ status: string; domain: string } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ status: string; domain: string; duplicate?: boolean; message?: string } | null>(null);
   const [cleanupDays, setCleanupDays] = useState(30);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<string | null>(null);
@@ -639,6 +652,19 @@ export default function App() {
 
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Public submissions (admin only)
+  const [publicSubmissions, setPublicSubmissions] = useState<PublicSubmission[]>([]);
+  const [publicSubmissionsLoading, setPublicSubmissionsLoading] = useState(false);
+  const [publicSubmissionsError, setPublicSubmissionsError] = useState<string | null>(null);
+  const [submissionActionBusy, setSubmissionActionBusy] = useState<Record<number, string | null>>({});
+
+  // Public report options (public mode)
+  const [reportOptions, setReportOptions] = useState<ReportOptionsResponse | null>(null);
+  const [reportOptionsLoading, setReportOptionsLoading] = useState(false);
+  const [reportOptionsError, setReportOptionsError] = useState<string | null>(null);
+  const [reportEngagementBusy, setReportEngagementBusy] = useState<Record<string, boolean>>({});
+  const [openReportPlatforms, setOpenReportPlatforms] = useState<Set<string>>(new Set());
 
   // Detect admin mode for conditional rendering
   const isAdmin = isAdminMode();
@@ -736,6 +762,35 @@ export default function App() {
     }
   }, []);
 
+  const loadPublicSubmissions = useCallback(async () => {
+    if (!canEdit) return;
+    setPublicSubmissionsLoading(true);
+    setPublicSubmissionsError(null);
+    try {
+      const res = await fetchPublicSubmissions("pending_review", 1, 200);
+      setPublicSubmissions(res.submissions || []);
+    } catch (err) {
+      setPublicSubmissionsError((err as Error).message || "Failed to load submissions");
+    } finally {
+      setPublicSubmissionsLoading(false);
+    }
+  }, [canEdit]);
+
+  const loadReportOptions = useCallback(async (domainId: number) => {
+    if (canEdit) return;
+    setReportOptionsLoading(true);
+    setReportOptionsError(null);
+    try {
+      const res = await fetchReportOptions(domainId);
+      setReportOptions(res);
+    } catch (err) {
+      setReportOptions(null);
+      setReportOptionsError((err as Error).message || "Failed to load report options");
+    } finally {
+      setReportOptionsLoading(false);
+    }
+  }, [canEdit]);
+
   useEffect(() => {
     loadStats();
     const id = setInterval(loadStats, 30000);
@@ -745,6 +800,14 @@ export default function App() {
   useEffect(() => {
     loadDomains();
   }, [loadDomains]);
+
+  useEffect(() => {
+    if (canEdit) {
+      loadPublicSubmissions();
+    } else {
+      setPublicSubmissions([]);
+    }
+  }, [canEdit, loadPublicSubmissions]);
 
   useEffect(() => {
     if (route.name === "domain") {
@@ -760,10 +823,19 @@ export default function App() {
     }
   }, [route, loadDomainDetail, loadClusters, loadClusterDetail]);
 
+  useEffect(() => {
+    if (!canEdit && domainDetail?.domain.id) {
+      loadReportOptions(domainDetail.domain.id);
+    } else {
+      setReportOptions(null);
+      setReportOptionsError(null);
+    }
+  }, [canEdit, domainDetail?.domain.id, loadReportOptions]);
+
   const handleSubmit = async (e: FormEvent | MouseEvent, mode: "submit" | "rescan" = "submit") => {
     e.preventDefault();
-    if (!canEdit) {
-      showToast("Read-only mode: submissions are disabled.", "info");
+    if (mode === "rescan" && !canEdit) {
+      showToast("Rescan is only available to admins.", "info");
       return;
     }
     setSubmitError(null);
@@ -774,23 +846,57 @@ export default function App() {
     }
     setSubmitting(true);
     try {
-      const res = await submitTarget(submitValue.trim());
-      const message =
-        res.status === "rescan_queued"
-          ? `Rescan queued for ${res.domain}`
-          : `Submitted ${res.domain}`;
-      showToast(message, "success");
-      setSubmitResult(res);
-      if (mode === "submit") {
+      if (canEdit) {
+        const res = await submitTarget(submitValue.trim());
+        const message =
+          res.status === "rescan_queued"
+            ? `Rescan queued for ${res.domain}`
+            : `Submitted ${res.domain}`;
+        showToast(message, "success");
+        setSubmitResult(res);
+        if (mode === "submit") {
+          setSubmitValue("");
+        }
+        loadDomains();
+      } else {
+        const res = await submitPublicTarget(submitValue.trim());
+        const message = res.message || (res.duplicate ? "Already submitted by someone else" : "Submitted for review");
+        showToast(message, res.duplicate ? "info" : "success");
+        setSubmitResult(res);
         setSubmitValue("");
       }
-      loadDomains();
     } catch (err) {
       const msg = (err as Error).message || "Submit failed";
       setSubmitError(msg);
       showToast(msg, "error");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSubmissionAction = async (submissionId: number, action: "approve" | "reject") => {
+    if (!canEdit) return;
+    setSubmissionActionBusy((prev) => ({ ...prev, [submissionId]: action }));
+    try {
+      if (action === "approve") {
+        await approvePublicSubmission(submissionId);
+        showToast("Submission approved and queued", "success");
+      } else {
+        const reasonInput = window.prompt("Reason for rejection? (legitimate_site / insufficient_info / already_tracked / other)", "legitimate_site");
+        if (reasonInput === null) {
+          setSubmissionActionBusy((prev) => ({ ...prev, [submissionId]: null }));
+          return;
+        }
+        const notesInput = window.prompt("Notes (optional)", "") || undefined;
+        await rejectPublicSubmission(submissionId, reasonInput || "rejected", notesInput);
+        showToast("Submission rejected", "info");
+      }
+      setPublicSubmissions((prev) => prev.filter((s) => s.id !== submissionId));
+      loadStats();
+    } catch (err) {
+      showToast((err as Error).message || "Failed to process submission", "error");
+    } finally {
+      setSubmissionActionBusy((prev) => ({ ...prev, [submissionId]: null }));
     }
   };
 
@@ -817,6 +923,45 @@ export default function App() {
       showToast(msg, "error");
     } finally {
       setCleanupBusy(false);
+    }
+  };
+
+  const toggleReportPlatform = (platformId: string) => {
+    setOpenReportPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(platformId)) next.delete(platformId);
+      else next.add(platformId);
+      return next;
+    });
+  };
+
+  const handleReportEngagement = async (platformId: string) => {
+    if (!domainDetail?.domain.id) return;
+    setReportEngagementBusy((prev) => ({ ...prev, [platformId]: true }));
+    try {
+      const res = await recordReportEngagement(domainDetail.domain.id, platformId);
+      setReportOptions((prev) => {
+        if (!prev) return prev;
+        const nextPlatforms = prev.platforms.map((p) =>
+          p.id === platformId ? { ...p, engagement_count: res.new_count } : p
+        );
+        const nextTotal = nextPlatforms.reduce((sum, p) => sum + (p.engagement_count || 0), 0);
+        return { ...prev, platforms: nextPlatforms, total_engagements: nextTotal };
+      });
+      showToast(res.message || (res.status === "cooldown" ? "You've already reported recently." : "Thanks for reporting!"), res.status === "cooldown" ? "info" : "success");
+    } catch (err) {
+      showToast((err as Error).message || "Failed to record engagement", "error");
+    } finally {
+      setReportEngagementBusy((prev) => ({ ...prev, [platformId]: false }));
+    }
+  };
+
+  const copyValue = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast("Copied to clipboard", "success");
+    } catch (err) {
+      showToast("Copy failed", "error");
     }
   };
 
@@ -1023,15 +1168,22 @@ export default function App() {
     return (
       <>
         <div className="sb-grid" style={{ marginBottom: 12 }}>
-          <div className="col-4">
+          <div className="col-3">
             <div className="sb-stat">
               <div className="sb-stat-label">Total Domains</div>
               <div className="sb-stat-value">{stats.total}</div>
               <div className="sb-stat-meta">Last 24h: <b>{stats.last_24h}</b></div>
             </div>
           </div>
-          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">By Verdict</div><Breakdown items={stats.by_verdict || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, verdict: key === "all" ? "" : key, page: 1 }))} /></div></div>
-          <div className="col-4"><div className="sb-stat"><div className="sb-stat-label">Reports</div><Breakdown items={stats.reports || {}} /></div></div>
+          <div className="col-3"><div className="sb-stat"><div className="sb-stat-label">By Verdict</div><Breakdown items={stats.by_verdict || {}} onSelect={(key) => setFilters((prev) => ({ ...prev, verdict: key === "all" ? "" : key, page: 1 }))} /></div></div>
+          <div className="col-3"><div className="sb-stat"><div className="sb-stat-label">Reports</div><Breakdown items={stats.reports || {}} /></div></div>
+          <div className="col-3">
+            <div className="sb-stat">
+              <div className="sb-stat-label">Public Submissions</div>
+              <div className="sb-stat-value">{stats.public_submissions_pending ?? 0}</div>
+              <div className="sb-stat-meta">Pending review</div>
+            </div>
+          </div>
         </div>
         <div className="sb-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 12 }}>{refreshed}</div>
       </>
@@ -1045,26 +1197,105 @@ export default function App() {
       {statsBlocks}
 
       {/* Manual Submission - admin only */}
-      {canEdit && (
-        <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
-          <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
-            <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Manual Submission</span>
-          </div>
-          <form onSubmit={(e) => handleSubmit(e, "submit")}>
-            <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
-              <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+      <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
+        <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
+          <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>
+            {canEdit ? "Manual Submission" : "Report a Suspicious Site"}
+          </span>
+          {canEdit && (stats?.public_submissions_pending ?? 0) > 0 && (
+            <span className="sb-badge sb-badge-pending">Pending: {stats?.public_submissions_pending}</span>
+          )}
+        </div>
+        <form onSubmit={(e) => handleSubmit(e, "submit")}>
+          <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <input className="sb-input" placeholder="example.com or https://target" value={submitValue} onChange={(e) => setSubmitValue(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+            {canEdit && (
               <button className="sb-btn" type="button" disabled={submitting} onClick={(e) => handleSubmit(e, "rescan")}>
                 {submitting ? "Working…" : "Force Rescan"}
               </button>
-              <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>{submitting ? "Submitting…" : "Submit New"}</button>
-            </div>
-            {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
-            {submitResult && (
-              <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
-                {submitResult.status === "rescan_queued" ? "Rescan queued" : "Submitted"} for <b>{submitResult.domain}</b>
-              </div>
             )}
-          </form>
+            <button className="sb-btn sb-btn-primary" type="submit" disabled={submitting}>
+              {submitting ? "Submitting…" : canEdit ? "Submit New" : "Submit for Review"}
+            </button>
+          </div>
+          {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
+          {submitResult && (
+            <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
+              {(submitResult.message || (submitResult.status === "rescan_queued" ? "Rescan queued" : submitResult.duplicate ? "Already submitted" : "Submitted"))}
+              {" for "}
+              <b>{submitResult.domain}</b>
+            </div>
+          )}
+          {!canEdit && <div className="sb-muted" style={{ marginTop: 8 }}>Submissions are reviewed before scanning (no automatic actions).</div>}
+        </form>
+      </div>
+
+      {canEdit && (
+        <div className="sb-panel" style={{ borderColor: "rgba(255, 214, 102, 0.4)", marginBottom: 16 }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(255, 214, 102, 0.3)" }}>
+            <span className="sb-panel-title" style={{ color: "var(--accent-orange)" }}>
+              Public Submissions ({publicSubmissions.length})
+            </span>
+            <div className="sb-row" style={{ gap: 8 }}>
+              <button className="sb-btn" onClick={loadPublicSubmissions} disabled={publicSubmissionsLoading}>
+                {publicSubmissionsLoading ? "Loading…" : "Refresh"}
+              </button>
+            </div>
+          </div>
+          {publicSubmissionsError && (
+            <div className="sb-notice" style={{ color: "var(--accent-red)", marginBottom: 8 }}>{publicSubmissionsError}</div>
+          )}
+          {publicSubmissionsLoading && <div className="skeleton" style={{ height: 12 }} />}
+          {!publicSubmissionsLoading && publicSubmissions.length === 0 && (
+            <div className="sb-muted">No pending submissions.</div>
+          )}
+          {!publicSubmissionsLoading && publicSubmissions.length > 0 && (
+            <div className="sb-table-wrap">
+              <table className="sb-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Count</th>
+                    <th>Submitted</th>
+                    <th>Source</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {publicSubmissions.map((s) => {
+                    const busy = submissionActionBusy[s.id] || null;
+                    return (
+                      <tr key={s.id}>
+                        <td><code className="sb-code">{s.domain}</code></td>
+                        <td>{s.submission_count ?? 1}</td>
+                        <td>
+                          <div className="sb-muted" style={{ fontSize: 12 }}>First: {timeAgo(s.first_submitted_at)}</div>
+                          <div className="sb-muted" style={{ fontSize: 12 }}>Last: {timeAgo(s.last_submitted_at)}</div>
+                        </td>
+                        <td>
+                          {s.source_url ? <a href={s.source_url} target="_blank" rel="noreferrer">Link</a> : <span className="sb-muted">—</span>}
+                        </td>
+                        <td style={{ maxWidth: 240 }}>
+                          {s.reporter_notes ? <div style={{ whiteSpace: "pre-wrap" }}>{s.reporter_notes}</div> : <span className="sb-muted">—</span>}
+                        </td>
+                        <td>
+                          <div className="sb-row" style={{ gap: 6, flexWrap: "wrap" }}>
+                            <button className="sb-btn sb-btn-primary" disabled={!!busy} onClick={() => handleSubmissionAction(s.id, "approve")}>
+                              {busy === "approve" ? "Approving…" : "Approve"}
+                            </button>
+                            <button className="sb-btn sb-btn-danger" disabled={!!busy} onClick={() => handleSubmissionAction(s.id, "reject")}>
+                              {busy === "reject" ? "Rejecting…" : "Reject"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -1402,6 +1633,19 @@ export default function App() {
                   <span className="sb-muted">ID: {domainDetail.domain.id ?? "N/A"}</span>
                   {domainDetail.domain.last_checked_at && <span className="sb-muted">Last checked {timeAgo(domainDetail.domain.last_checked_at)}</span>}
                 </div>
+                {(((domainDetail.domain.takedown_status || "") as string).toLowerCase() !== "active") || domainDetail.domain.takedown_detected_at ? (
+                  <div className="sb-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                    <span className={badgeClass(domainDetail.domain.takedown_status, "status")}>
+                      TAKEDOWN: {(domainDetail.domain.takedown_status || "active").toUpperCase()}
+                    </span>
+                    {domainDetail.domain.takedown_detected_at && (
+                      <span className="sb-muted">Detected {timeAgo(domainDetail.domain.takedown_detected_at)}</span>
+                    )}
+                    {domainDetail.domain.takedown_confirmed_at && (
+                      <span className="sb-muted">Confirmed {timeAgo(domainDetail.domain.takedown_confirmed_at)}</span>
+                    )}
+                  </div>
+                ) : null}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-end" }}>
                 {/* Primary action buttons */}
@@ -1553,6 +1797,85 @@ export default function App() {
             </div>
           </div>
 
+          {!canEdit && (
+            <div className="sb-panel" style={{ marginTop: 8 }}>
+              <div className="sb-panel-header">
+                <span className="sb-panel-title">Help Take Down This Scam</span>
+                <span className="sb-muted">Community reports: {reportOptions?.total_engagements ?? 0}</span>
+              </div>
+              {reportOptionsLoading && <div className="skeleton" style={{ height: 14, marginBottom: 8 }} />}
+              {reportOptionsError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginBottom: 8 }}>{reportOptionsError}</div>}
+              {!reportOptionsLoading && !reportOptions && !reportOptionsError && (
+                <div className="sb-muted">Reporting options will appear once this domain loads.</div>
+              )}
+              {reportOptions && reportOptions.platforms.map((opt) => {
+                const open = openReportPlatforms.has(opt.id);
+                return (
+                  <div key={opt.id} className="sb-card" style={{ border: "1px solid var(--border-subtle)", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                    <div className="sb-row sb-space-between" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div>
+                        <div className="sb-label" style={{ fontSize: 14 }}>{opt.name}</div>
+                        <div className="sb-muted" style={{ fontSize: 12 }}>{opt.engagement_count} reported</div>
+                      </div>
+                      <div className="sb-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <button className="sb-btn" type="button" onClick={() => toggleReportPlatform(opt.id)}>
+                          {open ? "Hide Instructions" : "View Instructions"}
+                        </button>
+                        <button
+                          className="sb-btn sb-btn-primary"
+                          type="button"
+                          disabled={reportEngagementBusy[opt.id]}
+                          onClick={() => handleReportEngagement(opt.id)}
+                        >
+                          {reportEngagementBusy[opt.id] ? "Recording…" : "I Reported This"}
+                        </button>
+                      </div>
+                    </div>
+                    {open && (
+                      <div style={{ marginTop: 12 }}>
+                        <div className="sb-muted" style={{ marginBottom: 8 }}>
+                          {opt.instructions?.reason || "Manual submission"}
+                        </div>
+                        <div style={{ marginBottom: 8 }}>
+                          <div className="sb-label">Report URL</div>
+                          {opt.instructions?.form_url ? (
+                            <a href={opt.instructions.form_url} target="_blank" rel="noreferrer">{opt.instructions.form_url}</a>
+                          ) : (
+                            <span className="sb-muted">No form URL provided</span>
+                          )}
+                        </div>
+                        {opt.instructions?.fields?.map((field) => (
+                          <div key={field.name} style={{ marginBottom: 10 }}>
+                            <div className="sb-label">{field.label}</div>
+                            <div className="sb-row" style={{ gap: 8 }}>
+                              <textarea
+                                className="sb-input"
+                                value={field.value}
+                                readOnly
+                                rows={field.multiline ? 3 : 1}
+                                style={{ width: "100%", resize: "vertical" }}
+                              />
+                              <button className="sb-btn" type="button" onClick={() => copyValue(field.value)}>Copy</button>
+                            </div>
+                          </div>
+                        ))}
+                        {opt.instructions?.notes && opt.instructions.notes.length > 0 && (
+                          <ul className="sb-muted" style={{ paddingLeft: 18, marginTop: 8 }}>
+                            {opt.instructions.notes.map((n, idx) => <li key={idx}>{n}</li>)}
+                          </ul>
+                        )}
+                        {!opt.instructions && opt.error && (
+                          <div className="sb-notice" style={{ color: "var(--accent-red)" }}>{opt.error}</div>
+                        )}
+                        {!opt.instructions && !opt.error && <div className="sb-muted">Instructions not available for this platform.</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <EvidenceSection data={domainDetail} />
           <ReportsTable data={domainDetail} />
 
@@ -1645,7 +1968,7 @@ export default function App() {
         </div>
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
-          <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
+          <a className="sb-btn" href="#/clusters">Threat Campaigns</a>
 
           {/* Settings Cog */}
           {canEdit && (

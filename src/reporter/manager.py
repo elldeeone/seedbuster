@@ -414,6 +414,19 @@ class ReportManager:
         from .microsoft import MicrosoftReporter
         from .resend_reporter import ResendReporter
         from .digitalocean import DigitalOceanReporter
+        from .manual_platforms import (
+            AWSReporter,
+            AzureReporter,
+            DiscordReporter,
+            GCPReporter,
+            GoDaddyReporter,
+            NamecheapReporter,
+            NetlifyReporter,
+            PorkbunReporter,
+            Quad9Reporter,
+            TelegramReporter,
+            VercelReporter,
+        )
 
         # PhishTank (requires login, registration currently disabled)
         self.reporters["phishtank"] = PhishTankReporter(
@@ -477,6 +490,20 @@ class ReportManager:
         else:
             logger.info("DigitalOcean form reporter not configured (missing reporter email)")
 
+        # Manual-only provider/reporting helpers
+        self.reporters["aws"] = AWSReporter()
+        self.reporters["gcp"] = GCPReporter()
+        self.reporters["azure"] = AzureReporter()
+        self.reporters["vercel"] = VercelReporter()
+        self.reporters["netlify"] = NetlifyReporter()
+        self.reporters["godaddy"] = GoDaddyReporter()
+        self.reporters["namecheap"] = NamecheapReporter()
+        self.reporters["porkbun"] = PorkbunReporter()
+        self.reporters["telegram"] = TelegramReporter()
+        self.reporters["discord"] = DiscordReporter()
+        self.reporters["quad9"] = Quad9Reporter()
+        logger.info("Initialized manual-only reporters for providers/registrars/messaging")
+
         # SMTP reporter (configured when SMTP host and from_email are present)
         self.reporters["smtp"] = SMTPReporter(
             host=self.smtp_config.get("host", ""),
@@ -527,6 +554,39 @@ class ReportManager:
                     "url": getattr(reporter, "platform_url", ""),
                 }
         return info
+
+    async def get_manual_report_options(
+        self,
+        domain_id: int,
+        domain: str,
+        platforms: Optional[list[str]] = None,
+    ) -> dict[str, dict]:
+        """
+        Build manual submission instructions for the given domain/platforms.
+
+        Does not touch the database or submit reports; returns a mapping of
+        platform -> ManualSubmissionData dict.
+        """
+        if platforms is None:
+            platforms = self.get_available_platforms()
+        if not platforms:
+            return {}
+
+        evidence = await self.build_evidence(domain_id, domain)
+        if not evidence:
+            return {}
+
+        results: dict[str, dict] = {}
+        for platform in platforms:
+            reporter = self.reporters.get(platform)
+            if not reporter or not reporter.is_configured():
+                continue
+            try:
+                manual = reporter.generate_manual_submission(evidence)
+                results[platform] = manual.to_dict() if hasattr(manual, "to_dict") else dict(manual)
+            except Exception as e:
+                results[platform] = {"error": str(e)}
+        return results
 
     async def ensure_pending_reports(self, domain_id: int, platforms: Optional[list[str]] = None) -> None:
         """

@@ -4,6 +4,8 @@ import type {
   DomainDetailResponse,
   DomainsResponse,
   PendingReport,
+  PublicSubmission,
+  ReportOptionsResponse,
   Stats,
 } from "./types";
 
@@ -107,6 +109,19 @@ export async function submitTarget(target: string): Promise<{ status: string; do
   });
 }
 
+export async function submitPublicTarget(target: string): Promise<{ status: string; domain: string; duplicate?: boolean; submission_id?: number; message?: string }> {
+  const res = await fetch("/api/public/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain: target }),
+  });
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || "Submit failed");
+  }
+  return res.json();
+}
+
 export async function rescanDomain(domainId: number, domain?: string): Promise<void> {
   await request(`/domains/${domainId}/rescan`, {
     method: "POST",
@@ -143,6 +158,32 @@ export async function cleanupEvidence(
     method: "POST",
     body: JSON.stringify({ days, preview: opts.preview }),
   });
+}
+
+export async function fetchReportOptions(domainId: number): Promise<ReportOptionsResponse> {
+  const res = await fetch(`/api/domains/${domainId}/report-options`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || "Failed to load report options");
+  }
+  return res.json();
+}
+
+export async function recordReportEngagement(domainId: number, platform: string): Promise<{ status: string; platform: string; new_count: number; message?: string }> {
+  const res = await fetch(`/api/domains/${domainId}/report-engagement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  });
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || "Failed to record engagement");
+  }
+  return res.json();
 }
 
 export async function fetchClusters(): Promise<{ clusters: Cluster[] }> {
@@ -201,5 +242,35 @@ export async function updateClusterName(
     method: "PATCH",
     body: JSON.stringify({ name }),
     skipJson: true,
+  });
+}
+
+export async function fetchPublicSubmissions(
+  status = "pending_review",
+  page = 1,
+  limit = 100,
+): Promise<{ submissions: PublicSubmission[]; page: number; limit: number; count: number; total: number; total_pending?: number }> {
+  const qs = new URLSearchParams({ status, page: String(page), limit: String(limit) });
+  return request(`/submissions?${qs.toString()}`);
+}
+
+export async function approvePublicSubmission(
+  submissionId: number,
+  notes?: string,
+): Promise<{ status: string; domain?: string; domain_id?: number }> {
+  return request(`/submissions/${submissionId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ notes }),
+  });
+}
+
+export async function rejectPublicSubmission(
+  submissionId: number,
+  reason = "rejected",
+  notes?: string,
+): Promise<{ status: string; reason?: string }> {
+  return request(`/submissions/${submissionId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason, notes }),
   });
 }
