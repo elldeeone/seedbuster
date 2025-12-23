@@ -1,0 +1,105 @@
+"""
+Refresh infrastructure/registrar intel for all domains without full browser rescans.
+
+This script:
+- Loads existing analysis.json (if present) for each domain
+- Runs InfrastructureAnalyzer to enrich hosting provider, ASN, registrar, nameservers
+- Writes updated analysis.json (preserving existing fields)
+
+Usage:
+    python scripts/refresh_infra.py
+"""
+
+import asyncio
+import logging
+from pathlib import Path
+
+from src.config import load_config
+from src.analyzer.infrastructure import InfrastructureAnalyzer
+from src.storage import Database, EvidenceStore
+
+
+logger = logging.getLogger("refresh_infra")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+async def refresh_domain(
+    analyzer: InfrastructureAnalyzer,
+    evidence: EvidenceStore,
+    domain: str,
+) -> bool:
+    """Refresh infra intel for a single domain."""
+    try:
+        infra_result = await analyzer.analyze(domain)
+    except Exception as e:
+        logger.warning("Infra analysis failed for %s: %s", domain, e)
+        return False
+
+    try:
+        existing = evidence.load_analysis(domain) or {"domain": domain}
+        existing["hosting_provider"] = (
+            infra_result.hosting.hosting_provider if infra_result.hosting else existing.get("hosting_provider")
+        )
+
+        infra_block = existing.get("infrastructure") or {}
+        infra_block.update(
+            {
+                "hosting_provider": infra_result.hosting.hosting_provider
+                if infra_result.hosting
+                else infra_block.get("hosting_provider"),
+                "tls_age_days": infra_result.tls.age_days if infra_result.tls else infra_block.get("tls_age_days"),
+                "domain_age_days": infra_result.domain_info.age_days
+                if infra_result.domain_info
+                else infra_block.get("domain_age_days"),
+                "uses_privacy_dns": infra_result.domain_info.uses_privacy_dns
+                if infra_result.domain_info
+                else infra_block.get("uses_privacy_dns", False),
+                "nameservers": infra_result.domain_info.nameservers
+                if infra_result.domain_info
+                else infra_block.get("nameservers"),
+                "registrar": infra_result.domain_info.registrar
+                if infra_result.domain_info
+                else infra_block.get("registrar"),
+            }
+        )
+        existing["infrastructure"] = infra_block
+
+        await evidence.save_analysis(domain, existing)
+        return True
+    except Exception as e:
+        logger.warning("Failed to save analysis for %s: %s", domain, e)
+        return False
+
+
+async def main():
+    config = load_config()
+    db = Database(config.data_dir / "seedbuster.db")
+    await db.connect()
+    evidence = EvidenceStore(config.evidence_dir)
+    analyzer = InfrastructureAnalyzer(timeout=10)
+
+    # Fetch all domains
+    async with db._lock:
+        cursor = await db._connection.execute("SELECT domain FROM domains")
+        rows = await cursor.fetchall()
+    domains = [row["domain"] for row in rows if row["domain"]]
+    logger.info("Refreshing infrastructure for %d domains", len(domains))
+
+    successes = 0
+    failures = 0
+    for idx, domain in enumerate(domains, start=1):
+        ok = await refresh_domain(analyzer, evidence, domain)
+        if ok:
+            successes += 1
+        else:
+            failures += 1
+        if idx % 25 == 0:
+            logger.info("Processed %d/%d (success=%d, failed=%d)", idx, len(domains), successes, failures)
+
+    await analyzer.close()
+    await db.close()
+    logger.info("Done. success=%d failed=%d", successes, failures)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
