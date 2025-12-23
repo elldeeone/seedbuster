@@ -359,6 +359,10 @@ class AnalysisEngine:
                                 f"EXTERNAL: urlscan.io historical scan with wallet/seed UI: {best.result_url}"
                             )
                             urlscan_result_url = best.result_url
+                        elif not best.found:
+                            reasons.append(
+                                "EXTERNAL: No prior urlscan.io history (first known scan of this domain)"
+                            )
 
                     self.temporal.add_snapshot(
                         domain=domain,

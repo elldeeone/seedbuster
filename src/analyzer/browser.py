@@ -462,8 +462,15 @@ class BrowserAnalyzer:
                 result.html_early = await page.content()
                 result.title_early = await page.title()
 
-                # Now wait for full page load (networkidle)
-                await page.wait_for_load_state("networkidle", timeout=self.timeout)
+                # Now wait for full page load (networkidle) - but don't fail if it times out
+                # Some sites (WordPress, etc.) have continuous network activity and never become "idle"
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=self.timeout)
+                except PlaywrightError as idle_err:
+                    if "Timeout" in str(idle_err):
+                        logger.warning(f"networkidle timeout for {domain}, continuing with DOM content")
+                    else:
+                        raise  # Re-raise non-timeout errors
 
             except PlaywrightError as e:
                 # Try HTTP if HTTPS fails
@@ -491,10 +498,20 @@ class BrowserAnalyzer:
                         result.html_early = await page.content()
                         result.title_early = await page.title()
 
-                        await page.wait_for_load_state("networkidle", timeout=self.timeout)
+                        # networkidle is non-fatal on HTTP fallback too
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=self.timeout)
+                        except PlaywrightError as idle_err:
+                            if "Timeout" in str(idle_err):
+                                logger.warning(f"networkidle timeout for {domain} (HTTP), continuing with DOM content")
+                            else:
+                                raise
                     except PlaywrightError as e2:
-                        result.error = f"Failed to load: {str(e2)[:200]}"
-                        return result
+                        # Only fail if the goto itself failed, not networkidle
+                        if "goto" in str(e2).lower() or "ERR_" in str(e2):
+                            result.error = f"Failed to load: {str(e2)[:200]}"
+                            return result
+                        logger.warning(f"HTTP fallback issue for {domain}: {e2}")
                 else:
                     result.error = f"Failed to load: {str(e)[:200]}"
                     return result

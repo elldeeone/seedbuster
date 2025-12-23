@@ -287,6 +287,15 @@ class ThreatClusterManager:
         # Score matches against each indicator type
         candidate_scores: Dict[str, float] = {}  # cluster_id -> score
         match_reasons: Dict[str, List[str]] = {}  # cluster_id -> reasons
+        # Track which indicator TYPES matched for each cluster (require multiple)
+        indicator_types: Dict[str, Set[str]] = {}  # cluster_id -> set of types
+
+        # Generic kits are common across many phishing sites and shouldn't
+        # be strong enough alone to link domains to a cluster
+        generic_kits = {
+            "metamask_phish", "trust_wallet_phish", "ledger_phish",
+            "coinbase_phish", "generic_wallet_phish", "seed_phrase_stealer",
+        }
 
         # Backend matching (highest weight: 50 points)
         for backend in backends:
@@ -296,18 +305,27 @@ class ThreatClusterManager:
                     if cluster_id not in candidate_scores:
                         candidate_scores[cluster_id] = 0
                         match_reasons[cluster_id] = []
+                        indicator_types[cluster_id] = set()
                     candidate_scores[cluster_id] += 50
                     match_reasons[cluster_id].append(f"Shared backend: {backend_domain}")
+                    indicator_types[cluster_id].add("backend")
 
-        # Kit signature matching (40 points)
+        # Kit signature matching (points depend on kit specificity)
+        # Specific kits (kaspa_stealer_v1, etc): 40 points
+        # Generic kits (metamask_phish, etc): 15 points (alone not enough to match)
         for kit in kit_matches:
             if kit in self._kit_index:
+                is_generic = kit in generic_kits
+                points = 15 if is_generic else 40
                 for cluster_id in self._kit_index[kit]:
                     if cluster_id not in candidate_scores:
                         candidate_scores[cluster_id] = 0
                         match_reasons[cluster_id] = []
-                    candidate_scores[cluster_id] += 40
-                    match_reasons[cluster_id].append(f"Same kit: {kit}")
+                        indicator_types[cluster_id] = set()
+                    candidate_scores[cluster_id] += points
+                    kit_type = "generic kit" if is_generic else "specific kit"
+                    match_reasons[cluster_id].append(f"Same {kit_type}: {kit}")
+                    indicator_types[cluster_id].add("kit")
 
         # Nameserver matching (30 points for privacy DNS, 10 for regular)
         privacy_ns_patterns = ["njalla", "1984", "orangewebsite"]
@@ -321,9 +339,11 @@ class ThreatClusterManager:
                     if cluster_id not in candidate_scores:
                         candidate_scores[cluster_id] = 0
                         match_reasons[cluster_id] = []
+                        indicator_types[cluster_id] = set()
                     candidate_scores[cluster_id] += points
                     ns_type = "privacy DNS" if is_privacy else "nameserver"
                     match_reasons[cluster_id].append(f"Shared {ns_type}: {ns}")
+                    indicator_types[cluster_id].add("dns")
 
         # ASN matching (20 points)
         if asn and asn in self._asn_index:
@@ -331,20 +351,32 @@ class ThreatClusterManager:
                 if cluster_id not in candidate_scores:
                     candidate_scores[cluster_id] = 0
                     match_reasons[cluster_id] = []
+                    indicator_types[cluster_id] = set()
                 candidate_scores[cluster_id] += 20
                 match_reasons[cluster_id].append(f"Same ASN: {asn}")
+                indicator_types[cluster_id].add("asn")
 
         # Find best matching cluster
         if candidate_scores:
             best_cluster_id = max(candidate_scores, key=candidate_scores.get)
             best_score = candidate_scores[best_cluster_id]
+            types_matched = len(indicator_types.get(best_cluster_id, set()))
 
-            # Require minimum score of 40 to match
-            if best_score >= 40:
+            # Require BOTH:
+            # 1. Minimum score of 50 (up from 40)
+            # 2. At least 2 different indicator types matched
+            #    (prevents matching on just a generic kit or just ASN)
+            if best_score >= 50 and types_matched >= 2:
                 return ClusterMatch(
                     cluster=self.clusters[best_cluster_id],
                     match_reasons=match_reasons[best_cluster_id],
                     match_score=min(best_score, 100),
+                )
+            elif best_score >= 50:
+                # Log when we reject a match for having only one indicator type
+                logger.debug(
+                    f"Rejected cluster match for {domain}: score={best_score} "
+                    f"but only {types_matched} indicator type(s)"
                 )
 
         # No match found
@@ -400,7 +432,7 @@ class ThreatClusterManager:
             html_hash=html_hash,
         )
 
-        if match.cluster and match.match_score >= 40:
+        if match.cluster and match.match_score >= 50:
             # Add to existing cluster
             cluster = match.cluster
 
