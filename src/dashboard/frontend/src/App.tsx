@@ -1301,7 +1301,7 @@ export default function App() {
           {analytics && (
             <div className="sb-grid" style={{ gap: 12 }}>
               <div className="col-6">
-                <div className="sb-label">Community Engagement</div>
+                <div className="sb-label">Public report clicks (24h per session)</div>
                 <div className="sb-muted" style={{ marginBottom: 6 }}>Total clicks: {analytics.engagement.total_engagements}</div>
                 <div className="sb-breakdown">
                   {Object.entries(analytics.engagement.by_platform || {}).map(([p, c]) => (
@@ -1314,10 +1314,12 @@ export default function App() {
                 </div>
               </div>
               <div className="col-6">
-                <div className="sb-label">Takedown Status</div>
-                <div className="sb-muted" style={{ marginBottom: 6 }}>
-                  Avg hours to detection: {analytics.takedown.avg_hours_to_detect != null ? analytics.takedown.avg_hours_to_detect.toFixed(1) : "n/a"}
-                </div>
+                <div className="sb-label">Automated takedown status (DNS/HTTP/RDAP)</div>
+                {analytics.takedown.avg_hours_to_detect != null && (
+                  <div className="sb-muted" style={{ marginBottom: 6 }}>
+                    Avg hours to first takedown signal: {analytics.takedown.avg_hours_to_detect.toFixed(1)}
+                  </div>
+                )}
                 <div className="sb-breakdown">
                   {Object.entries(analytics.takedown.by_status || {}).map(([k, v]) => (
                     <div key={k} className="sb-breakdown-item">
