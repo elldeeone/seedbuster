@@ -151,6 +151,7 @@ class AnalysisEngine:
                     "reasons": reasons,
                     "dns_resolves": False,
                     "resolved_ips": resolved_ip_list,
+                    "infrastructure": {"unresolvable": True},
                 })
                 self.temporal.add_snapshot(
                     domain=domain,

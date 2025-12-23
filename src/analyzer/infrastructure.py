@@ -82,6 +82,8 @@ class HostingInfo:
         "aws": ["amazon", "AMAZON-", "AWS", "cloudfront"],
         "google": ["google", "GOOGLE", "google cloud"],
         "azure": ["microsoft", "MSFT", "azure"],
+        "oracle": ["oracle", "oracle cloud"],
+        "alibaba": ["alibaba", "alibaba cloud"],
         "vultr": ["vultr", "VULTR"],
         "linode": ["linode", "LINODE"],
         "hetzner": ["hetzner", "HETZNER"],
@@ -97,10 +99,14 @@ class HostingInfo:
         "shopify": ["shopify", "shopifydns"],
         "vercel": ["vercel"],
         "netlify": ["netlify"],
+        "cloudfront": ["cloudfront.net"],
         "render": ["render"],
         "fly_io": ["fly.io", "flyio", "flyglobal"],
         "railway": ["railway"],
         "heroku": ["heroku"],
+        "fastly": ["fastly", "fastlyinc", "fastly-cdn", "fastlylb"],
+        "upcloud": ["upcloud"],
+        "linode_akamai": ["linode", "linode-isp", "linode, llc"],
     }
 
     # Known bulletproof/abuse-friendly hosting
@@ -383,15 +389,26 @@ class InfrastructureAnalyzer:
     async def get_hosting_info(self, domain: str) -> Optional[HostingInfo]:
         """Get hosting provider and network information."""
         try:
-            # Resolve domain to IP
+            # Resolve domain to IP (socket first, DoH fallback)
             loop = asyncio.get_event_loop()
-            ip_address = await loop.run_in_executor(
-                None,
-                socket.gethostbyname,
-                domain
-            )
+            ip_address = ""
+            try:
+                ip_address = await loop.run_in_executor(
+                    None,
+                    socket.gethostbyname,
+                    domain
+                )
+            except socket.gaierror:
+                try:
+                    doh_ips = await self._fetch_addresses_doh(domain)
+                    if doh_ips:
+                        ip_address = doh_ips[0]
+                except Exception:
+                    ip_address = ""
 
             result = HostingInfo(ip_address=ip_address)
+            if not result.ip_address:
+                return None
 
             # Get reverse DNS
             try:
@@ -508,6 +525,10 @@ class InfrastructureAnalyzer:
         if hosting.asn in HostingInfo.BULLETPROOF_ASNS:
             hosting.is_bulletproof = True
 
+        # Fallback: use ASN org if no provider identified
+        if not hosting.hosting_provider:
+            hosting.hosting_provider = hosting.asn_name or hosting.datacenter
+
     async def _fetch_nameservers_doh(self, domain: str) -> list[str]:
         """Fetch nameservers via DNS-over-HTTPS (Google resolver)."""
         session = await self._get_session()
@@ -530,6 +551,25 @@ class InfrastructureAnalyzer:
             names.append(raw.rstrip("."))
         return names
 
+    async def _fetch_addresses_doh(self, domain: str) -> list[str]:
+        """Fetch A/AAAA records via DNS-over-HTTPS."""
+        session = await self._get_session()
+        records = []
+        for record_type in ("A", "AAAA"):
+            try:
+                params = {"name": domain, "type": record_type}
+                async with session.get("https://dns.google/resolve", params=params) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    for ans in data.get("Answer") or []:
+                        raw = str(ans.get("data", "")).strip()
+                        if raw:
+                            records.append(raw)
+            except Exception:
+                continue
+        return records
+
     async def get_domain_info(self, domain: str) -> Optional[DomainInfo]:
         """Get domain registration and DNS information."""
         try:
@@ -545,7 +585,10 @@ class InfrastructureAnalyzer:
                     lambda: socket.gethostbyname_ex(domain)[2]
                 )
             except socket.gaierror:
-                pass
+                try:
+                    result.a_records = await self._fetch_addresses_doh(domain)
+                except Exception:
+                    pass
 
             # Get MX records via DNS query
             # Note: For full implementation, use dnspython library
@@ -553,7 +596,7 @@ class InfrastructureAnalyzer:
 
             # Domain age / registrar via RDAP (with fallbacks)
             try:
-                rdap_lookup = await lookup_registrar_via_rdap(domain)
+                rdap_lookup = await lookup_registrar_via_rdap(registered)
                 if rdap_lookup.ok:
                     result.registrar = rdap_lookup.registrar_name or result.registrar
                 else:
@@ -604,6 +647,18 @@ class InfrastructureAnalyzer:
                 if inferred:
                     result.registrar = inferred
 
+            # Fallback: derive registrar-like label from nameserver root
+            if not result.registrar and result.nameservers:
+                try:
+                    ns_root = tldextract.extract(result.nameservers[0]).registered_domain
+                    if ns_root:
+                        result.registrar = ns_root
+                except Exception:
+                    pass
+
+            if not result.registrar:
+                result.registrar = "unknown"
+
             return result
 
         except Exception as e:
@@ -633,6 +688,11 @@ class InfrastructureAnalyzer:
             "render": ["render.com"],
             "fastly": ["fastlydns.com", "fastlylb.net"],
             "akamai": ["akamai", "akamaiedge", "akadns"],
+            "squarespace": ["squarespacedns"],
+            "wix": ["wixdns", "wix.com"],
+            "digitalocean": ["digitalocean.com"],
+            "linode": ["linode.com"],
+            "cloudflare_anon": ["njalla", "1984hosting", "orangewebsite", "flokinet"],
         }
         for registrar, needles in patterns.items():
             if any(needle in joined for needle in needles):
