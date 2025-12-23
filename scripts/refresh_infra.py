@@ -62,6 +62,14 @@ async def refresh_domain(
                 else infra_block.get("registrar"),
             }
         )
+        ip_addresses = []
+        if infra_result.hosting and infra_result.hosting.ip_address:
+            ip_addresses.append(infra_result.hosting.ip_address)
+        if infra_result.domain_info and infra_result.domain_info.a_records:
+            ip_addresses.extend(infra_result.domain_info.a_records)
+        infra_block["ip_addresses"] = sorted({ip for ip in ip_addresses if ip})
+        if infra_block["ip_addresses"]:
+            existing["resolved_ips"] = infra_block["ip_addresses"]
         existing["infrastructure"] = infra_block
 
         await evidence.save_analysis(domain, existing)

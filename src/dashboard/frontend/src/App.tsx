@@ -259,6 +259,16 @@ const VerdictReasons = ({ reasons }: { reasons: string | null | undefined }) => 
   );
 };
 
+const renderInfraList = (items?: string[] | null) => {
+  if (!items || items.length === 0) return <div className="sb-muted">—</div>;
+  return (
+    <div className="sb-muted">
+      {items.slice(0, 3).join(", ")}
+      {items.length > 3 ? " …" : ""}
+    </div>
+  );
+};
+
 const DomainTable = ({
   domains,
   loading,
@@ -1988,24 +1998,21 @@ export default function App() {
             </div>
             {domainDetail.infrastructure ? (
               <div className="sb-grid" style={{ gap: 12 }}>
-                <div className="col-4">
+                <div className="col-3">
+                  <div className="sb-label">IP Addresses</div>
+                  {renderInfraList(domainDetail.infrastructure.ip_addresses)}
+                </div>
+                <div className="col-3">
                   <div className="sb-label">Hosting Provider</div>
                   <div className="sb-muted">{domainDetail.infrastructure.hosting_provider || "\u2014"}</div>
                 </div>
-                <div className="col-4">
+                <div className="col-3">
                   <div className="sb-label">Registrar</div>
                   <div className="sb-muted">{domainDetail.infrastructure.registrar || "\u2014"}</div>
                 </div>
-                <div className="col-4">
+                <div className="col-3">
                   <div className="sb-label">Nameservers</div>
-                  {domainDetail.infrastructure.nameservers && domainDetail.infrastructure.nameservers.length > 0 ? (
-                    <div className="sb-muted">
-                      {domainDetail.infrastructure.nameservers.slice(0, 3).join(", ")}
-                      {domainDetail.infrastructure.nameservers.length > 3 ? " \u2026" : ""}
-                    </div>
-                  ) : (
-                    <div className="sb-muted">\u2014</div>
-                  )}
+                  {renderInfraList(domainDetail.infrastructure.nameservers)}
                 </div>
               </div>
             ) : (

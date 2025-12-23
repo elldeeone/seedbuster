@@ -83,6 +83,7 @@ export interface DomainDetailResponse {
     hosting_provider?: string | null;
     registrar?: string | null;
     nameservers?: string[] | null;
+    ip_addresses?: string[] | null;
     tls_age_days?: number | null;
     domain_age_days?: number | null;
   };

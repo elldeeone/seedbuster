@@ -5514,17 +5514,65 @@ class DashboardServer:
                 try:
                     data = json.loads(analysis_path.read_text())
                     infra = data.get("infrastructure") or {}
+                    nameservers = infra.get("nameservers") or []
+                    if isinstance(nameservers, str):
+                        nameservers = [nameservers] if nameservers else []
+                    ip_addresses = infra.get("ip_addresses") or data.get("resolved_ips") or []
+                    if isinstance(ip_addresses, str):
+                        ip_addresses = [ip_addresses] if ip_addresses else []
                     infrastructure = {
                         "hosting_provider": data.get("hosting_provider") or infra.get("hosting_provider"),
                         "registrar": infra.get("registrar") or data.get("registrar"),
-                        "nameservers": infra.get("nameservers") or [],
+                        "nameservers": nameservers,
+                        "ip_addresses": ip_addresses,
                         "tls_age_days": infra.get("tls_age_days"),
                         "domain_age_days": infra.get("domain_age_days"),
                     }
                 except Exception:
                     infrastructure = {}
+            else:
+                infrastructure = {}
         except Exception:
             evidence = {}
+
+        # Opportunistic live DNS enrichments if missing (avoid blocking; best-effort)
+        try:
+            if infrastructure.get("ip_addresses") in (None, [], ()):
+                loop = asyncio.get_event_loop()
+                addrs = await loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(row["domain"], None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                )
+                ips = sorted({sockaddr[0] for *_rest, sockaddr in addrs})
+                global_ips = []
+                for ip in ips:
+                    try:
+                        if ipaddress.ip_address(ip).is_global:
+                            global_ips.append(ip)
+                    except ValueError:
+                        continue
+                infrastructure["ip_addresses"] = global_ips or ips
+        except Exception:
+            pass
+
+        try:
+            if not infrastructure.get("nameservers"):
+                timeout = aiohttp.ClientTimeout(total=5)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    params = {"name": row["domain"], "type": "NS"}
+                    async with session.get("https://dns.google/resolve", params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            answers = data.get("Answer") or []
+                            ns = []
+                            for ans in answers:
+                                raw = str(ans.get("data", "")).strip()
+                                if raw:
+                                    ns.append(raw.rstrip("."))
+                            if ns:
+                                infrastructure["nameservers"] = ns
+        except Exception:
+            pass
 
         return web.json_response(
             {

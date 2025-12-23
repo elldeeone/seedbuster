@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
+import tldextract
 
 from ..reporter.rdap import lookup_registrar_via_rdap
 
@@ -251,14 +252,35 @@ class InfrastructureAnalyzer:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    @staticmethod
+    def _normalize_domain(value: str) -> str:
+        """Extract bare hostname from a URL/path or raw domain."""
+        candidate = (value or "").strip()
+        if not candidate:
+            return candidate
+        try:
+            from urllib.parse import urlparse
+
+            target = candidate if "://" in candidate else f"https://{candidate}"
+            host = urlparse(target).hostname or ""
+        except Exception:
+            host = ""
+
+        if not host:
+            # Fallback: take everything before first "/" and strip dots
+            host = candidate.split("/")[0]
+        return host.strip().strip(".").lower()
+
     async def analyze(self, domain: str) -> InfrastructureResult:
         """Perform complete infrastructure analysis."""
-        result = InfrastructureResult(domain=domain)
+        normalized = self._normalize_domain(domain)
+        result = InfrastructureResult(domain=normalized or domain)
 
         # Run analyses in parallel
-        tls_task = asyncio.create_task(self.get_tls_info(domain))
-        hosting_task = asyncio.create_task(self.get_hosting_info(domain))
-        domain_task = asyncio.create_task(self.get_domain_info(domain))
+        target = normalized or domain
+        tls_task = asyncio.create_task(self.get_tls_info(target))
+        hosting_task = asyncio.create_task(self.get_hosting_info(target))
+        domain_task = asyncio.create_task(self.get_domain_info(target))
 
         # Gather results
         try:
@@ -486,11 +508,35 @@ class InfrastructureAnalyzer:
         if hosting.asn in HostingInfo.BULLETPROOF_ASNS:
             hosting.is_bulletproof = True
 
+    async def _fetch_nameservers_doh(self, domain: str) -> list[str]:
+        """Fetch nameservers via DNS-over-HTTPS (Google resolver)."""
+        session = await self._get_session()
+        url = "https://dns.google/resolve"
+        params = {"name": domain, "type": "NS"}
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return []
+            try:
+                data = await resp.json()
+            except Exception:
+                return []
+
+        answers = data.get("Answer") or []
+        names = []
+        for ans in answers:
+            raw = str(ans.get("data", "")).strip()
+            if not raw:
+                continue
+            names.append(raw.rstrip("."))
+        return names
+
     async def get_domain_info(self, domain: str) -> Optional[DomainInfo]:
         """Get domain registration and DNS information."""
         try:
             result = DomainInfo(domain=domain)
             loop = asyncio.get_event_loop()
+            extracted = tldextract.extract(domain)
+            registered = extracted.registered_domain or domain
 
             # Get A records
             try:
@@ -519,7 +565,7 @@ class InfrastructureAnalyzer:
             if not result.nameservers:
                 session = await self._get_session()
                 try:
-                    rdap_url = f"https://rdap.org/domain/{domain}"
+                    rdap_url = f"https://rdap.org/domain/{registered}"
                     async with session.get(rdap_url) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -543,6 +589,15 @@ class InfrastructureAnalyzer:
                                     break
                 except Exception as e:
                     logger.debug(f"RDAP nameserver fetch failed for {domain}: {e}")
+
+            # Fallback: DNS-over-HTTPS lookup for NS records (rdap.org often rate limits)
+            if not result.nameservers:
+                try:
+                    doh_nameservers = await self._fetch_nameservers_doh(registered)
+                    if doh_nameservers:
+                        result.nameservers = doh_nameservers
+                except Exception as e:
+                    logger.debug(f"DoH NS lookup failed for {domain}: {e}")
 
             if not result.registrar:
                 inferred = self._infer_registrar_from_nameservers(result.nameservers)
