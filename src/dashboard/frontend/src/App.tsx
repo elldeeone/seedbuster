@@ -1981,6 +1981,38 @@ export default function App() {
             </div>
           )}
 
+          {/* Infrastructure / Registrar info */}
+          <div className="sb-panel" style={{ marginTop: 8 }}>
+            <div className="sb-panel-header">
+              <span className="sb-panel-title">Infrastructure</span>
+            </div>
+            {domainDetail.infrastructure ? (
+              <div className="sb-grid" style={{ gap: 12 }}>
+                <div className="col-4">
+                  <div className="sb-label">Hosting Provider</div>
+                  <div className="sb-muted">{domainDetail.infrastructure.hosting_provider || "\u2014"}</div>
+                </div>
+                <div className="col-4">
+                  <div className="sb-label">Registrar</div>
+                  <div className="sb-muted">{domainDetail.infrastructure.registrar || "\u2014"}</div>
+                </div>
+                <div className="col-4">
+                  <div className="sb-label">Nameservers</div>
+                  {domainDetail.infrastructure.nameservers && domainDetail.infrastructure.nameservers.length > 0 ? (
+                    <div className="sb-muted">
+                      {domainDetail.infrastructure.nameservers.slice(0, 3).join(", ")}
+                      {domainDetail.infrastructure.nameservers.length > 3 ? " \u2026" : ""}
+                    </div>
+                  ) : (
+                    <div className="sb-muted">\u2014</div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="sb-muted">No infrastructure data available.</div>
+            )}
+          </div>
+
           <EvidenceSection data={domainDetail} />
           <ReportsTable data={domainDetail} />
 

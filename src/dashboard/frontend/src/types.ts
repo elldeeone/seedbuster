@@ -79,6 +79,13 @@ export interface DomainDetailResponse {
   related_domains?: Domain[];
   cluster?: Cluster | null;
   instruction_files?: string[];
+  infrastructure?: {
+    hosting_provider?: string | null;
+    registrar?: string | null;
+    nameservers?: string[] | null;
+    tls_age_days?: number | null;
+    domain_age_days?: number | null;
+  };
 }
 
 export interface ManualSubmissionField {

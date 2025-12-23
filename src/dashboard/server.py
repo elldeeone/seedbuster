@@ -5485,6 +5485,7 @@ class DashboardServer:
 
         reports = await self.database.get_reports_for_domain(domain_id)
         evidence = {}
+        infrastructure = {}
         instruction_files: list[str] = []
         cluster = self._get_cluster_for_domain(row["domain"])
         filtered_cluster = None
@@ -5506,6 +5507,22 @@ class DashboardServer:
                 f"/evidence/{domain_dir.name}/{p.name}"
                 for p in self._get_instruction_files(domain_dir)
             ]
+            analysis_path = domain_dir / "analysis.json"
+            if analysis_path.exists():
+                import json
+
+                try:
+                    data = json.loads(analysis_path.read_text())
+                    infra = data.get("infrastructure") or {}
+                    infrastructure = {
+                        "hosting_provider": data.get("hosting_provider") or infra.get("hosting_provider"),
+                        "registrar": infra.get("registrar") or data.get("registrar"),
+                        "nameservers": infra.get("nameservers") or [],
+                        "tls_age_days": infra.get("tls_age_days"),
+                        "domain_age_days": infra.get("domain_age_days"),
+                    }
+                except Exception:
+                    infrastructure = {}
         except Exception:
             evidence = {}
 
@@ -5514,6 +5531,7 @@ class DashboardServer:
                 "domain": row,
                 "reports": reports,
                 "evidence": evidence,
+                "infrastructure": infrastructure,
                 "cluster": filtered_cluster,
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
