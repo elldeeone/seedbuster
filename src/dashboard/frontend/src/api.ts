@@ -254,6 +254,13 @@ export async function fetchPublicSubmissions(
   return request(`/submissions?${qs.toString()}`);
 }
 
+export async function fetchAnalytics(): Promise<{
+  engagement: { total_engagements: number; by_platform: Record<string, number> };
+  takedown: { by_status: Record<string, number>; avg_hours_to_detect?: number | null };
+}> {
+  return request("/analytics");
+}
+
 export async function approvePublicSubmission(
   submissionId: number,
   notes?: string,

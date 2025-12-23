@@ -274,3 +274,91 @@ class Quad9Reporter(_SimpleFormReporter):
                 "Describe the threat type as phishing; add any supporting evidence.",
             ],
         )
+
+
+class OpenDNSReporter(_SimpleEmailReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="opendns",
+            email="support@opendns.com",
+            subject_prefix="Phishing report:",
+            notes=[
+                "OpenDNS/Cisco Umbrella blocks domains/IPs at the resolver layer.",
+                "Include full domain/URL and any observed hosting details.",
+            ],
+        )
+
+
+class GoogleDomainsReporter(_SimpleFormReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="google_domains",
+            form_url="https://support.google.com/domains/troubleshooter/9339157",
+            reason="Google Domains abuse form",
+            notes=[
+                "Select phishing as the abuse type.",
+                "Include the full domain and any evidence of credential harvesting.",
+            ],
+        )
+
+
+class TucowsReporter(_SimpleFormReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="tucows",
+            form_url="https://tucowsdomains.com/report-abuse/",
+            reason="Tucows/Hover abuse form",
+            notes=[
+                "Tucows is the registrar for Hover and other resellers; include full domain.",
+                "If you know the reseller, include it in the details (optional).",
+            ],
+        )
+
+
+class RenderReporter(_SimpleEmailReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="render",
+            email="abuse@render.com",
+            subject_prefix="Phishing report:",
+            notes=[
+                "Include the hosted domain/app URL and brief description of the phishing content.",
+            ],
+        )
+
+
+class FlyReporter(_SimpleEmailReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="fly_io",
+            email="abuse@fly.io",
+            subject_prefix="Phishing report:",
+            notes=[
+                "Include the fly.dev hostname or custom domain; add evidence of phishing.",
+            ],
+        )
+
+
+class RailwayReporter(_SimpleEmailReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="railway",
+            email="abuse@railway.app",
+            subject_prefix="Phishing report:",
+            notes=[
+                "Include the project URL/hostname if known; describe the phishing behavior.",
+            ],
+        )
+
+
+class HerokuReporter(_SimpleFormReporter):
+    def __init__(self):
+        super().__init__(
+            platform_name="heroku",
+            form_url="https://help.heroku.com/tickets/new",
+            reason="Heroku security/abuse ticket",
+            notes=[
+                "Choose Security/Abuse category; include full URL and a short description.",
+                "If the app uses herokuapp.com subdomain, include that exact subdomain.",
+            ],
+        )

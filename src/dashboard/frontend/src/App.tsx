@@ -23,6 +23,7 @@ import {
   updateOperatorNotes,
   updateClusterName,
   fetchReportOptions,
+  fetchAnalytics,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type {
@@ -31,6 +32,7 @@ import type {
   DomainDetailResponse,
   PendingReport,
   PublicSubmission,
+  AnalyticsResponse,
   ReportOptionsResponse,
   Stats,
 } from "./types";
@@ -666,6 +668,10 @@ export default function App() {
   const [reportEngagementBusy, setReportEngagementBusy] = useState<Record<string, boolean>>({});
   const [openReportPlatforms, setOpenReportPlatforms] = useState<Set<string>>(new Set());
 
+  // Analytics (admin)
+  const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
   // Detect admin mode for conditional rendering
   const isAdmin = isAdminMode();
   const canEdit = isAdmin;
@@ -791,6 +797,18 @@ export default function App() {
     }
   }, [canEdit]);
 
+  const loadAnalytics = useCallback(async () => {
+    if (!canEdit) return;
+    try {
+      const res = await fetchAnalytics();
+      setAnalytics(res);
+      setAnalyticsError(null);
+    } catch (err) {
+      setAnalytics(null);
+      setAnalyticsError((err as Error).message || "Failed to load analytics");
+    }
+  }, [canEdit]);
+
   useEffect(() => {
     loadStats();
     const id = setInterval(loadStats, 30000);
@@ -804,10 +822,12 @@ export default function App() {
   useEffect(() => {
     if (canEdit) {
       loadPublicSubmissions();
+      loadAnalytics();
     } else {
       setPublicSubmissions([]);
+      setAnalytics(null);
     }
-  }, [canEdit, loadPublicSubmissions]);
+  }, [canEdit, loadPublicSubmissions, loadAnalytics]);
 
   useEffect(() => {
     if (route.name === "domain") {
@@ -1229,6 +1249,51 @@ export default function App() {
           {!canEdit && <div className="sb-muted" style={{ marginTop: 8 }}>Submissions are reviewed before scanning (no automatic actions).</div>}
         </form>
       </div>
+
+      {canEdit && (
+        <div className="sb-panel" style={{ borderColor: "rgba(110, 220, 180, 0.4)", marginBottom: 16 }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(110, 220, 180, 0.3)" }}>
+            <span className="sb-panel-title" style={{ color: "var(--accent-green)" }}>Engagement & Takedown Analytics</span>
+            <div className="sb-row" style={{ gap: 8 }}>
+              <button className="sb-btn" onClick={loadAnalytics}>Refresh</button>
+            </div>
+          </div>
+          {analyticsError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginBottom: 8 }}>{analyticsError}</div>}
+          {!analytics && !analyticsError && <div className="sb-muted">Loading…</div>}
+          {analytics && (
+            <div className="sb-grid" style={{ gap: 12 }}>
+              <div className="col-6">
+                <div className="sb-label">Community Engagement</div>
+                <div className="sb-muted" style={{ marginBottom: 6 }}>Total clicks: {analytics.engagement.total_engagements}</div>
+                <div className="sb-breakdown">
+                  {Object.entries(analytics.engagement.by_platform || {}).map(([p, c]) => (
+                    <div key={p} className="sb-breakdown-item">
+                      <span className="sb-breakdown-key">{p}</span>
+                      <span className="sb-breakdown-val">{c}</span>
+                    </div>
+                  ))}
+                  {Object.keys(analytics.engagement.by_platform || {}).length === 0 && <div className="sb-muted">No engagement yet.</div>}
+                </div>
+              </div>
+              <div className="col-6">
+                <div className="sb-label">Takedown Status</div>
+                <div className="sb-muted" style={{ marginBottom: 6 }}>
+                  Avg hours to detection: {analytics.takedown.avg_hours_to_detect != null ? analytics.takedown.avg_hours_to_detect.toFixed(1) : "n/a"}
+                </div>
+                <div className="sb-breakdown">
+                  {Object.entries(analytics.takedown.by_status || {}).map(([k, v]) => (
+                    <div key={k} className="sb-breakdown-item">
+                      <span className="sb-breakdown-key">{k}</span>
+                      <span className="sb-breakdown-val">{v}</span>
+                    </div>
+                  ))}
+                  {Object.keys(analytics.takedown.by_status || {}).length === 0 && <div className="sb-muted">No takedown data yet.</div>}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {canEdit && (
         <div className="sb-panel" style={{ borderColor: "rgba(255, 214, 102, 0.4)", marginBottom: 16 }}>

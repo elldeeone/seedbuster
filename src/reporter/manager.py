@@ -426,6 +426,13 @@ class ReportManager:
             Quad9Reporter,
             TelegramReporter,
             VercelReporter,
+            OpenDNSReporter,
+            GoogleDomainsReporter,
+            TucowsReporter,
+            RenderReporter,
+            FlyReporter,
+            RailwayReporter,
+            HerokuReporter,
         )
 
         # PhishTank (requires login, registration currently disabled)
@@ -502,6 +509,13 @@ class ReportManager:
         self.reporters["telegram"] = TelegramReporter()
         self.reporters["discord"] = DiscordReporter()
         self.reporters["quad9"] = Quad9Reporter()
+        self.reporters["opendns"] = OpenDNSReporter()
+        self.reporters["google_domains"] = GoogleDomainsReporter()
+        self.reporters["tucows"] = TucowsReporter()
+        self.reporters["render"] = RenderReporter()
+        self.reporters["fly_io"] = FlyReporter()
+        self.reporters["railway"] = RailwayReporter()
+        self.reporters["heroku"] = HerokuReporter()
         logger.info("Initialized manual-only reporters for providers/registrars/messaging")
 
         # SMTP reporter (configured when SMTP host and from_email are present)

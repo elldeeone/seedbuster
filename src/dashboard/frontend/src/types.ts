@@ -127,6 +127,11 @@ export interface PublicSubmission {
   promoted_domain_id?: number | null;
 }
 
+export interface AnalyticsResponse {
+  engagement: { total_engagements: number; by_platform: Record<string, number> };
+  takedown: { by_status: Record<string, number>; avg_hours_to_detect?: number | null };
+}
+
 export interface ClusterMember {
   domain: string;
   added_at?: string;

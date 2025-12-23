@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 import httpx
+import hashlib
+
+from ..reporter.rdap import lookup_registrar_via_rdap
 
 
 SINKHOLE_IPS = {"0.0.0.0", "127.0.0.1", "::1"}
@@ -27,6 +30,9 @@ class TakedownCheckResult:
     dns_resolves: bool
     dns_result: Optional[str]
     is_sinkholed: bool
+    domain_status: Optional[str]
+    content_hash: Optional[str]
+    provider_signal: Optional[str]
 
 
 class TakedownChecker:
@@ -35,7 +41,8 @@ class TakedownChecker:
     async def check_domain(self, domain: str) -> TakedownCheckResult:
         dns_result = await self._check_dns(domain)
         http_result = await self._check_http(domain)
-        return self._analyze(domain, dns_result, http_result)
+        whois_result = await self._check_rdap(domain)
+        return self._analyze(domain, dns_result, http_result, whois_result)
 
     async def _check_dns(self, domain: str) -> dict:
         loop = asyncio.get_running_loop()
@@ -52,17 +59,35 @@ class TakedownChecker:
         try:
             async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 resp = await client.get(url)
-                return {"status": resp.status_code, "error": None}
+                body = resp.content or b""
+                body_hash = hashlib.sha256(body).hexdigest() if body else None
+                return {"status": resp.status_code, "error": None, "hash": body_hash, "text": (resp.text or "")[:2048]}
         except Exception as e:
             # Fall back to HTTP if HTTPS failed outright
             try:
                 async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
                     resp = await client.get(f"http://{domain}")
-                    return {"status": resp.status_code, "error": str(e)}
+                    body = resp.content or b""
+                    body_hash = hashlib.sha256(body).hexdigest() if body else None
+                    return {"status": resp.status_code, "error": str(e), "hash": body_hash, "text": (resp.text or "")[:2048]}
             except Exception as e2:
-                return {"status": None, "error": str(e2) or str(e)}
+                return {"status": None, "error": str(e2) or str(e), "hash": None, "text": ""}
 
-    def _analyze(self, domain: str, dns: dict, http: dict) -> TakedownCheckResult:
+    async def _check_rdap(self, domain: str) -> dict:
+        try:
+            result = await lookup_registrar_via_rdap(domain)
+            if result.error:
+                return {"status": None, "error": result.error}
+            status = None
+            if result.status_values:
+                # prefer any value containing 'hold' / 'pendingDelete'
+                hold = next((s for s in result.status_values if "hold" in s.lower()), None)
+                status = hold or result.status_values[0]
+            return {"status": status, "error": None}
+        except Exception as e:
+            return {"status": None, "error": str(e)}
+
+    def _analyze(self, domain: str, dns: dict, http: dict, whois: dict) -> TakedownCheckResult:
         confidence = 0.0
 
         dns_resolves = bool(dns.get("resolves"))
@@ -72,18 +97,52 @@ class TakedownChecker:
 
         http_status = http.get("status")
         http_error = http.get("error")
+        http_text = (http.get("text") or "").lower()
+        content_hash = http.get("hash")
+        provider_signal = None
 
         if not dns_resolves:
             confidence += 0.6
         if is_sinkholed:
             confidence = max(confidence, 0.9)
 
+        # Provider-specific / generic HTTP signals
         if http_status in (404, 410):
             confidence += 0.3
         elif http_status in (500, 503, 522, 523, 524):
             confidence += 0.15
         elif http_status is None:
             confidence += 0.2
+
+        # Hosting suspension patterns (best-effort)
+        suspension_keywords = [
+            "account suspended",
+            "page not found",
+            "error 1000",
+            "error 1001",
+            "error 1002",
+            "error 1020",
+            "heroku | error",
+            "railway",
+            "render.com",
+            "vercel",
+            "netlify",
+        ]
+        if http_status and http_status >= 400:
+            for kw in suspension_keywords:
+                if kw in http_text:
+                    confidence += 0.2
+                    provider_signal = f"http:{kw}"
+                    break
+
+        whois_status = None
+        if whois and isinstance(whois, dict):
+            whois_status = whois.get("status")
+            whois_error = whois.get("error")
+            if whois_status and isinstance(whois_status, str) and "hold" in whois_status.lower():
+                confidence += 0.4
+            if whois_error:
+                provider_signal = provider_signal or f"rdap_error:{whois_error}"
 
         if confidence >= 0.8:
             status = TakedownStatus.CONFIRMED_DOWN
@@ -100,4 +159,7 @@ class TakedownChecker:
             dns_resolves=dns_resolves,
             dns_result=",".join(dns_addresses) if dns_addresses else dns_error,
             is_sinkholed=is_sinkholed,
+            domain_status=whois_status,
+            content_hash=content_hash,
+            provider_signal=provider_signal,
         )

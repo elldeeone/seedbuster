@@ -19,6 +19,7 @@ class RdapLookupResult:
     registrar_name: Optional[str]
     abuse_email: Optional[str]
     rdap_url: str
+    status_values: Optional[list[str]] = None
     error: Optional[str] = None
     status_code: Optional[int] = None
 
@@ -96,6 +97,7 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
             registrar_name=None,
             abuse_email=None,
             rdap_url=rdap_url,
+            status_values=None,
             error="No domain provided for RDAP lookup",
         )
 
@@ -107,6 +109,7 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
             registrar_name=None,
             abuse_email=None,
             rdap_url=rdap_url,
+            status_values=None,
             error="RDAP lookup timed out",
         )
     except Exception as e:
@@ -114,6 +117,7 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
             registrar_name=None,
             abuse_email=None,
             rdap_url=rdap_url,
+            status_values=None,
             error=f"RDAP lookup failed: {e}",
         )
 
@@ -122,6 +126,7 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
             registrar_name=None,
             abuse_email=None,
             rdap_url=rdap_url,
+            status_values=None,
             error=f"RDAP lookup failed ({resp.status_code})",
             status_code=int(resp.status_code),
         )
@@ -133,14 +138,21 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
             registrar_name=None,
             abuse_email=None,
             rdap_url=rdap_url,
+            status_values=None,
             error="RDAP returned non-JSON response",
             status_code=int(resp.status_code),
         )
 
     registrar_name, abuse_email = parse_registrar_and_abuse_email(data)
+    status_values = []
+    if isinstance(data.get("status"), list):
+        for entry in data["status"]:
+            if isinstance(entry, str) and entry.strip():
+                status_values.append(entry.strip())
+
     return RdapLookupResult(
         registrar_name=registrar_name,
         abuse_email=abuse_email,
         rdap_url=rdap_url,
+        status_values=status_values or None,
     )
-

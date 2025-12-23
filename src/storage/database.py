@@ -1170,6 +1170,64 @@ class Database:
             rows = await cursor.fetchall()
         return {row["status"]: row["count"] for row in rows}
 
+    async def get_engagement_summary(self, limit_platforms: int = 20) -> dict:
+        """Aggregate engagement counts across domains/platforms."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT platform, SUM(click_count) AS clicks
+                FROM report_engagement
+                GROUP BY platform
+                ORDER BY clicks DESC
+                LIMIT ?
+                """,
+                (limit_platforms,),
+            )
+            rows = await cursor.fetchall()
+            platform_counts = {row["platform"]: int(row["clicks"] or 0) for row in rows}
+
+            cursor = await self._connection.execute(
+                "SELECT SUM(click_count) AS total FROM report_engagement"
+            )
+            total_row = await cursor.fetchone()
+            total = int(total_row["total"] or 0) if total_row else 0
+
+        return {"total_engagements": total, "by_platform": platform_counts}
+
+    async def get_takedown_metrics(self) -> dict:
+        """Return takedown status counts and timing (best-effort)."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT takedown_status, COUNT(*) as count
+                FROM domains
+                WHERE takedown_status IS NOT NULL
+                GROUP BY takedown_status
+                """
+            )
+            rows = await cursor.fetchall()
+            by_status = {row["takedown_status"]: row["count"] for row in rows}
+
+            cursor = await self._connection.execute(
+                """
+                SELECT
+                    AVG(
+                        CAST(
+                            (JULIANDAY(COALESCE(takedown_detected_at, takedown_confirmed_at)) - JULIANDAY(reported_at)) * 24
+                            AS REAL
+                        )
+                    ) AS avg_hours_to_detect
+                FROM domains
+                WHERE takedown_status IN ('likely_down', 'confirmed_down')
+                  AND reported_at IS NOT NULL
+                  AND (takedown_detected_at IS NOT NULL OR takedown_confirmed_at IS NOT NULL)
+                """
+            )
+            row = await cursor.fetchone()
+            avg_hours = float(row["avg_hours_to_detect"]) if row and row["avg_hours_to_detect"] is not None else None
+
+        return {"by_status": by_status, "avg_hours_to_detect": avg_hours}
+
     async def domain_exists(self, domain: str) -> bool:
         """Check if domain already exists in database."""
         domain_lower = (domain or "").strip().lower()

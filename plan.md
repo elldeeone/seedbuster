@@ -880,53 +880,60 @@ class VercelReporter(BaseReporter):
 ## 5. Implementation Phases
 
 ### Phase 1: Foundation (Core Infrastructure)
-- [ ] Add `public_submissions` table
-- [ ] Add `report_engagement` table
-- [ ] Add `takedown_checks` table
-- [ ] Add `generate_manual_submission()` to BaseReporter
-- [ ] Add manual method to Netcraft reporter
+- [x] Add `public_submissions` table
+- [x] Add `report_engagement` table (with click_count + session hash cooldown)
+- [x] Add `takedown_checks` table and takedown columns on domains
+- [x] Add `generate_manual_submission()` to BaseReporter
+- [x] Add manual method to Netcraft reporter
 
 ### Phase 2: Public Submission
-- [ ] Implement `POST /api/public/submit` endpoint
-- [ ] Add domain validation and rate limiting
-- [ ] Implement `GET /admin/api/submissions` endpoint
-- [ ] Implement approve/reject endpoints
-- [ ] Add submission form to public frontend
-- [ ] Add submission queue to admin dashboard
+- [x] Implement `POST /api/public/submit` endpoint (domain canonicalization, private/localhost block, rate limit 10/hr/IP, honeypot, notes capped)
+- [x] Implement `GET /admin/api/submissions` endpoint
+- [x] Implement approve/reject endpoints (approve promotes domain + queues analysis)
+- [x] Add submission form to public frontend (shared component, public uses review-only endpoint)
+- [x] Add submission queue to admin dashboard (approve/reject actions)
 
 ### Phase 3: Public Reporting
-- [ ] Implement `GET /api/domains/{id}/report-options` endpoint
-- [ ] Implement `POST /api/domains/{id}/report-engagement` endpoint
-- [ ] Add session-based deduplication (24h cooldown)
-- [ ] Add report panel to public domain detail page
-- [ ] Add instructions modal with copy buttons
+- [x] Implement `GET /api/domains/{id}/report-options` endpoint (manual-only instructions + counters)
+- [x] Implement `POST /api/domains/{id}/report-engagement` endpoint (24h session cooldown)
+- [x] Add session-based deduplication (24h cooldown, counts tracked)
+- [x] Add report panel to public domain detail page with engagement counters and copyable fields
+- [x] Add instructions display (inline expand; copy buttons)
 
 ### Phase 4: New Reporters
-- [ ] Add Vercel reporter
-- [ ] Add Netlify reporter
-- [ ] Add AWS reporter
-- [ ] Add GCP reporter
-- [ ] Add Azure reporter
-- [ ] Add GoDaddy reporter
-- [ ] Add Namecheap reporter
-- [ ] Add Porkbun reporter
-- [ ] Add Telegram reporter
-- [ ] Add Discord reporter
-- [ ] Add Quad9 reporter
+- [x] Add Vercel reporter
+- [x] Add Netlify reporter
+- [x] Add AWS reporter
+- [x] Add GCP reporter
+- [x] Add Azure reporter
+- [x] Add GoDaddy reporter
+- [x] Add Namecheap reporter
+- [x] Add Porkbun reporter
+- [x] Add Telegram reporter
+- [x] Add Discord reporter
+- [x] Add Quad9 reporter
+- [x] Add OpenDNS reporter
+- [x] Add Google Domains reporter
+- [x] Add Tucows/Hover reporter
+- [x] Add Render reporter
+- [x] Add Fly.io reporter
+- [x] Add Railway reporter
+- [x] Add Heroku reporter
+- [ ] Remaining backlog (intentionally deferred per earlier instruction): Sendgrid, Mailgun; optional additional DNS/browser providers
 
 ### Phase 5: Takedown Detection
-- [ ] Implement TakedownChecker class
-- [ ] Add DNS resolution checking
-- [ ] Add HTTP status checking
-- [ ] Add WHOIS/RDAP status checking
-- [ ] Add hosting provider error detection
-- [ ] Implement monitoring scheduler
-- [ ] Add takedown status to domain detail page
-- [ ] Add correlation analytics queries
+- [x] Implement TakedownChecker class
+- [x] Add DNS resolution checking (sinkhole detection)
+- [x] Add HTTP status checking (404/410/5xx/connection failures)
+- [x] Add WHOIS/RDAP status checking (best-effort via RDAP status values)
+- [x] Add hosting provider error detection / content hash change detection (keyword heuristics + body hash)
+- [x] Implement monitoring scheduler/worker with cadence by age/status
+- [x] Add takedown status to domain detail page
+- [x] Add basic analytics (avg hours to detection; takedown status counts)
 
 ### Phase 6: Analytics & Polish
-- [ ] Dashboard showing engagement vs takedown correlation
-- [ ] Platform effectiveness metrics
+- [ ] Dashboard showing engagement vs takedown correlation (beyond current summaries)
+- [x] Platform effectiveness metrics (engagement counts per platform)
 - [ ] Community leaderboard (optional)
 - [ ] Email notifications for takedowns (optional)
 
