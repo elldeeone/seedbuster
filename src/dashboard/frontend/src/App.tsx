@@ -1285,7 +1285,6 @@ export default function App() {
               <b>{submitResult.domain}</b>
             </div>
           )}
-          {!canEdit && <div className="sb-muted" style={{ marginTop: 8 }}>Submissions are reviewed before scanning (no automatic actions).</div>}
         </form>
       </div>
 
