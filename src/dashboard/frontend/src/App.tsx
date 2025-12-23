@@ -7,7 +7,6 @@ import {
   fetchClusters,
   fetchDomainDetail,
   fetchDomains,
-  fetchPlatformInfo,
   fetchPublicSubmissions,
   fetchStats,
   isAdminMode,
@@ -1040,13 +1039,18 @@ export default function App() {
 
     // Fetch available platforms
     try {
-      const data = await fetchPlatformInfo();
-      setReportPanelPlatforms(data.platforms || []);
-      setReportPanelInfo(data.info || {});
-      // Pre-select all platforms by default
-      setReportPanelSelected(new Set(data.platforms || []));
+      const data = await fetchReportOptions(domain.id);
+      const platforms = (data.platforms || []).map((p) => p.id);
+      const info: Record<string, PlatformInfo> = {};
+      for (const p of data.platforms || []) {
+        info[p.id] = { manual_only: p.manual_only, url: p.url || "", name: p.name };
+      }
+      setReportPanelPlatforms(platforms);
+      setReportPanelInfo(info);
+      // Pre-select all applicable platforms by default
+      setReportPanelSelected(new Set(platforms));
     } catch (err) {
-      showToast((err as Error).message || "Failed to load platforms", "error");
+      showToast((err as Error).message || "Failed to load platform options", "error");
     }
   };
 
@@ -2235,7 +2239,7 @@ export default function App() {
                       {reportPanelInfo[reportPanelManualMode]?.url && (
                         <div className="sb-manual-cta">
                           <a className="sb-manual-cta-btn" href={reportPanelInfo[reportPanelManualMode].url} target="_blank" rel="noopener noreferrer">
-                            ↗ Open {reportPanelManualMode.charAt(0).toUpperCase() + reportPanelManualMode.slice(1)} Abuse Form
+                            ↗ Open {(reportPanelInfo[reportPanelManualMode].name || reportPanelManualMode).charAt(0).toUpperCase() + (reportPanelInfo[reportPanelManualMode].name || reportPanelManualMode).slice(1)} Abuse Form
                           </a>
                         </div>
                       )}
@@ -2368,6 +2372,7 @@ export default function App() {
                               const info = reportPanelInfo[platform] || {};
                               const isManual = info.manual_only;
                               const isSelected = reportPanelSelected.has(platform);
+                              const displayName = info.name || platform.charAt(0).toUpperCase() + platform.slice(1);
                               return (
                                 <label key={platform} className="sb-report-platform-item">
                                   <input
@@ -2383,7 +2388,7 @@ export default function App() {
                                       setReportPanelSelected(next);
                                     }}
                                   />
-                                  <span className="sb-report-platform-name">{platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
+                                  <span className="sb-report-platform-name">{displayName}</span>
                                   <span className={`sb-badge ${isManual ? "sb-badge-manual" : "sb-badge-auto"}`}>
                                     {isManual ? "Manual" : "Auto"}
                                   </span>

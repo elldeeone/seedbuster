@@ -221,6 +221,7 @@ export async function updateWatchlistBaseline(domainId: number): Promise<any> {
 export interface PlatformInfo {
   manual_only: boolean;
   url: string;
+  name?: string;
 }
 
 export async function fetchPlatformInfo(): Promise<{

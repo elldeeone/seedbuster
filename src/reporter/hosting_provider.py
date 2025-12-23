@@ -33,6 +33,8 @@ ABUSE_FORMS: dict[str, str] = {
     "vercel": "https://vercel.com/abuse",
     "netlify": "https://www.netlify.com/abuse/",
     "heroku": "https://www.heroku.com/policy/aup-reporting",
+    "contabo": "https://contabo.com/en/company/contact/",
+    "dreamhost": "https://www.dreamhost.com/company/contact/",
 }
 
 
@@ -43,6 +45,12 @@ ABUSE_EMAILS: dict[str, str] = {
     "hostinger": "abuse@hostinger.com",
     "ovh": "abuse@ovh.net",
     "hetzner": "abuse@hetzner.com",
+    "contabo": "abuse@contabo.com",
+    "cogent": "abuse@cogentco.com",
+    "rackforest": "abuse@rackforest.com",
+    "dreamhost": "abuse@dreamhost.com",
+    "trellian": "abuse@trellian.com",
+    "internetbilisim": "abuse@ultahost.com",
 }
 
 
@@ -83,6 +91,8 @@ class HostingProviderReporter(BaseReporter):
             return "netlify"
         if "herokuapp" in haystack:
             return "heroku"
+        if "aws" in haystack or "cloudfront" in haystack or "amazonaws" in haystack:
+            return "aws"
 
         return None
 
@@ -90,8 +100,6 @@ class HostingProviderReporter(BaseReporter):
         provider = self._detect_provider_from_evidence(evidence)
         if not provider:
             return False, "No hosting provider identified"
-        if provider not in ABUSE_FORMS and provider not in ABUSE_EMAILS:
-            return False, f"No known abuse destination for provider: {provider}"
         return True, ""
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
@@ -115,12 +123,15 @@ class HostingProviderReporter(BaseReporter):
         form_url = ABUSE_FORMS.get(provider)
         email = ABUSE_EMAILS.get(provider)
 
-        if not form_url and not email:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.SKIPPED,
-                message=f"No known abuse destination for provider: {provider}",
-            )
+        ips: list[str] = []
+        try:
+            infra = evidence.analysis_json.get("infrastructure") if evidence.analysis_json else {}
+            if infra:
+                ips = infra.get("ip_addresses") or infra.get("resolved_ips") or []
+                if isinstance(ips, str):
+                    ips = [ips]
+        except Exception:
+            ips = []
 
         # Build structured data for the new UI
         fields: list[ManualSubmissionField] = [
@@ -130,8 +141,18 @@ class HostingProviderReporter(BaseReporter):
                 value=evidence.url,
             ),
         ]
+        if ips:
+            fields.append(
+                ManualSubmissionField(
+                    name="ip_addresses",
+                    label="IP address(es)",
+                    value=", ".join(ips),
+                )
+            )
 
         evidence_summary = evidence.to_summary().strip()
+        if ips:
+            evidence_summary = f"IPs: {', '.join(ips)}\n\n" + evidence_summary
 
         if email:
             try:
@@ -188,6 +209,15 @@ class HostingProviderReporter(BaseReporter):
                 "Submit via the abuse form or email the abuse contact.",
             ],
         )
+
+        if not form_url and not email:
+            manual_data.notes.append("No specific abuse contact found; use the provider/ASN WHOIS abuse email.")
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.MANUAL_REQUIRED,
+                message=f"No known abuse destination for provider: {provider}",
+                response_data={"manual_fields": manual_data.to_dict()},
+            )
 
         # Build plain text message for backwards compatibility
         parts: list[str] = [
