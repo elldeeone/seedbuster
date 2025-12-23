@@ -605,6 +605,11 @@ class ReportManager:
             "wix": "wix",
             "squarespace": "squarespace",
             "shopify": "shopify",
+            "vercel": "vercel",
+            "netlify": "netlify",
+            "railway": "railway",
+            "render": "render",
+            "heroku": "heroku",
         }
         return aliases.get(key, key)
 
@@ -630,6 +635,16 @@ class ReportManager:
                     candidates.append("azure")
                 if "google" in ns_combined or "googledomains" in ns_combined:
                     candidates.append("gcp")
+                if "vercel-dns.com" in ns_combined:
+                    candidates.append("vercel")
+                if "netlifydns.net" in ns_combined:
+                    candidates.append("netlify")
+                if "herokudns.com" in ns_combined:
+                    candidates.append("heroku")
+                if "shopifydns" in ns_combined:
+                    candidates.append("shopify")
+                if "render.com" in ns_combined:
+                    candidates.append("render")
         except Exception:
             pass
 
@@ -662,6 +677,10 @@ class ReportManager:
             "wix": ["wixsite.com", ".wixdns.net", "wix"],
             "squarespace": ["squarespace.com", "squarespace-cdn.com"],
             "shopify": ["myshopify.com", "shopify"],
+            "digitalocean": ["digitaloceanspaces.com", "ondigitalocean.app"],
+            "heroku": ["herokudns.com", "herokuapp.com"],
+            "railway": ["railway.app"],
+            "render": ["onrender.com", "render.com"],
         }
         for provider, needles in patterns.items():
             if any(needle in haystack for needle in needles):
@@ -752,6 +771,12 @@ class ReportManager:
             "railway",
             "heroku",
             "cloudflare",
+            "fastly",
+            "akamai",
+            "sucuri",
+            "wix",
+            "squarespace",
+            "shopify",
             "hosting_provider",
         }
         registrar_specific = {

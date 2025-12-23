@@ -76,11 +76,11 @@ class HostingInfo:
 
     # Known cloud/hosting providers often abused for phishing
     CLOUD_PROVIDERS = {
-        "digitalocean": ["digitalocean", "DO-13"],
-        "cloudflare": ["cloudflare", "CLOUDFLARENET"],
-        "aws": ["amazon", "AMAZON-", "AWS"],
-        "google": ["google", "GOOGLE"],
-        "azure": ["microsoft", "MSFT"],
+        "digitalocean": ["digitalocean", "DO-13", "ondigitalocean"],
+        "cloudflare": ["cloudflare", "CLOUDFLARENET", "cloudflarewarp"],
+        "aws": ["amazon", "AMAZON-", "AWS", "cloudfront"],
+        "google": ["google", "GOOGLE", "google cloud"],
+        "azure": ["microsoft", "MSFT", "azure"],
         "vultr": ["vultr", "VULTR"],
         "linode": ["linode", "LINODE"],
         "hetzner": ["hetzner", "HETZNER"],
@@ -88,12 +88,18 @@ class HostingInfo:
         "namecheap": ["namecheap"],
         "hostinger": ["hostinger"],
         "godaddy": ["godaddy"],
-        "fastly": ["fastly"],
-        "akamai": ["akamai"],
+        "fastly": ["fastly", "fastlyinc", "fastly-cdn", "fastlylb"],
+        "akamai": ["akamai", "akamaitechnologies", "edgesuite", "akamaiedge", "akadns"],
         "sucuri": ["sucuri"],
-        "wix": ["wix"],
+        "wix": ["wix", "wixdns"],
         "squarespace": ["squarespace"],
-        "shopify": ["shopify"],
+        "shopify": ["shopify", "shopifydns"],
+        "vercel": ["vercel"],
+        "netlify": ["netlify"],
+        "render": ["render"],
+        "fly_io": ["fly.io", "flyio", "flyglobal"],
+        "railway": ["railway"],
+        "heroku": ["heroku"],
     }
 
     # Known bulletproof/abuse-friendly hosting
@@ -565,6 +571,13 @@ class InfrastructureAnalyzer:
             "aws": ["awsdns-"],
             "azure": ["azure-dns"],
             "gcp": ["cloudns", ".google."],
+            "shopify": ["shopifydns"],
+            "vercel": ["vercel-dns.com"],
+            "netlify": ["netlifydns.net"],
+            "heroku": ["herokudns.com"],
+            "render": ["render.com"],
+            "fastly": ["fastlydns.com", "fastlylb.net"],
+            "akamai": ["akamai", "akamaiedge", "akadns"],
         }
         for registrar, needles in patterns.items():
             if any(needle in joined for needle in needles):
