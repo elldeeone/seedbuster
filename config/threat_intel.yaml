@@ -1,5 +1,5 @@
-version: '1.19'
-last_updated: '2025-12-19'
+version: '1.21'
+last_updated: '2025-12-23'
 malicious_domains:
 - domain: walrus-app-o5hvw.ondigitalocean.app
   type: exfiltration
@@ -127,6 +127,18 @@ malicious_domains:
   type: phishing_host
   confidence: high
   first_seen: '2025-12-19'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+- domain: kaspadrop.org
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-23'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+- domain: kaspa.insure
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-23'
   source: seedbuster_auto
   notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
 malicious_patterns:
