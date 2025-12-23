@@ -135,12 +135,92 @@ Reject submission.
 
 ### Frontend Changes
 
-#### Public Submission Form
-- Add to public dashboard header or dedicated `/submit` page
-- Simple form: domain input + optional notes
-- Honeypot field (CSS hidden)
-- Success message with "thank you" confirmation
-- Show if domain was already submitted by others ("3 others reported this")
+#### Reuse Existing Submission Form
+
+The admin dashboard already has a submission form (`App.tsx:1048-1069`). We reuse this:
+
+**Current state:**
+```tsx
+{canEdit && (
+  <div className="sb-panel">
+    <form onSubmit={(e) => handleSubmit(e, "submit")}>
+      <input placeholder="example.com or https://target" ... />
+      <button>Force Rescan</button>      {/* Admin only */}
+      <button>Submit New</button>
+    </form>
+  </div>
+)}
+```
+
+**Changes needed:**
+
+1. **Remove `canEdit` guard** - show form on public too
+2. **Conditional button rendering:**
+   - Admin: "Force Rescan" + "Submit New" (triggers scan)
+   - Public: "Submit for Review" only (no rescan)
+3. **Different API call based on mode:**
+   ```tsx
+   const handleSubmit = async (...) => {
+     if (canEdit) {
+       // Admin: existing behavior - triggers scan
+       await submitTarget(submitValue);
+     } else {
+       // Public: new endpoint - held for review
+       await submitPublicTarget(submitValue);
+     }
+   };
+   ```
+4. **Different success messaging:**
+   - Admin: "Submitted {domain}"
+   - Public: "Thanks! {domain} submitted for review"
+
+**New API function in `api.ts`:**
+```typescript
+export async function submitPublicTarget(
+  target: string
+): Promise<{ status: string; domain: string; duplicate?: boolean }> {
+  // Always use public endpoint, not getApiBase()
+  const res = await fetch("/api/public/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+```
+
+**Updated form rendering:**
+```tsx
+{/* Submission Form - shown on both admin and public */}
+<div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
+  <div className="sb-panel-header">
+    <span className="sb-panel-title">
+      {canEdit ? "Manual Submission" : "Report a Suspicious Site"}
+    </span>
+  </div>
+  <form onSubmit={handleSubmit}>
+    <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
+      <input
+        className="sb-input"
+        placeholder="example.com or https://suspicious-site.com"
+        value={submitValue}
+        onChange={(e) => setSubmitValue(e.target.value)}
+        style={{ flex: 1, minWidth: 200 }}
+      />
+      {canEdit && (
+        <button className="sb-btn" type="button" onClick={(e) => handleSubmit(e, "rescan")}>
+          Force Rescan
+        </button>
+      )}
+      <button className="sb-btn sb-btn-primary" type="submit">
+        {canEdit ? "Submit New" : "Submit for Review"}
+      </button>
+    </div>
+    {/* Success/error messages */}
+  </form>
+</div>
+```
 
 #### Admin Submission Queue
 - New card in admin dashboard: "Public Submissions (12 pending)"
