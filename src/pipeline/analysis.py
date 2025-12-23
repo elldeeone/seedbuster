@@ -454,6 +454,16 @@ class AnalysisEngine:
                                 if infra_result and infra_result.domain_info
                                 else False
                             ),
+                            "registrar": (
+                                infra_result.domain_info.registrar
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                            "nameservers": (
+                                infra_result.domain_info.nameservers
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
                         },
                         "code_analysis": {
                             "score": detection.code_score,

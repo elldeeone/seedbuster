@@ -590,6 +590,7 @@ class ReportManager:
             "amazon web services": "aws",
             "aws": "aws",
             "google cloud": "gcp",
+            "google cloud platform": "gcp",
             "google": "gcp",
             "gcp": "gcp",
             "microsoft": "azure",
@@ -598,6 +599,12 @@ class ReportManager:
             "fly.io": "fly_io",
             "flyio": "fly_io",
             "fly": "fly_io",
+            "fastly": "fastly",
+            "akamai": "akamai",
+            "sucuri": "sucuri",
+            "wix": "wix",
+            "squarespace": "squarespace",
+            "shopify": "shopify",
         }
         return aliases.get(key, key)
 
@@ -612,6 +619,17 @@ class ReportManager:
         try:
             infra = (evidence.analysis_json or {}).get("infrastructure") or {}
             candidates.append(infra.get("hosting_provider"))
+            ns = infra.get("nameservers") or []
+            ns_combined = " ".join(ns).lower() if isinstance(ns, list) else ""
+            if ns_combined:
+                if "cloudflare.com" in ns_combined:
+                    candidates.append("cloudflare")
+                if "awsdns-" in ns_combined:
+                    candidates.append("aws")
+                if "azure-dns" in ns_combined:
+                    candidates.append("azure")
+                if "google" in ns_combined or "googledomains" in ns_combined:
+                    candidates.append("gcp")
         except Exception:
             pass
 
@@ -638,6 +656,12 @@ class ReportManager:
             "gcp": ["appspot.com", "cloudfunctions.net", "googleusercontent.com", "firebaseapp.com", ".web.app", "gcp"],
             "azure": ["azurewebsites.net", "azureedge.net", "cloudapp.azure.com", "azure"],
             "cloudflare": ["workers.dev", "pages.dev", "cloudflare"],
+            "fastly": ["fastly.net", ".fastly"],
+            "akamai": ["akamai.net", ".akamai", "akadns.net"],
+            "sucuri": ["sucuri.net", "sucuri"],
+            "wix": ["wixsite.com", ".wixdns.net", "wix"],
+            "squarespace": ["squarespace.com", "squarespace-cdn.com"],
+            "shopify": ["myshopify.com", "shopify"],
         }
         for provider, needles in patterns.items():
             if any(needle in haystack for needle in needles):
