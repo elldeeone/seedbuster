@@ -1403,7 +1403,7 @@ export default function App() {
       )}
 
       {/* Reports Needing Attention - full width when present */}
-      {pendingReports.length > 0 && (
+      {canEdit && pendingReports.length > 0 && (
         <div className="sb-panel" style={{ borderColor: "rgba(240, 136, 62, 0.3)", marginBottom: 16 }}>
           <div className="sb-panel-header" style={{ borderColor: "rgba(240, 136, 62, 0.2)" }}>
             <span className="sb-panel-title" style={{ color: "var(--accent-orange)" }}>Reports Needing Attention ({filteredPendingReports.length})</span>
@@ -2065,9 +2065,11 @@ export default function App() {
             <div className="sb-logo-icon">SB</div>
             <span className="sb-logo-text">SeedBuster</span>
           </a>
-          <span className={`sb-mode ${isAdmin ? "mode-admin" : "mode-public"}`}>
-            {isAdmin ? "ADMIN" : "PUBLIC"}
-          </span>
+          {isAdmin && (
+            <span className={`sb-mode ${isAdmin ? "mode-admin" : "mode-public"}`}>
+              ADMIN
+            </span>
+          )}
         </div>
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
@@ -2152,7 +2154,7 @@ export default function App() {
 
       <footer className="sb-footer">
         <span>SeedBuster Phishing Detection Pipeline</span>
-        <span>{isAdmin ? "Admin view" : "Public view (read-only)"}</span>
+        <span>{isAdmin ? "Admin view" : ""}</span>
       </footer>
 
       <div id="sb-toast-container" className="sb-toast-container" aria-live="polite">
