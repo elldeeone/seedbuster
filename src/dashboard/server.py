@@ -5624,6 +5624,12 @@ class DashboardServer:
             )
 
         source_url = str(data.get("source_url") or "").strip() or None
+        if source_url:
+            if len(source_url) > 2048:
+                return web.json_response({"error": "Source URL too long"}, status=400)
+            parsed = urlparse(source_url if "://" in source_url else f"https://{source_url}")
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                return web.json_response({"error": "Source URL must be http(s)"}, status=400)
         reporter_notes = (data.get("notes") or "").strip()
         if reporter_notes and len(reporter_notes) > 1000:
             reporter_notes = reporter_notes[:1000]

@@ -618,6 +618,8 @@ export default function App() {
 
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
   const [submitValue, setSubmitValue] = useState("");
+  const [submitSource, setSubmitSource] = useState("");
+  const [submitNotes, setSubmitNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<{ status: string; domain: string; duplicate?: boolean; message?: string } | null>(null);
@@ -879,11 +881,16 @@ export default function App() {
         }
         loadDomains();
       } else {
-        const res = await submitPublicTarget(submitValue.trim());
+        const res = await submitPublicTarget(submitValue.trim(), {
+          sourceUrl: submitSource.trim() || undefined,
+          notes: submitNotes.trim() || undefined,
+        });
         const message = res.message || (res.duplicate ? "Already submitted by someone else" : "Submitted for review");
         showToast(message, res.duplicate ? "info" : "success");
         setSubmitResult(res);
         setSubmitValue("");
+        setSubmitSource("");
+        setSubmitNotes("");
       }
     } catch (err) {
       const msg = (err as Error).message || "Submit failed";
@@ -1238,6 +1245,38 @@ export default function App() {
               {submitting ? "Submitting…" : canEdit ? "Submit New" : "Submit for Review"}
             </button>
           </div>
+          {!canEdit && (
+            <>
+              <div className="sb-row" style={{ marginTop: 10, gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 260 }}>
+                  <div className="sb-label">Where did you see this? (optional)</div>
+                  <input
+                    className="sb-input"
+                    placeholder="Link to ad/post or the exact phishing URL"
+                    value={submitSource}
+                    onChange={(e) => setSubmitSource(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                  <div className="sb-muted" style={{ fontSize: 12, marginTop: 4 }}>
+                    Example: https://x.com/... or https://phish.example.com/login
+                  </div>
+                </div>
+              </div>
+              <div className="sb-row" style={{ marginTop: 10 }}>
+                <div style={{ width: "100%" }}>
+                  <div className="sb-label">Why is this suspicious? (optional)</div>
+                  <textarea
+                    className="sb-input"
+                    rows={3}
+                    placeholder="Briefly describe what looked phishing (wallet prompt, seed phrase request, fake giveaway, etc.)"
+                    value={submitNotes}
+                    onChange={(e) => setSubmitNotes(e.target.value)}
+                    style={{ width: "100%", resize: "vertical" }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
           {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
           {submitResult && (
             <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>

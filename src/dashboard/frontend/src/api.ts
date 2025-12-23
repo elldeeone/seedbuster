@@ -109,11 +109,18 @@ export async function submitTarget(target: string): Promise<{ status: string; do
   });
 }
 
-export async function submitPublicTarget(target: string): Promise<{ status: string; domain: string; duplicate?: boolean; submission_id?: number; message?: string }> {
+export async function submitPublicTarget(
+  target: string,
+  opts: { sourceUrl?: string; notes?: string } = {},
+): Promise<{ status: string; domain: string; duplicate?: boolean; submission_id?: number; message?: string }> {
   const res = await fetch("/api/public/submit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ domain: target }),
+    body: JSON.stringify({
+      domain: target,
+      source_url: opts.sourceUrl,
+      notes: opts.notes,
+    }),
   });
   if (!res.ok) {
     const msg = await res.text();
