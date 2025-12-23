@@ -1998,19 +1998,21 @@ export default function App() {
             </div>
             {domainDetail.infrastructure ? (
               <div className="sb-grid" style={{ gap: 12 }}>
-                <div className="col-3">
-                  <div className="sb-label">IP Addresses</div>
-                  {renderInfraList(domainDetail.infrastructure.ip_addresses)}
-                </div>
-                <div className="col-3">
+                <div className="col-4">
                   <div className="sb-label">Hosting Provider</div>
-                  <div className="sb-muted">{domainDetail.infrastructure.hosting_provider || "\u2014"}</div>
+                  <div className="sb-muted" style={{ fontWeight: 600 }}>
+                    {domainDetail.infrastructure.hosting_provider || "\u2014"}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 13 }}>
+                    <span className="sb-label" style={{ display: "inline-block", marginRight: 6 }}>IP</span>
+                    {renderInfraList(domainDetail.infrastructure.ip_addresses)}
+                  </div>
                 </div>
-                <div className="col-3">
+                <div className="col-4">
                   <div className="sb-label">Registrar</div>
                   <div className="sb-muted">{domainDetail.infrastructure.registrar || "\u2014"}</div>
                 </div>
-                <div className="col-3">
+                <div className="col-4">
                   <div className="sb-label">Nameservers</div>
                   {renderInfraList(domainDetail.infrastructure.nameservers)}
                 </div>
