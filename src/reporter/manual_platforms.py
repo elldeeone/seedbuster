@@ -395,6 +395,63 @@ class TucowsReporter(_SimpleFormReporter):
         )
 
 
+class NjallaReporter(BaseReporter):
+    """Manual helper for Njalla-hosted/nameserved domains via their contact form."""
+
+    manual_only = True
+    supports_evidence = True
+    requires_api_key = False
+    rate_limit_per_minute = 30
+
+    def __init__(self):
+        super().__init__()
+        self.platform_name = "njalla"
+        self.platform_url = "https://njal.la/contact/"
+        self._configured = True
+
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        description = _basic_description(evidence)
+        return ManualSubmissionData(
+            form_url=self.platform_url,
+            reason="Njalla contact form",
+            fields=[
+                ManualSubmissionField(name="url", label="URL to report", value=evidence.url),
+                ManualSubmissionField(
+                    name="subject",
+                    label="Subject",
+                    value=f"Abuse report: {evidence.domain}",
+                ),
+                ManualSubmissionField(
+                    name="details",
+                    label="Details / evidence",
+                    value=description,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "Njalla's public site exposes a general contact form (https://njal.la/contact/) for all requests.",
+                "Include your email in the form and paste the details above into the message field.",
+            ],
+        )
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        manual_data = self.generate_manual_submission(evidence)
+        return ReportResult(
+            platform=self.platform_name,
+            status=ReportStatus.MANUAL_REQUIRED,
+            message=f"Manual submission required: {self.platform_url}",
+            response_data={"manual_fields": manual_data.to_dict()},
+        )
+
+
 class RenderReporter(_SimpleEmailReporter):
     def __init__(self):
         super().__init__(

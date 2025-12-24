@@ -50,6 +50,7 @@ class ResendReporter(BaseReporter):
 
     platform_name = "resend"
     platform_url = "https://resend.com"
+    public_exclude = True  # Internal automation channel; not shown in public manual list
     supports_evidence = True
     requires_api_key = True
     rate_limit_per_minute = 10  # Resend free tier: 100/day

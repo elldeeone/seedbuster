@@ -4,10 +4,13 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
+
+import httpx
 
 from .base import (
     BaseReporter,
@@ -393,7 +396,10 @@ class ReportManager:
         self.resend_api_key = resend_api_key
         self.resend_from_email = resend_from_email
         self.reporter_email = reporter_email
-        self.enabled_platforms = set(enabled_platforms) if enabled_platforms is not None else None
+        if enabled_platforms in (None, [], set(), ()):
+            self.enabled_platforms = None
+        else:
+            self.enabled_platforms = {p for p in enabled_platforms}
 
         self.reporters: dict[str, BaseReporter] = {}
         self._init_reporters()
@@ -426,6 +432,7 @@ class ReportManager:
             OpenDNSReporter,
             GoogleDomainsReporter,
             TucowsReporter,
+            NjallaReporter,
             RenderReporter,
             FlyReporter,
             RailwayReporter,
@@ -502,6 +509,7 @@ class ReportManager:
         self.reporters["opendns"] = OpenDNSReporter()
         self.reporters["google_domains"] = GoogleDomainsReporter()
         self.reporters["tucows"] = TucowsReporter()
+        self.reporters["njalla"] = NjallaReporter()
         self.reporters["render"] = RenderReporter()
         self.reporters["fly_io"] = FlyReporter()
         self.reporters["railway"] = RailwayReporter()
@@ -601,6 +609,72 @@ class ReportManager:
         }
         return aliases.get(key, key)
 
+    def _provider_host_candidates(self, evidence: ReportEvidence) -> list[str]:
+        """Collect hostnames worth probing for provider signals (preserve priority)."""
+        hosts: list[str] = []
+        seen: set[str] = set()
+
+        def _add_host(raw: Optional[str]) -> None:
+            if not raw:
+                return
+            parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+            host = (parsed.hostname or "").strip().lower()
+            if host and host not in seen:
+                seen.add(host)
+                hosts.append(host)
+
+        _add_host(evidence.url)
+        _add_host((evidence.analysis_json or {}).get("final_url"))
+
+        for endpoint in evidence.suspicious_endpoints or []:
+            _add_host(endpoint)
+        for backend in evidence.backend_domains or []:
+            _add_host(backend)
+
+        return hosts
+
+    def _detect_vercel_from_hosts(self, hosts: list[str]) -> set[str]:
+        """Lightweight Vercel detection using DNS/IP ranges and headers."""
+        hints: set[str] = set()
+        if not hosts:
+            return hints
+
+        # Known Vercel edge ranges (documented for alias.vercel-dns.com)
+        vercel_ip_prefixes = ("76.76.21.", "76.76.22.", "76.223.126.", "76.223.127.")
+        header_keys = ("server", "x-vercel-id", "x-vercel-cache", "x-powered-by")
+
+        for host in hosts[:5]:  # cap to avoid long probes
+            if "vercel" in host:
+                hints.add("vercel")
+                continue
+
+            try:
+                infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+                ips = {info[4][0] for info in infos if info and info[4]}
+            except Exception:
+                ips = set()
+
+            if any(ip.startswith(prefix) for prefix in vercel_ip_prefixes for ip in ips):
+                hints.add("vercel")
+                continue
+
+            # As a fallback, probe headers for explicit Vercel markers
+            try:
+                resp = httpx.get(
+                    f"https://{host}",
+                    timeout=3.0,
+                    follow_redirects=True,
+                    verify=False,
+                    headers={"User-Agent": "SeedBuster/abuse-helper"},
+                )
+                header_values = " ".join(resp.headers.get(k, "") for k in header_keys).lower()
+                if "vercel" in header_values:
+                    hints.add("vercel")
+            except Exception:
+                continue
+
+        return hints
+
     def _collect_hosting_hints(self, evidence: ReportEvidence) -> set[str]:
         """Collect hosting/provider hints from analysis outputs and endpoints."""
         hints: set[str] = set()
@@ -631,6 +705,8 @@ class ReportManager:
                     candidates.append("shopify")
                 if "render.com" in ns_combined:
                     candidates.append("render")
+                if "njalla" in ns_combined:
+                    candidates.append("njalla")
         except Exception:
             pass
 
@@ -687,6 +763,29 @@ class ReportManager:
             hints.add("discord")
         return hints
 
+    async def _collect_hosting_hints_async(self, evidence: ReportEvidence) -> set[str]:
+        """
+        Async wrapper to enrich hosting hints with lightweight live probes.
+
+        This keeps the base heuristic fast while adding selective checks
+        (e.g., Vercel headers/CNAME IPs) without blocking the event loop.
+        """
+        hints = self._collect_hosting_hints(evidence)
+        if "vercel" in hints:
+            return hints
+
+        candidates = self._provider_host_candidates(evidence)
+        if not candidates:
+            return hints
+
+        try:
+            extra = await asyncio.to_thread(self._detect_vercel_from_hosts, candidates)
+            hints.update(extra)
+        except Exception as e:
+            logger.debug("Provider host probe failed for %s: %s", evidence.domain, e)
+
+        return hints
+
     async def _detect_registrar_hint(self, evidence: ReportEvidence) -> tuple[Optional[str], Optional[str]]:
         """Best-effort registrar lookup using cached analysis or RDAP."""
         registrar = None
@@ -724,6 +823,7 @@ class ReportManager:
             "tucows": "tucows",
             "hover": "tucows",
             "google": "google_domains",
+            "njalla": "njalla",
         }
         return {platform for needle, platform in mapping.items() if needle in name}
 
@@ -760,6 +860,7 @@ class ReportManager:
             "wix",
             "squarespace",
             "shopify",
+            "njalla",
             "hosting_provider",
         }
         registrar_specific = {
@@ -843,7 +944,7 @@ class ReportManager:
         service_specific = {"telegram", "discord"}
 
         if any(p in hosting_specific for p in platforms):
-            hosting_hints = self._collect_hosting_hints(evidence)
+            hosting_hints = await self._collect_hosting_hints_async(evidence)
         if any(p in registrar_specific for p in platforms):
             registrar_name, registrar_abuse_email = await self._detect_registrar_hint(evidence)
             registrar_matches = self._registrar_platforms_for(registrar_name)
@@ -854,6 +955,9 @@ class ReportManager:
         for platform in platforms:
             reporter = self.reporters.get(platform)
             if not reporter or not reporter.is_configured():
+                continue
+            if getattr(reporter, "public_exclude", False):
+                logger.debug(f"Skipping {platform} for manual instructions (public_exclude)")
                 continue
             applicable, reason = self._platform_applicable(
                 platform=platform,

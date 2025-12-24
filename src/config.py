@@ -206,7 +206,7 @@ class Config:
     # Reporting options
     report_require_approval: bool = True
     report_min_score: int = 80
-    report_platforms: list[str] = field(
+    report_platforms: list[str] | None = field(
         default_factory=lambda: ["google", "cloudflare", "netcraft", "resend"]
     )
 
@@ -393,7 +393,10 @@ def load_config() -> Config:
 
     # Parse report platforms from comma-separated string
     report_platforms_str = os.getenv("REPORT_PLATFORMS", "google,cloudflare,netcraft,resend")
+    report_platforms_raw = report_platforms_str.strip().lower()
     report_platforms = [p.strip() for p in report_platforms_str.split(",") if p.strip()]
+    if not report_platforms or report_platforms_raw in {"all", "*"}:
+        report_platforms = None
 
     queries_str = os.getenv("SEARCH_DISCOVERY_QUERIES", "")
     search_kwargs: dict[str, object] = {}
