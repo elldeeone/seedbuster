@@ -156,7 +156,6 @@ class Config:
     analysis_score_threshold: int = 70
 
     # Reporting API keys
-    phishtank_api_key: str = ""
     resend_api_key: str = ""
     resend_from_email: str = "SeedBuster <onboarding@resend.dev>"
 
@@ -430,7 +429,6 @@ def load_config() -> Config:
         health_enabled=os.getenv("HEALTH_ENABLED", "true").lower() == "true",
         domain_score_threshold=int(os.getenv("DOMAIN_SCORE_THRESHOLD", "30")),
         analysis_score_threshold=int(os.getenv("ANALYSIS_SCORE_THRESHOLD", "70")),
-        phishtank_api_key=os.getenv("PHISHTANK_API_KEY", ""),
         resend_api_key=os.getenv("RESEND_API_KEY", ""),
         resend_from_email=os.getenv("RESEND_FROM_EMAIL", "SeedBuster <onboarding@resend.dev>"),
         virustotal_api_key=os.getenv("VIRUSTOTAL_API_KEY", ""),

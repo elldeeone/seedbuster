@@ -382,7 +382,6 @@ class ReportManager:
         database: "Database",
         evidence_store: "EvidenceStore",
         smtp_config: Optional[dict] = None,
-        phishtank_api_key: Optional[str] = None,
         resend_api_key: Optional[str] = None,
         resend_from_email: Optional[str] = None,
         reporter_email: str = "",
@@ -391,7 +390,6 @@ class ReportManager:
         self.database = database
         self.evidence_store = evidence_store
         self.smtp_config = smtp_config or {}
-        self.phishtank_api_key = phishtank_api_key
         self.resend_api_key = resend_api_key
         self.resend_from_email = resend_from_email
         self.reporter_email = reporter_email
@@ -403,7 +401,6 @@ class ReportManager:
     def _init_reporters(self):
         """Initialize available reporters based on configuration."""
         # Import here to avoid circular imports
-        from .phishtank import PhishTankReporter
         from .smtp_reporter import SMTPReporter
         from .cloudflare import CloudflareReporter
         from .google_form import GoogleFormReporter
@@ -432,14 +429,7 @@ class ReportManager:
             RenderReporter,
             FlyReporter,
             RailwayReporter,
-            HerokuReporter,
         )
-
-        # PhishTank (requires login, registration currently disabled)
-        self.reporters["phishtank"] = PhishTankReporter(
-            api_key=self.phishtank_api_key
-        )
-        logger.info("Initialized PhishTank reporter (note: requires login)")
 
         # Google Safe Browsing form (always available, free)
         self.reporters["google"] = GoogleFormReporter()
@@ -515,7 +505,6 @@ class ReportManager:
         self.reporters["render"] = RenderReporter()
         self.reporters["fly_io"] = FlyReporter()
         self.reporters["railway"] = RailwayReporter()
-        self.reporters["heroku"] = HerokuReporter()
         logger.info("Initialized manual-only reporters for providers/registrars/messaging")
 
         # SMTP reporter (configured when SMTP host and from_email are present)
@@ -609,7 +598,6 @@ class ReportManager:
             "netlify": "netlify",
             "railway": "railway",
             "render": "render",
-            "heroku": "heroku",
         }
         return aliases.get(key, key)
 
@@ -639,8 +627,6 @@ class ReportManager:
                     candidates.append("vercel")
                 if "netlifydns.net" in ns_combined:
                     candidates.append("netlify")
-                if "herokudns.com" in ns_combined:
-                    candidates.append("heroku")
                 if "shopifydns" in ns_combined:
                     candidates.append("shopify")
                 if "render.com" in ns_combined:
@@ -666,7 +652,6 @@ class ReportManager:
             "render": ["onrender.com", ".render.com", "render.com"],
             "fly_io": [".fly.dev", "fly.dev"],
             "railway": ["railway.app", ".railway.app"],
-            "heroku": ["herokuapp.com", ".herokuapp.com", "heroku"],
             "aws": ["amazonaws.com", "cloudfront.net", ".awsstatic", "aws"],
             "gcp": ["appspot.com", "cloudfunctions.net", "googleusercontent.com", "firebaseapp.com", ".web.app", "gcp"],
             "azure": ["azurewebsites.net", "azureedge.net", "cloudapp.azure.com", "azure"],
@@ -678,7 +663,6 @@ class ReportManager:
             "squarespace": ["squarespace.com", "squarespace-cdn.com"],
             "shopify": ["myshopify.com", "shopify"],
             "digitalocean": ["digitaloceanspaces.com", "ondigitalocean.app"],
-            "heroku": ["herokudns.com", "herokuapp.com"],
             "railway": ["railway.app"],
             "render": ["onrender.com", "render.com"],
         }
@@ -769,7 +753,6 @@ class ReportManager:
             "render",
             "fly_io",
             "railway",
-            "heroku",
             "cloudflare",
             "fastly",
             "akamai",
@@ -846,7 +829,6 @@ class ReportManager:
             "render",
             "fly_io",
             "railway",
-            "heroku",
             "cloudflare",
             "hosting_provider",
         }
@@ -2097,7 +2079,7 @@ To submit for real, run the command without --dry-run.
                     results["backends"].append(result)
 
         # 2. Report to blocklists (parallel)
-        blocklist_platforms = ["google", "netcraft", "phishtank"]
+        blocklist_platforms = ["google", "netcraft"]
         if platforms:
             blocklist_platforms = [p for p in blocklist_platforms if p in platforms]
 

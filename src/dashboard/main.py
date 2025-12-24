@@ -65,7 +65,6 @@ async def run_dashboard() -> None:
             "password": config.smtp_password,
             "from_email": config.smtp_from_email or config.resend_from_email,
         },
-        phishtank_api_key=config.phishtank_api_key or None,
         resend_api_key=config.resend_api_key,
         resend_from_email=config.resend_from_email,
         reporter_email=config.smtp_from_email or config.resend_from_email,

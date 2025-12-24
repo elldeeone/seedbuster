@@ -15,7 +15,6 @@ from .rate_limiter import RateLimiter, get_rate_limiter
 from .templates import ReportTemplates
 
 # Platform reporters
-from .phishtank import PhishTankReporter
 from .cloudflare import CloudflareReporter
 from .google_form import GoogleFormReporter
 from .smtp_reporter import SMTPReporter
@@ -35,7 +34,6 @@ from .manual_platforms import (
     GCPReporter,
     GoogleDomainsReporter,
     GoDaddyReporter,
-    HerokuReporter,
     NamecheapReporter,
     NetlifyReporter,
     OpenDNSReporter,
@@ -65,7 +63,6 @@ __all__ = [
     "get_rate_limiter",
     "ReportTemplates",
     # Reporters
-    "PhishTankReporter",
     "CloudflareReporter",
     "GoogleFormReporter",
     "SMTPReporter",
@@ -84,7 +81,6 @@ __all__ = [
     "GCPReporter",
     "GoogleDomainsReporter",
     "GoDaddyReporter",
-    "HerokuReporter",
     "NamecheapReporter",
     "NetlifyReporter",
     "OpenDNSReporter",

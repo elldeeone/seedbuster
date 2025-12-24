@@ -464,7 +464,7 @@ class ReportGenerator:
             server(s) listed above. This immediately disables data exfiltration for all phishing domains.</li>
             <li><strong>Domain Suspension:</strong> Report all {data.total_domains} domains to their respective registrars.</li>
             <li><strong>DNS Provider Report:</strong> Report abuse to nameserver providers.</li>
-            <li><strong>Blocklist Submission:</strong> Submit all domains to Google Safe Browsing, PhishTank, etc.</li>
+            <li><strong>Blocklist Submission:</strong> Submit all domains to Google Safe Browsing, Netcraft, etc.</li>
         </ol>
     </div>
 

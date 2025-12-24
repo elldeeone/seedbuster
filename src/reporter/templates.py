@@ -376,33 +376,6 @@ Source: https://github.com/elldeeone/seedbuster
         return {"subject": subject, "body": body}
 
     @classmethod
-    def phishtank_comment(cls, evidence: ReportEvidence) -> str:
-        """Generate a comment for PhishTank submission."""
-        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
-        lines = [
-            "Cryptocurrency phishing (seed phrase theft).",
-            seed_line,
-            f"Confidence: {evidence.confidence_score}%",
-            "",
-            "Key evidence:",
-        ]
-        for reason in highlights:
-            lines.append(f"- {reason}")
-
-        if evidence.backend_domains:
-            lines.append("")
-            lines.append("Backend infrastructure:")
-            for backend in evidence.backend_domains[:3]:
-                lines.append(f"- {backend}")
-
-        lines.append("")
-        lines.append("Detected by SeedBuster")
-
-        return "\n".join(lines)
-
-    @classmethod
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
         seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)

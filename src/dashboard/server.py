@@ -3728,7 +3728,6 @@ def _render_action_required_panel(
         "microsoft": "\U0001fa9f",
         "netcraft": "\U0001f6e1",
         "apwg": "\U0001f3a3",
-        "phishtank": "\U0001f41f",
         "registrar": "\U0001f4dd",
         "hosting_provider": "\U0001f5a5",
         "digitalocean": "\U0001f30a",

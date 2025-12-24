@@ -429,16 +429,3 @@ class RailwayReporter(_SimpleEmailReporter):
                 "Include the project URL/hostname if known; describe the phishing behavior.",
             ],
         )
-
-
-class HerokuReporter(_SimpleFormReporter):
-    def __init__(self):
-        super().__init__(
-            platform_name="heroku",
-            form_url="https://help.heroku.com/tickets/new",
-            reason="Heroku security/abuse ticket",
-            notes=[
-                "Choose Security/Abuse category; include full URL and a short description.",
-                "If the app uses herokuapp.com subdomain, include that exact subdomain.",
-            ],
-        )
