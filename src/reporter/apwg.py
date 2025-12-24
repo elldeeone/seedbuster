@@ -43,7 +43,7 @@ class APWGReporter(BaseReporter):
                 message=error,
             )
 
-        subject = f"Phishing Report: {evidence.domain}"
+        subject = f"Phishing Report: {evidence.domain} - Cryptocurrency Seed Phrase Theft"
         email_body = evidence.to_summary().strip()
 
         # Build structured data for the new UI

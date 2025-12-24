@@ -48,29 +48,45 @@ class ReportEvidence:
     hosting_provider: Optional[str] = None
 
     def to_summary(self) -> str:
-        """Generate a human-readable summary for reports."""
+        """Generate a human-readable summary for reports with context."""
         lines = [
-            f"Domain: {self.domain}",
-            f"URL: {self.url}",
-            f"Detected: {self.detected_at.isoformat()}",
-            f"Confidence: {self.confidence_score}%",
+            "PHISHING REPORT - Cryptocurrency Seed Phrase Theft",
             "",
-            "Detection Reasons:",
+            "This site impersonates a cryptocurrency wallet to steal seed phrases.",
+            "A seed phrase is the master key to a wallet - theft enables immediate,",
+            "irreversible loss of all funds.",
+            "",
+            "SITE DETAILS:",
+            f"  Domain: {self.domain}",
+            f"  URL: {self.url}",
+            f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
+            f"  Confidence: {self.confidence_score}%",
+            "",
+            "KEY EVIDENCE:",
         ]
-        for reason in self.detection_reasons:
-            lines.append(f"  - {reason}")
-
-        if self.suspicious_endpoints:
-            lines.append("")
-            lines.append("Suspicious Endpoints:")
-            for endpoint in self.suspicious_endpoints[:5]:
-                lines.append(f"  - {endpoint}")
+        # Filter out low-signal reasons
+        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+        for reason in self.detection_reasons[:5]:
+            if not any(s in (reason or "").lower() for s in skip_terms):
+                lines.append(f"  - {reason}")
 
         if self.backend_domains:
             lines.append("")
-            lines.append("Backend Infrastructure:")
-            for backend in self.backend_domains:
+            lines.append("STOLEN DATA SENT TO:")
+            for backend in self.backend_domains[:3]:
                 lines.append(f"  - {backend}")
+
+        if self.suspicious_endpoints and not self.backend_domains:
+            lines.append("")
+            lines.append("SUSPICIOUS ENDPOINTS:")
+            for endpoint in self.suspicious_endpoints[:3]:
+                lines.append(f"  - {endpoint}")
+
+        lines.extend([
+            "",
+            "Reported by: SeedBuster (automated phishing detection)",
+            "Source: https://github.com/elldeeone/seedbuster",
+        ])
 
         return "\n".join(lines)
 

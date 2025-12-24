@@ -12,19 +12,94 @@ from .base import (
 )
 
 
+def _extract_seed_field_name(reasons: list[str]) -> str | None:
+    """Extract seed phrase field name from detection reasons if present."""
+    import re
+    for reason in reasons or []:
+        text = (reason or "").strip().lower()
+        if "seed phrase" not in text and "mnemonic" not in text:
+            continue
+        match = re.search(r"'([^']+)'", reason or "")
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _humanize_reason(text: str) -> str:
+    """Clean up technical jargon in detection reasons."""
+    out = (text or "").strip()
+    out = out.replace("Seed phrase form found via exploration:", "Requests seed phrase in field:")
+    out = out.replace("Seed phrase form found:", "Requests seed phrase in field:")
+    out = out.replace(" via exploration", "")
+    out = out.replace("Cloaking detected", "Shows different content to scanners vs real users")
+    if out.lower().startswith("temporal:"):
+        out = out.split(":", 1)[1].strip()
+    return out
+
+
 def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) -> str:
-    """Build a short, portable description for manual submissions."""
+    """Build a human-readable abuse report description with context."""
+    # Extract seed phrase indicator if available
+    seed_field = _extract_seed_field_name(evidence.detection_reasons)
+
     lines: list[str] = [
-        f"URL: {evidence.url}",
-        f"Domain: {evidence.domain}",
-        f"Confidence: {evidence.confidence_score}%",
+        "ACTION REQUESTED: Please suspend this phishing site.",
         "",
-        "Detection reasons:",
+        "WHAT THIS SITE DOES:",
+        "This site impersonates a cryptocurrency wallet and tricks users into",
+        "entering their seed phrase (a 12 or 24-word recovery phrase). The seed",
+        "phrase is the master key to a crypto wallet - once stolen, the attacker",
+        "can immediately drain all funds. Theft is irreversible.",
+        "",
+        "PHISHING SITE DETAILS:",
+        f"  URL: {evidence.url}",
+        f"  Domain: {evidence.domain}",
+        f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
+        f"  Confidence: {evidence.confidence_score}%",
     ]
-    for reason in (evidence.detection_reasons or [])[:5]:
-        lines.append(f"- {reason}")
+
+    if seed_field:
+        lines.append(f"  Seed phrase field name: '{seed_field}'")
+
+    # Add cleaned-up detection reasons
+    reasons = evidence.detection_reasons or []
+    # Filter out low-signal reasons
+    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+    cleaned_reasons = [
+        _humanize_reason(r) for r in reasons[:5]
+        if not any(s in (r or "").lower() for s in skip_terms)
+    ]
+    if cleaned_reasons:
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in cleaned_reasons[:4]:
+            lines.append(f"  - {reason}")
+
+    # Add backend infrastructure if present
+    backends = evidence.backend_domains or []
+    if backends:
+        lines.append("")
+        lines.append("DATA SENT TO (backend servers):")
+        for backend in backends[:3]:
+            lines.append(f"  - {backend}")
+
+    # Add suspicious endpoints if present
+    endpoints = evidence.suspicious_endpoints or []
+    if endpoints and not backends:
+        lines.append("")
+        lines.append("SUSPICIOUS ENDPOINTS:")
+        for endpoint in endpoints[:3]:
+            lines.append(f"  - {endpoint}")
+
     if extra:
         lines.extend(["", extra])
+
+    lines.extend([
+        "",
+        "Reported by: SeedBuster (automated phishing detection)",
+        "Source: https://github.com/elldeeone/seedbuster",
+    ])
+
     return "\n".join(lines).strip()
 
 
@@ -98,7 +173,8 @@ class _SimpleEmailReporter(BaseReporter):
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         description = _basic_description(evidence)
-        subject = f"{self._subject_prefix} {evidence.domain}"
+        # Use more descriptive subject that conveys urgency
+        subject = f"{self._subject_prefix} {evidence.domain} - Cryptocurrency Seed Phrase Theft"
         return ManualSubmissionData(
             form_url=self.platform_url,
             reason="Email submission",
@@ -215,10 +291,12 @@ class NamecheapReporter(_SimpleEmailReporter):
     def __init__(self):
         super().__init__(
             platform_name="namecheap",
-            email="abuse@namecheaphosting.com",
+            email="abuse@namecheap.com",
             subject_prefix="Phishing report:",
             notes=[
-                "Include the full phishing URL and any evidence of credential harvesting.",
+                "For domain abuse: abuse@namecheap.com",
+                "For hosting abuse: abuse@namecheaphosting.com",
+                "Include the full phishing URL and evidence of credential harvesting.",
                 "Namecheap accepts plain-text reports; attachments optional.",
             ],
         )
@@ -254,11 +332,13 @@ class DiscordReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="discord",
-            form_url="https://discord.com/safety/360044103651",
-            reason="Discord Trust & Safety form",
+            form_url="https://support.discord.com/hc/en-us/requests/new?ticket_form_id=360000029731",
+            reason="Discord Trust & Safety",
             notes=[
-                "If reporting a webhook, include the webhook URL.",
-                "Add server ID/channel ID if applicable to help Trust & Safety locate the content.",
+                "Discord now primarily uses in-app reporting. For webhooks, use their support form.",
+                "If reporting a webhook, include the full webhook URL.",
+                "Add server ID/channel ID if applicable to help locate the content.",
+                "For phishing sites using Discord webhooks to exfiltrate data, mention this clearly.",
             ],
         )
 
