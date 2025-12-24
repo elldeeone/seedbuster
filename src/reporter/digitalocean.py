@@ -4,7 +4,14 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -59,6 +66,92 @@ class DigitalOceanReporter(BaseReporter):
             return False, "No DigitalOcean App Platform backends found"
         return True, ""
 
+    def _build_description(self, evidence: ReportEvidence) -> str:
+        """Build structured description for DO abuse form."""
+        do_apps = self._extract_do_apps(evidence)
+        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+        seed_line = (
+            f"Requests seed phrase ('{seed_hint}')"
+            if seed_hint
+            else "Requests cryptocurrency seed phrase"
+        )
+        highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+
+        return f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
+{chr(10).join(f'- {app}' for app in do_apps)}
+
+Phishing URL: {evidence.url}
+Observed: {seed_line}
+Confidence: {evidence.confidence_score}%
+
+This site steals cryptocurrency seed phrases (wallet recovery keys).
+Once stolen, attackers drain all funds immediately and irreversibly.
+
+Key evidence (automated capture):
+{chr(10).join(f'- {r}' for r in highlights)}
+
+Captured evidence (screenshot + HTML) available on request.
+
+Detected by SeedBuster - github.com/elldeeone/seedbuster"""
+
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        """Generate structured manual submission data for public dashboard."""
+        do_apps = self._extract_do_apps(evidence)
+        description = self._build_description(evidence)
+
+        fields = [
+            ManualSubmissionField(
+                name="name",
+                label="Your full name",
+                value=self.reporter_name or "(fill manually)",
+            ),
+            ManualSubmissionField(
+                name="email",
+                label="Email address",
+                value=self.reporter_email or "(fill manually)",
+            ),
+            ManualSubmissionField(
+                name="target",
+                label="Target of phishing campaign",
+                value="Kaspa cryptocurrency wallet users",
+            ),
+            ManualSubmissionField(
+                name="url",
+                label="Evidence URL",
+                value=evidence.url,
+            ),
+        ]
+
+        if do_apps:
+            fields.append(
+                ManualSubmissionField(
+                    name="do_apps",
+                    label="DigitalOcean Apps to suspend",
+                    value="\n".join(do_apps),
+                    multiline=True,
+                )
+            )
+
+        fields.append(
+            ManualSubmissionField(
+                name="description",
+                label="Description",
+                value=description,
+                multiline=True,
+            )
+        )
+
+        return ManualSubmissionData(
+            form_url=self.FORM_URL,
+            reason="DigitalOcean abuse form",
+            fields=fields,
+            notes=[
+                "Select 'Phishing' as the abuse type (pre-selected via URL).",
+                "The form requires JavaScript; fill fields after page loads.",
+                "DigitalOcean SOC team typically responds within 24 hours.",
+            ],
+        )
+
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """Submit phishing report to DigitalOcean using Playwright."""
         if not self._configured:
@@ -87,28 +180,9 @@ class DigitalOceanReporter(BaseReporter):
                 message="No DigitalOcean App Platform backends found",
             )
 
-        # Build description
-        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = (
-            f"Requests seed phrase ('{seed_hint}')"
-            if seed_hint
-            else "Requests cryptocurrency seed phrase"
-        )
-        highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
-
-        description = f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
-{chr(10).join(f'- {app}' for app in do_apps)}
-
-Phishing URL: {evidence.url}
-Observed: {seed_line}
-Confidence: {evidence.confidence_score}%
-
-Key evidence (automated capture):
-{chr(10).join(f'- {r}' for r in highlights)}
-
-Captured evidence (screenshot + HTML) available on request.
-
-Detected by SeedBuster - github.com/elldeeone/seedbuster"""
+        # Build description and manual submission data
+        description = self._build_description(evidence)
+        manual_data = self.generate_manual_submission(evidence)
 
         manual_payload = (
             "Submission not confirmed; manual submission recommended.\n\n"
@@ -125,14 +199,8 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
             return ReportResult(
                 platform=self.platform_name,
                 status=ReportStatus.MANUAL_REQUIRED,
-                message=(
-                    "Playwright not installed; manual submission required.\n\n"
-                    f"Manual submission URL: {self.FORM_URL}\n\n"
-                    f"Reporter name: {self.reporter_name}\n"
-                    f"Reporter email: {self.reporter_email}\n"
-                    f"Phishing URL: {evidence.url}\n\n"
-                    f"Copy/paste description:\n{description}"
-                ),
+                message="Playwright not installed; manual submission required.",
+                response_data={"manual_fields": manual_data.to_dict()},
             )
 
         try:
@@ -243,7 +311,8 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
                     return ReportResult(
                         platform=self.platform_name,
                         status=ReportStatus.MANUAL_REQUIRED,
-                        message=manual_payload,
+                        message="Submission not confirmed; please verify manually.",
+                        response_data={"manual_fields": manual_data.to_dict()},
                     )
 
                 await browser.close()
@@ -252,7 +321,8 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
                 return ReportResult(
                     platform=self.platform_name,
                     status=ReportStatus.MANUAL_REQUIRED,
-                    message=manual_payload,
+                    message="Could not verify submission; please submit manually.",
+                    response_data={"manual_fields": manual_data.to_dict()},
                 )
 
         except Exception as e:
@@ -260,12 +330,6 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
             return ReportResult(
                 platform=self.platform_name,
                 status=ReportStatus.MANUAL_REQUIRED,
-                message=(
-                    f"Auto-submit failed: {e}\n\n"
-                    f"Manual submission required: {self.FORM_URL}\n\n"
-                    f"Reporter name: {self.reporter_name}\n"
-                    f"Reporter email: {self.reporter_email}\n"
-                    f"Phishing URL: {evidence.url}\n\n"
-                    f"Copy/paste description:\n{description}"
-                ),
+                message=f"Auto-submit failed: {e}",
+                response_data={"manual_fields": manual_data.to_dict()},
             )
