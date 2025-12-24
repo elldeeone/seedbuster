@@ -4,7 +4,14 @@ import logging
 
 import httpx
 
-from .base import BaseReporter, ReportEvidence, ReportResult, ReportStatus
+from .base import (
+    BaseReporter,
+    ManualSubmissionData,
+    ManualSubmissionField,
+    ReportEvidence,
+    ReportResult,
+    ReportStatus,
+)
 from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
@@ -35,18 +42,8 @@ class NetcraftReporter(BaseReporter):
             self.reporter_email = reporter_email
         self._configured = True  # Always available
 
-    async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        """Submit URL to Netcraft via API."""
-        # Validate evidence
-        is_valid, error = self.validate_evidence(evidence)
-        if not is_valid:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message=error,
-            )
-
-        # Build reason string
+    def _build_reason_string(self, evidence: ReportEvidence) -> str:
+        """Summarize why the URL is malicious for Netcraft submissions."""
         seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
         seed_line = (
             f"Requests seed phrase ('{seed_hint}')."
@@ -67,7 +64,45 @@ class NetcraftReporter(BaseReporter):
             "",
             "Detected by SeedBuster.",
         ]
-        reason = "\n".join(reason_lines).strip()
+        return "\n".join(reason_lines).strip()
+
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        """Manual instructions for Netcraft web form."""
+        description = self._build_reason_string(evidence)
+        return ManualSubmissionData(
+            form_url="https://report.netcraft.com/report",
+            reason="Netcraft manual web form",
+            fields=[
+                ManualSubmissionField(
+                    name="url",
+                    label="Suspicious URL",
+                    value=evidence.url,
+                ),
+                ManualSubmissionField(
+                    name="comments",
+                    label="Details / evidence",
+                    value=description,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "You can optionally include your email address to get Netcraft updates.",
+                "Netcraft accepts reports without an account.",
+            ],
+        )
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        """Submit URL to Netcraft via API."""
+        # Validate evidence
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        reason = self._build_reason_string(evidence)
 
         # Build payload
         payload = {

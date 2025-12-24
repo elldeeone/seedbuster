@@ -9,11 +9,15 @@ import logging
 import re
 import socket
 import ssl
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
+import tldextract
+
+from ..reporter.rdap import lookup_registrar_via_rdap
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +77,13 @@ class HostingInfo:
 
     # Known cloud/hosting providers often abused for phishing
     CLOUD_PROVIDERS = {
-        "digitalocean": ["digitalocean", "DO-13"],
-        "cloudflare": ["cloudflare", "CLOUDFLARENET"],
-        "aws": ["amazon", "AMAZON-", "AWS"],
-        "google": ["google", "GOOGLE"],
-        "azure": ["microsoft", "MSFT"],
+        "digitalocean": ["digitalocean", "DO-13", "ondigitalocean"],
+        "cloudflare": ["cloudflare", "CLOUDFLARENET", "cloudflarewarp"],
+        "aws": ["amazon", "AMAZON-", "AWS", "cloudfront"],
+        "google": ["google", "GOOGLE", "google cloud"],
+        "azure": ["microsoft", "MSFT", "azure"],
+        "oracle": ["oracle", "oracle cloud"],
+        "alibaba": ["alibaba", "alibaba cloud"],
         "vultr": ["vultr", "VULTR"],
         "linode": ["linode", "LINODE"],
         "hetzner": ["hetzner", "HETZNER"],
@@ -85,6 +91,22 @@ class HostingInfo:
         "namecheap": ["namecheap"],
         "hostinger": ["hostinger"],
         "godaddy": ["godaddy"],
+        "fastly": ["fastly", "fastlyinc", "fastly-cdn", "fastlylb"],
+        "akamai": ["akamai", "akamaitechnologies", "edgesuite", "akamaiedge", "akadns"],
+        "sucuri": ["sucuri"],
+        "wix": ["wix", "wixdns"],
+        "squarespace": ["squarespace"],
+        "shopify": ["shopify", "shopifydns"],
+        "vercel": ["vercel"],
+        "netlify": ["netlify"],
+        "cloudfront": ["cloudfront.net"],
+        "render": ["render"],
+        "fly_io": ["fly.io", "flyio", "flyglobal"],
+        "railway": ["railway"],
+        "heroku": ["heroku"],
+        "fastly": ["fastly", "fastlyinc", "fastly-cdn", "fastlylb"],
+        "upcloud": ["upcloud"],
+        "linode_akamai": ["linode", "linode-isp", "linode, llc"],
     }
 
     # Known bulletproof/abuse-friendly hosting
@@ -112,6 +134,7 @@ class DomainInfo:
         "1984hosting", # Privacy-focused Iceland
         "orangewebsite", # Privacy-focused Iceland
         "flokinet",    # Privacy-focused
+        "cloudflare",  # Often used to mask origins
     ]
 
     SUSPICIOUS_REGISTRARS = [
@@ -219,6 +242,8 @@ class InfrastructureAnalyzer:
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
         self._session: Optional[aiohttp.ClientSession] = None
+        self._asn_cache: dict[str, tuple[float, HostingInfo]] = {}
+        self._asn_cache_ttl = 3600  # seconds
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -233,14 +258,35 @@ class InfrastructureAnalyzer:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    @staticmethod
+    def _normalize_domain(value: str) -> str:
+        """Extract bare hostname from a URL/path or raw domain."""
+        candidate = (value or "").strip()
+        if not candidate:
+            return candidate
+        try:
+            from urllib.parse import urlparse
+
+            target = candidate if "://" in candidate else f"https://{candidate}"
+            host = urlparse(target).hostname or ""
+        except Exception:
+            host = ""
+
+        if not host:
+            # Fallback: take everything before first "/" and strip dots
+            host = candidate.split("/")[0]
+        return host.strip().strip(".").lower()
+
     async def analyze(self, domain: str) -> InfrastructureResult:
         """Perform complete infrastructure analysis."""
-        result = InfrastructureResult(domain=domain)
+        normalized = self._normalize_domain(domain)
+        result = InfrastructureResult(domain=normalized or domain)
 
         # Run analyses in parallel
-        tls_task = asyncio.create_task(self.get_tls_info(domain))
-        hosting_task = asyncio.create_task(self.get_hosting_info(domain))
-        domain_task = asyncio.create_task(self.get_domain_info(domain))
+        target = normalized or domain
+        tls_task = asyncio.create_task(self.get_tls_info(target))
+        hosting_task = asyncio.create_task(self.get_hosting_info(target))
+        domain_task = asyncio.create_task(self.get_domain_info(target))
 
         # Gather results
         try:
@@ -343,15 +389,26 @@ class InfrastructureAnalyzer:
     async def get_hosting_info(self, domain: str) -> Optional[HostingInfo]:
         """Get hosting provider and network information."""
         try:
-            # Resolve domain to IP
+            # Resolve domain to IP (socket first, DoH fallback)
             loop = asyncio.get_event_loop()
-            ip_address = await loop.run_in_executor(
-                None,
-                socket.gethostbyname,
-                domain
-            )
+            ip_address = ""
+            try:
+                ip_address = await loop.run_in_executor(
+                    None,
+                    socket.gethostbyname,
+                    domain
+                )
+            except socket.gaierror:
+                try:
+                    doh_ips = await self._fetch_addresses_doh(domain)
+                    if doh_ips:
+                        ip_address = doh_ips[0]
+                except Exception:
+                    ip_address = ""
 
             result = HostingInfo(ip_address=ip_address)
+            if not result.ip_address:
+                return None
 
             # Get reverse DNS
             try:
@@ -364,37 +421,95 @@ class InfrastructureAnalyzer:
             except socket.herror:
                 pass
 
-            # Query IP info API for ASN details
-            session = await self._get_session()
-            try:
-                # Use ip-api.com (free, no key required)
-                async with session.get(
-                    f"http://ip-api.com/json/{ip_address}?fields=status,as,org,isp,country"
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data.get('status') == 'success':
-                            # Parse ASN from "AS12345 Name" format
-                            as_info = data.get('as', '')
-                            if as_info:
-                                match = re.match(r'AS(\d+)\s*(.*)', as_info)
-                                if match:
-                                    result.asn = int(match.group(1))
-                                    result.asn_name = match.group(2).strip()
+            cached = self._asn_cache.get(ip_address)
+            now = time.time()
+            if cached and now - cached[0] < self._asn_cache_ttl:
+                cached_info = cached[1]
+                result.asn = cached_info.asn
+                result.asn_name = cached_info.asn_name
+                result.asn_country = cached_info.asn_country
+                result.datacenter = cached_info.datacenter
+            else:
+                lookup = await loop.run_in_executor(None, self._lookup_asn_sync, ip_address)
+                if lookup:
+                    result.asn = lookup.asn
+                    result.asn_name = lookup.asn_name
+                    result.asn_country = lookup.asn_country
+                    result.datacenter = lookup.datacenter
+                    self._asn_cache[ip_address] = (now, lookup)
 
-                            result.asn_country = data.get('country', '')
-                            result.datacenter = data.get('isp', '')
-
-                            # Identify hosting provider
-                            self._identify_hosting_provider(result)
-            except Exception as e:
-                logger.debug(f"IP API query failed: {e}")
+            # Identify hosting provider
+            self._identify_hosting_provider(result)
 
             return result
 
         except Exception as e:
             logger.debug(f"Failed to get hosting info for {domain}: {e}")
             return None
+
+    def _lookup_asn_sync(self, ip_address: str) -> Optional[HostingInfo]:
+        """
+        Query Team Cymru whois for ASN details (free service).
+        """
+        try:
+            with socket.create_connection(("whois.cymru.com", 43), timeout=self.timeout) as sock:
+                query = f"begin\nverbose\n{ip_address}\nend\n"
+                sock.sendall(query.encode())
+                response = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+            lines = [line.strip() for line in response.decode(errors="ignore").splitlines() if line.strip()]
+            if len(lines) < 2:
+                raise ValueError("No ASN data returned")
+            parts = [p.strip() for p in lines[1].split("|")]
+            if len(parts) < 7:
+                raise ValueError("Unexpected ASN response format")
+            asn = int(parts[0]) if parts[0].isdigit() else 0
+            country = parts[3]
+            as_name = parts[6]
+            datacenter = parts[5] if len(parts) > 5 else ""
+            return HostingInfo(
+                ip_address=ip_address,
+                asn=asn,
+                asn_name=as_name,
+                asn_country=country,
+                datacenter=datacenter,
+            )
+        except Exception as e:
+            logger.debug(f"Team Cymru ASN lookup failed for {ip_address}: {e}")
+            # Fallback to ip-api.com if available
+            try:
+                import json
+                from urllib import request as urllib_request
+
+                with urllib_request.urlopen(
+                    f"http://ip-api.com/json/{ip_address}?fields=status,as,org,isp,country",
+                    timeout=self.timeout,
+                ) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode())
+                        if data.get("status") == "success":
+                            as_info = data.get("as", "")
+                            asn = 0
+                            as_name = ""
+                            if as_info:
+                                match = re.match(r"AS(\d+)\s*(.*)", as_info)
+                                if match:
+                                    asn = int(match.group(1))
+                                    as_name = match.group(2).strip()
+                            return HostingInfo(
+                                ip_address=ip_address,
+                                asn=asn,
+                                asn_name=as_name or data.get("org", ""),
+                                asn_country=data.get("country", ""),
+                                datacenter=data.get("isp", ""),
+                            )
+            except Exception as inner:
+                logger.debug(f"Fallback IP API lookup failed for {ip_address}: {inner}")
+        return None
 
     def _identify_hosting_provider(self, hosting: HostingInfo):
         """Identify the hosting provider from ASN/name."""
@@ -410,11 +525,58 @@ class InfrastructureAnalyzer:
         if hosting.asn in HostingInfo.BULLETPROOF_ASNS:
             hosting.is_bulletproof = True
 
+        # Fallback: use ASN org if no provider identified
+        if not hosting.hosting_provider:
+            hosting.hosting_provider = hosting.asn_name or hosting.datacenter
+
+    async def _fetch_nameservers_doh(self, domain: str) -> list[str]:
+        """Fetch nameservers via DNS-over-HTTPS (Google resolver)."""
+        session = await self._get_session()
+        url = "https://dns.google/resolve"
+        params = {"name": domain, "type": "NS"}
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return []
+            try:
+                data = await resp.json()
+            except Exception:
+                return []
+
+        answers = data.get("Answer") or []
+        names = []
+        for ans in answers:
+            raw = str(ans.get("data", "")).strip()
+            if not raw:
+                continue
+            names.append(raw.rstrip("."))
+        return names
+
+    async def _fetch_addresses_doh(self, domain: str) -> list[str]:
+        """Fetch A/AAAA records via DNS-over-HTTPS."""
+        session = await self._get_session()
+        records = []
+        for record_type in ("A", "AAAA"):
+            try:
+                params = {"name": domain, "type": record_type}
+                async with session.get("https://dns.google/resolve", params=params) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    for ans in data.get("Answer") or []:
+                        raw = str(ans.get("data", "")).strip()
+                        if raw:
+                            records.append(raw)
+            except Exception:
+                continue
+        return records
+
     async def get_domain_info(self, domain: str) -> Optional[DomainInfo]:
         """Get domain registration and DNS information."""
         try:
             result = DomainInfo(domain=domain)
             loop = asyncio.get_event_loop()
+            extracted = tldextract.extract(domain)
+            registered = extracted.registered_domain or domain
 
             # Get A records
             try:
@@ -423,62 +585,119 @@ class InfrastructureAnalyzer:
                     lambda: socket.gethostbyname_ex(domain)[2]
                 )
             except socket.gaierror:
-                pass
+                try:
+                    result.a_records = await self._fetch_addresses_doh(domain)
+                except Exception:
+                    pass
 
             # Get MX records via DNS query
             # Note: For full implementation, use dnspython library
             # For now, we'll skip MX/NS lookups or add later
 
-            # Domain age via RDAP (more reliable than WHOIS)
-            session = await self._get_session()
+            # Domain age / registrar via RDAP (with fallbacks)
             try:
-                # Try RDAP for domain info
-                rdap_url = f"https://rdap.org/domain/{domain}"
-
-                async with session.get(rdap_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-
-                        # Find registration date
-                        for event in data.get('events', []):
-                            if event.get('eventAction') == 'registration':
-                                reg_date_str = event.get('eventDate', '')
-                                if reg_date_str:
-                                    # Parse ISO format date
-                                    reg_date = datetime.fromisoformat(
-                                        reg_date_str.replace('Z', '+00:00')
-                                    )
-                                    result.registered_date = reg_date
-                                    result.age_days = (
-                                        datetime.now(timezone.utc) - reg_date
-                                    ).days
-                                break
-
-                        # Get registrar
-                        for entity in data.get('entities', []):
-                            if 'registrar' in entity.get('roles', []):
-                                vcard = entity.get('vcardArray', [])
-                                if len(vcard) > 1:
-                                    for item in vcard[1]:
-                                        if item[0] == 'fn':
-                                            result.registrar = item[3]
-                                            break
-                                break
-
-                        # Get nameservers
-                        result.nameservers = [
-                            ns.get('ldhName', '')
-                            for ns in data.get('nameservers', [])
-                            if ns.get('ldhName')
-                        ]
+                rdap_lookup = await lookup_registrar_via_rdap(registered)
+                if rdap_lookup.ok:
+                    result.registrar = rdap_lookup.registrar_name or result.registrar
+                else:
+                    logger.debug(f"RDAP lookup failed for {domain}: {rdap_lookup.error}")
             except Exception as e:
                 logger.debug(f"RDAP query failed for {domain}: {e}")
+
+            # Fetch nameservers from rdap.org as secondary source if missing
+            if not result.nameservers:
+                session = await self._get_session()
+                try:
+                    rdap_url = f"https://rdap.org/domain/{registered}"
+                    async with session.get(rdap_url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            result.nameservers = [
+                                ns.get('ldhName', '')
+                                for ns in data.get('nameservers', [])
+                                if ns.get('ldhName')
+                            ]
+
+                            for event in data.get('events', []):
+                                if event.get('eventAction') == 'registration':
+                                    reg_date_str = event.get('eventDate', '')
+                                    if reg_date_str:
+                                        reg_date = datetime.fromisoformat(
+                                            reg_date_str.replace('Z', '+00:00')
+                                        )
+                                        result.registered_date = reg_date
+                                        result.age_days = (
+                                            datetime.now(timezone.utc) - reg_date
+                                        ).days
+                                    break
+                except Exception as e:
+                    logger.debug(f"RDAP nameserver fetch failed for {domain}: {e}")
+
+            # Fallback: DNS-over-HTTPS lookup for NS records (rdap.org often rate limits)
+            if not result.nameservers:
+                try:
+                    doh_nameservers = await self._fetch_nameservers_doh(registered)
+                    if doh_nameservers:
+                        result.nameservers = doh_nameservers
+                except Exception as e:
+                    logger.debug(f"DoH NS lookup failed for {domain}: {e}")
+
+            if not result.registrar:
+                inferred = self._infer_registrar_from_nameservers(result.nameservers)
+                if inferred:
+                    result.registrar = inferred
+
+            # Fallback: derive registrar-like label from nameserver root
+            if not result.registrar and result.nameservers:
+                try:
+                    ns_root = tldextract.extract(result.nameservers[0]).registered_domain
+                    if ns_root:
+                        result.registrar = ns_root
+                except Exception:
+                    pass
+
+            if not result.registrar:
+                result.registrar = "unknown"
 
             return result
 
         except Exception as e:
             logger.debug(f"Failed to get domain info for {domain}: {e}")
             return None
+
+    @staticmethod
+    def _infer_registrar_from_nameservers(nameservers: list[str]) -> str:
+        """Infer registrar/hosting from nameserver patterns."""
+        if not nameservers:
+            return ""
+        joined = " ".join(nameservers).lower()
+        patterns = {
+            "cloudflare": ["cloudflare.com"],
+            "godaddy": ["domaincontrol.com"],
+            "namecheap": ["registrar-servers.com"],
+            "porkbun": ["porkbun.com"],
+            "google": ["googledomains.com", "google.com"],
+            "tucows": ["hover.com", "tucows.com", "hoverdns.com"],
+            "aws": ["awsdns-"],
+            "azure": ["azure-dns"],
+            "gcp": ["cloudns", ".google."],
+            "shopify": ["shopifydns"],
+            "vercel": ["vercel-dns.com"],
+            "netlify": ["netlifydns.net"],
+            "heroku": ["herokudns.com"],
+            "render": ["render.com"],
+            "fastly": ["fastlydns.com", "fastlylb.net"],
+            "akamai": ["akamai", "akamaiedge", "akadns"],
+            "squarespace": ["squarespacedns"],
+            "wix": ["wixdns", "wix.com"],
+            "digitalocean": ["digitalocean.com"],
+            "linode": ["linode.com"],
+            "cloudflare_anon": ["njalla", "1984hosting", "orangewebsite", "flokinet"],
+        }
+        for registrar, needles in patterns.items():
+            if any(needle in joined for needle in needles):
+                return registrar
+        return ""
 
     async def find_domains_on_ip(self, ip_address: str) -> list[str]:
         """Find other domains hosted on the same IP.

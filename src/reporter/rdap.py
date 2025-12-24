@@ -19,6 +19,7 @@ class RdapLookupResult:
     registrar_name: Optional[str]
     abuse_email: Optional[str]
     rdap_url: str
+    status_values: Optional[list[str]] = None
     error: Optional[str] = None
     status_code: Optional[int] = None
 
@@ -86,34 +87,28 @@ def parse_registrar_and_abuse_email(data: object) -> tuple[Optional[str], Option
     return (registrar_name, abuse_email)
 
 
-async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> RdapLookupResult:
-    """Fetch RDAP record for a domain and extract registrar + abuse email."""
-    normalized = (domain or "").strip().lower()
-    rdap_url = f"https://rdap.org/domain/{normalized}"
+_RDAP_CACHE: dict[str, tuple[float, RdapLookupResult]] = {}
+_RDAP_CACHE_TTL_SECONDS = 3600  # 1 hour
 
-    if not normalized:
-        return RdapLookupResult(
-            registrar_name=None,
-            abuse_email=None,
-            rdap_url=rdap_url,
-            error="No domain provided for RDAP lookup",
-        )
 
+async def _fetch_rdap(url: str, timeout: float) -> RdapLookupResult:
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.get(rdap_url, headers={"User-Agent": "SeedBuster/1.0"})
+            resp = await client.get(url, headers={"User-Agent": "SeedBuster/1.0"})
     except httpx.TimeoutException:
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
-            rdap_url=rdap_url,
+            rdap_url=url,
+            status_values=None,
             error="RDAP lookup timed out",
         )
     except Exception as e:
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
-            rdap_url=rdap_url,
+            rdap_url=url,
+            status_values=None,
             error=f"RDAP lookup failed: {e}",
         )
 
@@ -121,7 +116,8 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
-            rdap_url=rdap_url,
+            rdap_url=url,
+            status_values=None,
             error=f"RDAP lookup failed ({resp.status_code})",
             status_code=int(resp.status_code),
         )
@@ -132,15 +128,94 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0) -> Rd
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
-            rdap_url=rdap_url,
+            rdap_url=url,
+            status_values=None,
             error="RDAP returned non-JSON response",
             status_code=int(resp.status_code),
         )
 
     registrar_name, abuse_email = parse_registrar_and_abuse_email(data)
+    status_values = []
+    if isinstance(data.get("status"), list):
+        for entry in data["status"]:
+            if isinstance(entry, str) and entry.strip():
+                status_values.append(entry.strip())
+
     return RdapLookupResult(
         registrar_name=registrar_name,
         abuse_email=abuse_email,
-        rdap_url=rdap_url,
+        rdap_url=url,
+        status_values=status_values or None,
     )
 
+
+def _rdap_endpoints_for(domain: str) -> list[str]:
+    """Return a list of RDAP endpoints to try (ordered)."""
+    normalized = (domain or "").strip().lower()
+    base = f"https://rdap.org/domain/{normalized}"
+    endpoints = [base]
+
+    # Simple TLD-based fallbacks for common zones.
+    tld = ""
+    if "." in normalized:
+        tld = normalized.rsplit(".", 1)[-1]
+    if tld in {"com", "net"}:
+        endpoints.append(f"https://rdap.verisign.com/com/v1/domain/{normalized}")
+    elif tld == "org":
+        endpoints.append(f"https://rdap.publicinterestregistry.net/rdap/org/domain/{normalized}")
+
+    # Generic fallback.
+    endpoints.append(f"https://rdap.iana.org/domain/{normalized}")
+    # Deduplicate while preserving order.
+    seen = set()
+    deduped: list[str] = []
+    for url in endpoints:
+        if url in seen:
+            continue
+        seen.add(url)
+        deduped.append(url)
+    return deduped
+
+
+async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0, force_refresh: bool = False) -> RdapLookupResult:
+    """Fetch RDAP record for a domain and extract registrar + abuse email (cached)."""
+    normalized = (domain or "").strip().lower()
+    if not normalized:
+        rdap_url = "https://rdap.org/domain/"
+        return RdapLookupResult(
+            registrar_name=None,
+            abuse_email=None,
+            rdap_url=rdap_url,
+            status_values=None,
+            error="No domain provided for RDAP lookup",
+        )
+
+    now = __import__("time").time()
+    if not force_refresh:
+        cached = _RDAP_CACHE.get(normalized)
+        if cached:
+            ts, result = cached
+            if now - ts < _RDAP_CACHE_TTL_SECONDS:
+                return result
+
+    endpoints = _rdap_endpoints_for(normalized)
+    for url in endpoints:
+        result = await _fetch_rdap(url, timeout)
+        if result.ok:
+            _RDAP_CACHE[normalized] = (now, result)
+            return result
+        # Retry next endpoint on 429/503/timeout; keep last error otherwise.
+        if result.status_code not in (429, 503) and "timed out" not in (result.error or ""):
+            last_error = result
+            break
+        last_error = result
+
+    final = last_error if 'last_error' in locals() else RdapLookupResult(
+        registrar_name=None,
+        abuse_email=None,
+        rdap_url=endpoints[-1],
+        status_values=None,
+        error="RDAP lookup failed (all endpoints)",
+    )
+    _RDAP_CACHE[normalized] = (now, final)
+    return final

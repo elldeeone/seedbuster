@@ -27,6 +27,26 @@ from .hosting_provider import HostingProviderReporter
 from .registrar import RegistrarReporter
 from .apwg import APWGReporter
 from .microsoft import MicrosoftReporter
+from .manual_platforms import (
+    AWSReporter,
+    AzureReporter,
+    DiscordReporter,
+    FlyReporter,
+    GCPReporter,
+    GoogleDomainsReporter,
+    GoDaddyReporter,
+    HerokuReporter,
+    NamecheapReporter,
+    NetlifyReporter,
+    OpenDNSReporter,
+    PorkbunReporter,
+    Quad9Reporter,
+    RailwayReporter,
+    RenderReporter,
+    TelegramReporter,
+    TucowsReporter,
+    VercelReporter,
+)
 
 __all__ = [
     # Base classes
@@ -57,4 +77,22 @@ __all__ = [
     "RegistrarReporter",
     "APWGReporter",
     "MicrosoftReporter",
+    "AWSReporter",
+    "AzureReporter",
+    "DiscordReporter",
+    "FlyReporter",
+    "GCPReporter",
+    "GoogleDomainsReporter",
+    "GoDaddyReporter",
+    "HerokuReporter",
+    "NamecheapReporter",
+    "NetlifyReporter",
+    "OpenDNSReporter",
+    "PorkbunReporter",
+    "Quad9Reporter",
+    "RailwayReporter",
+    "RenderReporter",
+    "TelegramReporter",
+    "TucowsReporter",
+    "VercelReporter",
 ]

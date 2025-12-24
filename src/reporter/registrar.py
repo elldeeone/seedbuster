@@ -27,6 +27,13 @@ REGISTRAR_ABUSE_EMAILS: dict[str, str] = {
     "namecheap": "abuse@namecheap.com",
     "godaddy": "abuse@godaddy.com",
     "hostinger": "abuse@hostinger.com",
+    "tucows": "compliance@tucows.com",
+    "dynadot": "abuse@dynadot.com",
+    "network solutions": "abuse@networksolutions.com",
+    "dreamhost": "abuse@dreamhost.com",
+    "instra": "abuse@instra.com",
+    "abovedomains": "abuse@abovedomains.com",
+    "ultahost": "abuse@ultahost.com",
 }
 
 REGISTRAR_ABUSE_FORMS: dict[str, str] = {

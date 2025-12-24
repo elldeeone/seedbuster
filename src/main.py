@@ -20,6 +20,7 @@ from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
 from .analyzer.clustering import ThreatClusterManager
 from .analyzer.external_intel import ExternalIntelligence
+from .analyzer.takedown_checker import TakedownChecker, TakedownStatus
 from .storage import Database, EvidenceStore
 from .storage.database import DomainStatus
 from .bot import SeedBusterBot
@@ -89,6 +90,7 @@ class SeedBusterPipeline:
             title_keywords=config.title_keywords,
         )
         self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
+        self.takedown_checker = TakedownChecker()
 
         # Initialize report manager
         self.report_manager = ReportManager(
@@ -351,6 +353,7 @@ class SeedBusterPipeline:
             asyncio.create_task(self.temporal.run_rescan_loop()),
             asyncio.create_task(self._report_retry_worker()),
             asyncio.create_task(self._watchlist_rescan_worker()),
+            asyncio.create_task(self._takedown_worker()),
         ]
         if self.search_discovery:
             self._tasks.append(asyncio.create_task(self.search_discovery.run_loop()))
@@ -738,6 +741,94 @@ class SeedBusterPipeline:
                 await asyncio.sleep(60)
 
         logger.info("Watchlist rescan worker stopped")
+
+    @staticmethod
+    def _parse_timestamp(value: str | None):
+        if not value:
+            return None
+        try:
+            # SQLite may store without timezone; assume UTC.
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
+
+    def _takedown_interval_seconds(self, row: dict, now: datetime) -> int:
+        """Compute how often to check based on age/status."""
+        status = str(row.get("takedown_status") or "active").lower()
+        reported_at = self._parse_timestamp(row.get("reported_at")) or self._parse_timestamp(row.get("created_at")) or now
+        age_hours = max(0.0, (now - reported_at).total_seconds() / 3600.0)
+
+        if status == TakedownStatus.CONFIRMED_DOWN.value:
+            return 24 * 60 * 60  # check daily for resurrection
+        if status == TakedownStatus.LIKELY_DOWN.value:
+            return 2 * 60 * 60  # tighten checks while confirming
+        if age_hours < 24:
+            return 30 * 60  # first day: 30m cadence
+        if age_hours < 24 * 7:
+            return 2 * 60 * 60  # first week: 2h cadence
+        return 6 * 60 * 60  # older: 6h cadence
+
+    async def _takedown_worker(self):
+        """Monitor domains for takedown signals (DNS/HTTP)."""
+        logger.info("Takedown monitor worker started")
+        while self._running:
+            try:
+                domains = await self.database.get_domains_for_takedown_check(limit=200)
+                now = datetime.now(timezone.utc)
+                checked = 0
+
+                for row in domains:
+                    domain = str(row.get("domain") or "").strip()
+                    if not domain:
+                        continue
+
+                    last_checked = self._parse_timestamp(row.get("last_checked_at"))
+                    interval = self._takedown_interval_seconds(row, now)
+                    if last_checked and (now - last_checked).total_seconds() < interval:
+                        continue
+
+                    result = await self.takedown_checker.check_domain(domain)
+                    await self.database.add_takedown_check(
+                        domain_id=int(row.get("id") or 0),
+                        http_status=result.http_status,
+                        http_error=result.http_error,
+                        dns_resolves=result.dns_resolves,
+                        dns_result=result.dns_result,
+                        is_sinkholed=result.is_sinkholed,
+                        domain_status=result.domain_status,
+                        content_hash=result.content_hash,
+                        still_phishing=None,
+                        takedown_status=result.status.value,
+                        confidence=result.confidence,
+                    )
+
+                    detected_at = None
+                    confirmed_at = None
+                    if result.status in {TakedownStatus.LIKELY_DOWN, TakedownStatus.CONFIRMED_DOWN}:
+                        detected_at = now.isoformat()
+                    if result.status == TakedownStatus.CONFIRMED_DOWN:
+                        confirmed_at = now.isoformat()
+
+                    await self.database.update_domain_takedown_status(
+                        int(row.get("id") or 0),
+                        result.status.value,
+                        detected_at=detected_at,
+                        confirmed_at=confirmed_at,
+                    )
+                    checked += 1
+
+                await asyncio.sleep(60 if checked else 300)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Takedown worker error: {e}")
+                await asyncio.sleep(120)
+
+        logger.info("Takedown monitor worker stopped")
 
     async def _analyze_domain(self, task: dict, scan_reason: ScanReason = ScanReason.INITIAL):
         """Delegate to AnalysisEngine (moved to pipeline.analysis)."""

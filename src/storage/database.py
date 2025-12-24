@@ -74,6 +74,7 @@ class Database:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         domain TEXT UNIQUE NOT NULL,
                         canonical_domain TEXT,
+                        watchlist_baseline_timestamp TEXT,
                         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         source TEXT DEFAULT 'certstream',
                         domain_score INTEGER DEFAULT 0,
@@ -84,6 +85,9 @@ class Database:
                         status TEXT DEFAULT 'pending',
                         analyzed_at TIMESTAMP,
                         reported_at TIMESTAMP,
+                        takedown_status TEXT DEFAULT 'active',
+                        takedown_detected_at TIMESTAMP,
+                        takedown_confirmed_at TIMESTAMP,
                         evidence_path TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -125,6 +129,55 @@ class Database:
                         processed_at TIMESTAMP,
                         error TEXT
                     );
+
+                    -- Public submissions held for admin review
+                    CREATE TABLE IF NOT EXISTS public_submissions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain TEXT NOT NULL,
+                        canonical_domain TEXT NOT NULL,
+                        source_url TEXT,
+                        reporter_notes TEXT,
+                        submission_count INTEGER DEFAULT 1,
+                        first_submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'pending_review',
+                        reviewed_at TIMESTAMP,
+                        reviewer_notes TEXT,
+                        promoted_domain_id INTEGER,
+                        UNIQUE(canonical_domain),
+                        FOREIGN KEY (promoted_domain_id) REFERENCES domains(id)
+                    );
+
+                    -- Engagement tracking for public report clicks (deduped by session)
+                    CREATE TABLE IF NOT EXISTS report_engagement (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain_id INTEGER NOT NULL,
+                        platform TEXT NOT NULL,
+                        session_hash TEXT NOT NULL,
+                        click_count INTEGER DEFAULT 1,
+                        first_engaged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_engaged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(domain_id, platform, session_hash),
+                        FOREIGN KEY (domain_id) REFERENCES domains(id)
+                    );
+
+                    -- Historical takedown checks for domains
+                    CREATE TABLE IF NOT EXISTS takedown_checks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain_id INTEGER NOT NULL,
+                        checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        http_status INTEGER,
+                        http_error TEXT,
+                        dns_resolves BOOLEAN,
+                        dns_result TEXT,
+                        is_sinkholed BOOLEAN DEFAULT FALSE,
+                        domain_status TEXT,
+                        content_hash TEXT,
+                        still_phishing BOOLEAN,
+                        takedown_status TEXT,
+                        confidence REAL,
+                        FOREIGN KEY (domain_id) REFERENCES domains(id)
+                    );
                 """
             )
             await self._connection.commit()
@@ -133,6 +186,7 @@ class Database:
         # otherwise existing DBs on older schemas would fail to start up.
         await self._migrate_domains_table()
         await self._migrate_reports_table()
+        await self._migrate_report_engagement_table()
         await self._migrate_deferred_to_watchlist()
         await self._backfill_canonical_domains(lock_held=True)
         await self._merge_canonical_duplicates()
@@ -148,6 +202,10 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_reports_domain_platform ON reports(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_next_attempt ON reports(status, next_attempt_at)",
             "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_status ON dashboard_actions(status, id)",
+            "CREATE INDEX IF NOT EXISTS idx_public_submissions_status ON public_submissions(status, first_submitted_at)",
+            "CREATE INDEX IF NOT EXISTS idx_report_engagement_domain_platform ON report_engagement(domain_id, platform)",
+            "CREATE INDEX IF NOT EXISTS idx_report_engagement_last_engaged ON report_engagement(last_engaged_at)",
+            "CREATE INDEX IF NOT EXISTS idx_takedown_checks_domain ON takedown_checks(domain_id, checked_at DESC)",
         ]
 
         for stmt in statements:
@@ -170,6 +228,12 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN watchlist_baseline_timestamp TEXT")
         if "canonical_domain" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN canonical_domain TEXT")
+        if "takedown_status" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN takedown_status TEXT DEFAULT 'active'")
+        if "takedown_detected_at" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN takedown_detected_at TIMESTAMP")
+        if "takedown_confirmed_at" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN takedown_confirmed_at TIMESTAMP")
 
         for stmt in migrations:
             try:
@@ -407,6 +471,19 @@ class Database:
                 continue
         if migrations:
             await self._connection.commit()
+
+    async def _migrate_report_engagement_table(self) -> None:
+        """Add columns to report_engagement table (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(report_engagement)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+
+        if "click_count" not in existing:
+            try:
+                await self._connection.execute("ALTER TABLE report_engagement ADD COLUMN click_count INTEGER DEFAULT 1")
+                await self._connection.commit()
+            except Exception:
+                pass
 
     async def _migrate_deferred_to_watchlist(self) -> None:
         """Migrate existing deferred domains to watchlist status."""
@@ -1093,6 +1170,64 @@ class Database:
             rows = await cursor.fetchall()
         return {row["status"]: row["count"] for row in rows}
 
+    async def get_engagement_summary(self, limit_platforms: int = 20) -> dict:
+        """Aggregate engagement counts across domains/platforms."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT platform, SUM(click_count) AS clicks
+                FROM report_engagement
+                GROUP BY platform
+                ORDER BY clicks DESC
+                LIMIT ?
+                """,
+                (limit_platforms,),
+            )
+            rows = await cursor.fetchall()
+            platform_counts = {row["platform"]: int(row["clicks"] or 0) for row in rows}
+
+            cursor = await self._connection.execute(
+                "SELECT SUM(click_count) AS total FROM report_engagement"
+            )
+            total_row = await cursor.fetchone()
+            total = int(total_row["total"] or 0) if total_row else 0
+
+        return {"total_engagements": total, "by_platform": platform_counts}
+
+    async def get_takedown_metrics(self) -> dict:
+        """Return takedown status counts and timing (best-effort)."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT takedown_status, COUNT(*) as count
+                FROM domains
+                WHERE takedown_status IS NOT NULL
+                GROUP BY takedown_status
+                """
+            )
+            rows = await cursor.fetchall()
+            by_status = {row["takedown_status"]: row["count"] for row in rows}
+
+            cursor = await self._connection.execute(
+                """
+                SELECT
+                    AVG(
+                        CAST(
+                            (JULIANDAY(COALESCE(takedown_detected_at, takedown_confirmed_at)) - JULIANDAY(reported_at)) * 24
+                            AS REAL
+                        )
+                    ) AS avg_hours_to_detect
+                FROM domains
+                WHERE takedown_status IN ('likely_down', 'confirmed_down')
+                  AND reported_at IS NOT NULL
+                  AND (takedown_detected_at IS NOT NULL OR takedown_confirmed_at IS NOT NULL)
+                """
+            )
+            row = await cursor.fetchone()
+            avg_hours = float(row["avg_hours_to_detect"]) if row and row["avg_hours_to_detect"] is not None else None
+
+        return {"by_status": by_status, "avg_hours_to_detect": avg_hours}
+
     async def domain_exists(self, domain: str) -> bool:
         """Check if domain already exists in database."""
         domain_lower = (domain or "").strip().lower()
@@ -1282,6 +1417,394 @@ class Database:
                   AND d.status NOT IN ('watchlist', 'allowlisted', 'false_positive')
                 ORDER BY r.id ASC
                 """
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # =========================================================================
+    # Public submissions
+    # =========================================================================
+
+    async def add_public_submission(
+        self,
+        domain: str,
+        canonical_domain: str,
+        source_url: Optional[str] = None,
+        reporter_notes: Optional[str] = None,
+    ) -> tuple[int, bool]:
+        """
+        Insert a public submission or bump the counter if it already exists.
+
+        Returns:
+            (submission_id, is_duplicate)
+        """
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT id, submission_count
+                FROM public_submissions
+                WHERE canonical_domain = ?
+                """,
+                (canonical_domain,),
+            )
+            row = await cursor.fetchone()
+
+            if row:
+                new_count = int(row["submission_count"] or 1) + 1
+                await self._connection.execute(
+                    """
+                    UPDATE public_submissions
+                    SET submission_count = ?,
+                        last_submitted_at = CURRENT_TIMESTAMP,
+                        source_url = COALESCE(?, source_url),
+                        reporter_notes = CASE
+                            WHEN ? IS NOT NULL AND TRIM(?) != '' THEN
+                                TRIM(
+                                    COALESCE(reporter_notes, '')
+                                    || CASE WHEN TRIM(reporter_notes) = '' THEN '' ELSE '\n' END
+                                    || TRIM(?)
+                                )
+                            ELSE reporter_notes
+                        END
+                    WHERE id = ?
+                    """,
+                    (new_count, source_url, reporter_notes, reporter_notes, reporter_notes, row["id"]),
+                )
+                await self._connection.commit()
+                return int(row["id"]), True
+
+            cursor = await self._connection.execute(
+                """
+                INSERT INTO public_submissions (domain, canonical_domain, source_url, reporter_notes)
+                VALUES (?, ?, ?, ?)
+                """,
+                (domain, canonical_domain, source_url, reporter_notes),
+            )
+            await self._connection.commit()
+            return int(cursor.lastrowid), False
+
+    async def get_public_submissions(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List public submissions, optionally filtered by status."""
+        status_filter = ""
+        params: list[object] = []
+        if status:
+            status_filter = "WHERE status = ?"
+            params.append(status)
+        params.extend([limit, offset])
+
+        async with self._lock:
+            cursor = await self._connection.execute(
+                f"""
+                SELECT *
+                FROM public_submissions
+                {status_filter}
+                ORDER BY first_submitted_at ASC
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def count_public_submissions(self, *, status: Optional[str] = None) -> int:
+        """Count submissions, optionally by status."""
+        status_filter = ""
+        params: list[object] = []
+        if status:
+            status_filter = "WHERE status = ?"
+            params.append(status)
+
+        async with self._lock:
+            cursor = await self._connection.execute(
+                f"SELECT COUNT(*) as count FROM public_submissions {status_filter}",
+                params,
+            )
+            row = await cursor.fetchone()
+            return int(row["count"] if row else 0)
+
+    async def get_public_submission(self, submission_id: int) -> Optional[dict]:
+        """Fetch a single submission by id."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                "SELECT * FROM public_submissions WHERE id = ?",
+                (submission_id,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_public_submission_status(
+        self,
+        submission_id: int,
+        status: str,
+        *,
+        reviewer_notes: Optional[str] = None,
+        promoted_domain_id: Optional[int] = None,
+    ) -> bool:
+        """Update status/notes for a submission."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                UPDATE public_submissions
+                SET status = ?,
+                    reviewed_at = CURRENT_TIMESTAMP,
+                    reviewer_notes = COALESCE(?, reviewer_notes),
+                    promoted_domain_id = COALESCE(?, promoted_domain_id)
+                WHERE id = ?
+                """,
+                (status, reviewer_notes, promoted_domain_id, submission_id),
+            )
+            await self._connection.commit()
+            return cursor.rowcount > 0
+
+    # =========================================================================
+    # Report engagement counters
+    # =========================================================================
+
+    async def record_report_engagement(
+        self,
+        domain_id: int,
+        platform: str,
+        session_hash: str,
+        *,
+        cooldown_hours: int = 24,
+    ) -> tuple[int, bool]:
+        """
+        Record engagement for a platform.
+
+        Returns:
+            (new_count_for_platform, cooldown_triggered)
+        """
+        cooldown_clause = f"-{int(cooldown_hours)} hours"
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT id,
+                       datetime(last_engaged_at) >= datetime('now', ?) AS within_cooldown
+                FROM report_engagement
+                WHERE domain_id = ? AND platform = ? AND session_hash = ?
+                """,
+                (cooldown_clause, domain_id, platform, session_hash),
+            )
+            row = await cursor.fetchone()
+
+            if row:
+                within_cooldown = bool(row["within_cooldown"])
+                if within_cooldown:
+                    count_cursor = await self._connection.execute(
+                        """
+                        SELECT SUM(click_count) AS count
+                        FROM report_engagement
+                        WHERE domain_id = ? AND platform = ?
+                        """,
+                        (domain_id, platform),
+                    )
+                    count_row = await count_cursor.fetchone()
+                    count_value = count_row["count"] if count_row and count_row["count"] is not None else 0
+                    return int(count_value), True
+
+                await self._connection.execute(
+                    """
+                    UPDATE report_engagement
+                    SET last_engaged_at = CURRENT_TIMESTAMP,
+                        click_count = click_count + 1
+                    WHERE id = ?
+                    """,
+                    (row["id"],),
+                )
+            else:
+                await self._connection.execute(
+                    """
+                    INSERT INTO report_engagement (domain_id, platform, session_hash, click_count)
+                    VALUES (?, ?, ?, 1)
+                    """,
+                    (domain_id, platform, session_hash),
+                )
+
+            await self._connection.commit()
+
+            count_cursor = await self._connection.execute(
+                """
+                SELECT SUM(click_count) AS count
+                FROM report_engagement
+                WHERE domain_id = ? AND platform = ?
+                """,
+                (domain_id, platform),
+            )
+            count_row = await count_cursor.fetchone()
+            count_value = count_row["count"] if count_row and count_row["count"] is not None else 0
+            return int(count_value), False
+
+    async def get_report_engagement_counts(self, domain_id: int) -> dict[str, int]:
+        """Return engagement counts per platform."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT platform, SUM(click_count) AS count
+                FROM report_engagement
+                WHERE domain_id = ?
+                GROUP BY platform
+                """,
+                (domain_id,),
+            )
+            rows = await cursor.fetchall()
+            return {row["platform"]: int(row["count"] or 0) for row in rows}
+
+    async def get_report_engagement_total(self, domain_id: int) -> int:
+        """Return total engagement rows for a domain."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT SUM(click_count) AS count
+                FROM report_engagement
+                WHERE domain_id = ?
+                """,
+                (domain_id,),
+            )
+            row = await cursor.fetchone()
+            count_value = row["count"] if row and row["count"] is not None else 0
+            return int(count_value)
+
+    # =========================================================================
+    # Takedown tracking
+    # =========================================================================
+
+    async def add_takedown_check(
+        self,
+        domain_id: int,
+        *,
+        http_status: Optional[int] = None,
+        http_error: Optional[str] = None,
+        dns_resolves: Optional[bool] = None,
+        dns_result: Optional[str] = None,
+        is_sinkholed: Optional[bool] = None,
+        domain_status: Optional[str] = None,
+        content_hash: Optional[str] = None,
+        still_phishing: Optional[bool] = None,
+        takedown_status: Optional[str] = None,
+        confidence: Optional[float] = None,
+    ) -> int:
+        """Insert a takedown check row."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                INSERT INTO takedown_checks (
+                    domain_id,
+                    http_status,
+                    http_error,
+                    dns_resolves,
+                    dns_result,
+                    is_sinkholed,
+                    domain_status,
+                    content_hash,
+                    still_phishing,
+                    takedown_status,
+                    confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    domain_id,
+                    http_status,
+                    http_error,
+                    dns_resolves,
+                    dns_result,
+                    is_sinkholed,
+                    domain_status,
+                    content_hash,
+                    still_phishing,
+                    takedown_status,
+                    confidence,
+                ),
+            )
+            await self._connection.commit()
+            return int(cursor.lastrowid)
+
+    async def get_recent_takedown_checks(self, domain_id: int, limit: int = 5) -> list[dict]:
+        """Return recent takedown checks for a domain."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT *
+                FROM takedown_checks
+                WHERE domain_id = ?
+                ORDER BY datetime(checked_at) DESC
+                LIMIT ?
+                """,
+                (domain_id, limit),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_last_takedown_check(self, domain_id: int) -> Optional[dict]:
+        """Return the most recent takedown check."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT *
+                FROM takedown_checks
+                WHERE domain_id = ?
+                ORDER BY datetime(checked_at) DESC
+                LIMIT 1
+                """,
+                (domain_id,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_domain_takedown_status(
+        self,
+        domain_id: int,
+        status: str,
+        *,
+        detected_at: Optional[str] = None,
+        confirmed_at: Optional[str] = None,
+    ) -> None:
+        """Update takedown status columns on domains."""
+        async with self._lock:
+            await self._connection.execute(
+                """
+                UPDATE domains
+                SET takedown_status = ?,
+                    takedown_detected_at = COALESCE(?, takedown_detected_at),
+                    takedown_confirmed_at = COALESCE(?, takedown_confirmed_at)
+                WHERE id = ?
+                """,
+                (status, detected_at, confirmed_at, domain_id),
+            )
+            await self._connection.commit()
+
+    async def get_domains_for_takedown_check(self, limit: int = 200) -> list[dict]:
+        """
+        Return domains with their last takedown check timestamps.
+
+        Ordered by oldest check first so schedulers can pick in priority order.
+        """
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT
+                    d.id,
+                    d.domain,
+                    d.status,
+                    d.verdict,
+                    d.reported_at,
+                    d.created_at,
+                    d.takedown_status,
+                    MAX(tc.checked_at) AS last_checked_at
+                FROM domains d
+                LEFT JOIN takedown_checks tc ON tc.domain_id = d.id
+                WHERE d.status NOT IN ('false_positive', 'allowlisted')
+                GROUP BY d.id
+                ORDER BY
+                    COALESCE(datetime(last_checked_at), datetime(d.reported_at), datetime(d.created_at)) ASC
+                LIMIT ?
+                """,
+                (limit,),
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

@@ -126,9 +126,11 @@ class AnalysisEngine:
                     except ValueError:
                         continue
 
+            resolved_ip_list = sorted(resolved_ips)
+
             if not dns_resolves or not resolved_ips:
                 # Domain doesn't exist - report based on domain score alone
-                urlscan_history_reasons, urlscan_result_url, urlscan_history_found = await self._lookup_urlscan_history(domain)
+                urlscan_history_reasons, urlscan_result_url, urlscan_history_found = await self._lookup_urlscan_history(hostname or domain)
                 analysis_score = domain_score
                 if urlscan_history_found:
                     analysis_score = max(analysis_score, max(self.config.analysis_score_threshold, 75))
@@ -148,6 +150,8 @@ class AnalysisEngine:
                     "verdict": verdict.value,
                     "reasons": reasons,
                     "dns_resolves": False,
+                    "resolved_ips": resolved_ip_list,
+                    "infrastructure": {"unresolvable": True},
                 })
                 self.temporal.add_snapshot(
                     domain=domain,
@@ -173,7 +177,7 @@ class AnalysisEngine:
                     "verdict": verdict.value,
                     "reasons": reasons,
                     "dns_resolves": True,
-                    "resolved_ips": sorted(resolved_ips),
+                    "resolved_ips": resolved_ip_list,
                     "blocked_for_ssrf": True,
                 })
                 self.temporal.add_snapshot(
@@ -187,8 +191,8 @@ class AnalysisEngine:
                 # Run browser, infrastructure, and external intel in PARALLEL
                 browser_result, infra_result, external_result = await asyncio.gather(
                     self.browser.analyze(domain),
-                    self.infrastructure.analyze(domain),
-                    self.external_intel.query_all(domain),
+                    self.infrastructure.analyze(hostname or domain),
+                    self.external_intel.query_all(hostname or domain),
                     return_exceptions=True,
                 )
 
@@ -220,7 +224,7 @@ class AnalysisEngine:
                     error = getattr(browser_result, "error", None) or "Analysis failed"
                     logger.warning(f"Failed to analyze {domain}: {error}")
                     analysis_score = min(100, domain_score + (external_result.score if external_result else 0))
-                    urlscan_history_reasons, history_result_url, urlscan_history_found = await self._lookup_urlscan_history(domain)
+                    urlscan_history_reasons, history_result_url, urlscan_history_found = await self._lookup_urlscan_history(hostname or domain)
                     if history_result_url and not urlscan_result_url:
                         urlscan_result_url = history_result_url
                     if urlscan_history_found:
@@ -235,14 +239,50 @@ class AnalysisEngine:
                         + urlscan_history_reasons
                     )
 
+                    infra_ip_addresses: list[str] = []
+                    if resolved_ip_list:
+                        infra_ip_addresses.extend(resolved_ip_list)
+                    if infra_result and infra_result.hosting and infra_result.hosting.ip_address:
+                        infra_ip_addresses.append(infra_result.hosting.ip_address)
+                    infra_ip_addresses = sorted({ip for ip in infra_ip_addresses if ip})
+
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
                         "score": analysis_score,
                         "verdict": verdict.value,
                         "reasons": reasons,
                         "dns_resolves": True,
-                        "resolved_ips": sorted(resolved_ips),
+                        "resolved_ips": resolved_ip_list,
                         "analysis_error": error,
+                        "infrastructure": {
+                            "hosting_provider": (
+                                infra_result.hosting.hosting_provider
+                                if infra_result and infra_result.hosting
+                                else None
+                            ),
+                            "ip_addresses": infra_ip_addresses if infra_ip_addresses else None,
+                            "tls_age_days": infra_result.tls.age_days if infra_result and infra_result.tls else None,
+                            "domain_age_days": (
+                                infra_result.domain_info.age_days
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                            "uses_privacy_dns": (
+                                infra_result.domain_info.uses_privacy_dns
+                                if infra_result and infra_result.domain_info
+                                else False
+                            ),
+                            "registrar": (
+                                infra_result.domain_info.registrar
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                            "nameservers": (
+                                infra_result.domain_info.nameservers
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                        } if infra_result else None,
                         "external_intel": external_result.to_dict() if external_result else None,
                     })
                     self.temporal.add_snapshot(
@@ -427,10 +467,18 @@ class AnalysisEngine:
                         r for r in (reasons or []) if isinstance(r, str) and ("api key" in r.lower() or "apikey" in r.lower())
                     ]
 
+                    infra_ip_addresses: list[str] = []
+                    if resolved_ip_list:
+                        infra_ip_addresses.extend(resolved_ip_list)
+                    if infra_result and infra_result.hosting and infra_result.hosting.ip_address:
+                        infra_ip_addresses.append(infra_result.hosting.ip_address)
+                    infra_ip_addresses = sorted({ip for ip in infra_ip_addresses if ip})
+
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
                         "final_url": getattr(browser_result, "final_url", None),
                         "hosting_provider": hosting_provider,
+                        "resolved_ips": resolved_ip_list,
                         "backend_domains": backend_domains,
                         "api_keys_found": api_keys_found,
                         "score": analysis_score,
@@ -453,10 +501,21 @@ class AnalysisEngine:
                                 if infra_result and infra_result.hosting
                                 else None
                             ),
+                            "ip_addresses": infra_ip_addresses if infra_ip_addresses else None,
                             "uses_privacy_dns": (
                                 infra_result.domain_info.uses_privacy_dns
                                 if infra_result and infra_result.domain_info
                                 else False
+                            ),
+                            "registrar": (
+                                infra_result.domain_info.registrar
+                                if infra_result and infra_result.domain_info
+                                else None
+                            ),
+                            "nameservers": (
+                                infra_result.domain_info.nameservers
+                                if infra_result and infra_result.domain_info
+                                else None
                             ),
                         },
                         "code_analysis": {

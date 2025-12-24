@@ -204,6 +204,33 @@ class BaseReporter(ABC):
         """
         return True, ""
 
+    def generate_manual_submission(self, evidence: ReportEvidence) -> "ManualSubmissionData":
+        """
+        Build structured manual submission data for this platform.
+
+        Subclasses can override to provide richer, platform-specific instructions.
+        """
+        form_url = getattr(self, "platform_url", "") or ""
+        summary = evidence.to_summary()
+        return ManualSubmissionData(
+            form_url=form_url,
+            reason="Manual submission required",
+            fields=[
+                ManualSubmissionField(
+                    name="url",
+                    label="URL to report",
+                    value=evidence.url,
+                ),
+                ManualSubmissionField(
+                    name="details",
+                    label="Evidence summary",
+                    value=summary,
+                    multiline=True,
+                ),
+            ],
+            notes=[],
+        )
+
 
 class ReporterError(Exception):
     """Base exception for reporter errors."""
