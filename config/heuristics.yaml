@@ -285,3 +285,73 @@ browser:
       priority: 1
     - text: settings
       priority: 3
+
+# Infrastructure analysis thresholds
+# These control when domains/certificates are considered "new" or suspicious
+infrastructure:
+  # TLS certificate thresholds
+  tls_new_days: 30          # Certs younger than this are flagged as new
+  tls_short_lived_days: 90  # Certs valid for less than this are short-lived
+
+  # Domain age thresholds
+  domain_very_new_days: 7   # Domains younger than this are very suspicious
+  domain_new_days: 30       # Domains younger than this are somewhat suspicious
+
+# Rule scoring weights
+# Adjust these to tune detection sensitivity
+scoring:
+  # Visual fingerprint matching
+  visual_match_high: 40       # Score for 80%+ visual match
+  visual_match_partial: 20    # Score for 60%+ visual match
+  visual_threshold_high: 80   # Threshold for high match (percent)
+  visual_threshold_partial: 60  # Threshold for partial match (percent)
+
+  # Seed form detection
+  seed_form_definitive: 50    # Found via exploration with mnemonic form
+  seed_form_12_24_inputs: 35  # Found 12 or 24 text inputs
+  seed_form_possible: 25      # Possible seed form pattern
+  seed_form_inputs: 15        # Seed-related inputs detected
+
+  # Domain score thresholds
+  domain_score_high_threshold: 50
+  domain_score_high_points: 15
+  domain_score_medium_threshold: 30
+  domain_score_medium_points: 10
+
+  # Infrastructure scoring
+  infra_new_tls: 10           # New TLS certificate
+  infra_free_short_tls: 5     # Free + short-lived cert combo
+  infra_very_new_domain: 20   # Very new domain registration
+  infra_new_domain: 10        # New domain registration
+  infra_privacy_dns: 20       # Privacy-focused DNS (Njalla, etc.)
+  infra_bulletproof: 25       # Bulletproof hosting detected
+
+  # Code analysis scoring
+  code_kit_high_confidence: 30    # Kit match >= 80% confidence
+  code_kit_medium_confidence: 15  # Kit match >= 50% confidence
+  code_fingerprinting_max: 20     # Max score for fingerprinting techniques
+  code_antibot: 15                # Anti-bot detection code found
+  code_obfuscation: 15            # Obfuscated JavaScript detected
+  code_suspicious_endpoints: 10   # Suspicious C2 endpoints found
+  code_suspicious_functions_max: 15  # Max score for suspicious functions
+
+  # Network/exfiltration scoring
+  exfil_known_malicious: 50       # Known malicious endpoint
+  exfil_external_form: 30         # Form submits to external domain
+  exfil_malicious_pattern: 15     # Malicious URL pattern matched
+  exfil_malicious_domain: 40      # Known malicious domain in code
+  exfil_api_key: 50               # Known malicious API key found
+  exfil_scammer_signature: 30     # Scammer signature matched
+
+  # Exploration scoring
+  explore_seed_form: 40           # Seed form found via click-through
+  explore_possible_seed: 30       # Possible seed form via exploration
+  explore_seed_inputs: 20         # Seed inputs found via exploration
+  explore_malicious_endpoint: 35  # Malicious endpoint in explored content
+  explore_malicious_api_key: 30   # Malicious API key in explored content
+  explore_kit_match: 25           # Kit match in explored content
+
+  # Verdict thresholds
+  verdict_high: 70
+  verdict_medium: 40
+  verdict_low: 20

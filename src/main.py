@@ -84,11 +84,14 @@ class SeedBusterPipeline:
         )
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
+            config_dir=config.config_dir,
             keywords=config.keywords,
             analysis_threshold=config.analysis_score_threshold,
             seed_keywords=config.seed_keywords,
             title_keywords=config.title_keywords,
             pattern_categories=config.pattern_categories,
+            infrastructure_thresholds=config.infrastructure_thresholds,
+            scoring_weights=config.scoring_weights,
         )
         self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
         self.takedown_checker = TakedownChecker()

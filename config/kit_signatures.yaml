@@ -1,0 +1,86 @@
+# Phishing Kit Signatures for SeedBuster
+# Add new kit signatures here without code changes.
+#
+# Each kit has:
+#   - patterns: Regex patterns to match in JavaScript/code
+#   - html_patterns: Regex patterns to match in HTML
+#   - min_matches: Minimum number of pattern matches to identify kit
+#
+# Confidence is calculated as: min(matched_count / (min_matches + 2), 1.0)
+
+kit_signatures:
+  kaspa_stealer_v1:
+    description: Generic Kaspa seed stealer with DigitalOcean backend
+    patterns:
+      - "ondigitalocean\\.app"
+      - "/api/form/submit"
+      - "/log-ip"
+      - "seed.*phrase.*input"
+    html_patterns:
+      - "kaspa.*wallet"
+      - "enter.*your.*seed"
+      - "recovery.*phrase"
+    min_matches: 2
+
+  kaspa_ng_phishing:
+    description: Phishing clone of legitimate kaspa-ng.org with cloaking
+    patterns:
+      - "kaspa-backend\\.vercel\\.app"  # Known C2 notification backend
+      - "whale-app.*\\.ondigitalocean\\.app"  # Known exfil backend
+      - "walrus-app.*\\.ondigitalocean\\.app"  # Known IP logging backend
+      - "kaspanet\\.one"  # Phishing redirect target
+      - "appName.*Kaspa\\.ng"  # Kit identity string
+      - "appName.*Kaspa\\.one"  # Kit identity string
+      - "/api/form/text"  # Exfil endpoint pattern
+      - "/api/notification"  # C2 notification pattern
+      - "/log-ip"  # IP logging endpoint
+    html_patterns:
+      - "noindex.*nofollow"  # SEO hiding - legitimate sites don't hide
+      - "is_datacenter|is_vpn|is_tor|is_proxy"  # Anti-bot cloaking variables
+      - "hasSeenWallet|hasVisited"  # Cloaking state tracking
+      - "broswer"  # Typo fingerprint unique to this kit
+    min_matches: 2
+
+  generic_seed_stealer:
+    description: Generic seed phrase stealer with wallet recovery UI
+    patterns:
+      - "mnemonic"
+      - "seed.*phrase"
+      - "recovery.*words?"
+      - "word\\s*#?\\d+"
+    html_patterns:
+      - "<input[^>]*type=['\"]text['\"][^>]*>.*seed"
+      - "wallet.*restore"
+      - "import.*wallet"
+    min_matches: 3
+
+  metamask_phish:
+    description: MetaMask wallet phishing kit
+    patterns:
+      - "metamask"
+      - "secret.*recovery.*phrase"
+      - "12.*word"
+    html_patterns:
+      - "metamask"
+      - "connect.*wallet"
+    min_matches: 2
+
+  trust_wallet_phish:
+    description: Trust Wallet phishing kit
+    patterns:
+      - "trustwallet"
+      - "trust.*wallet"
+      - "recovery.*phrase"
+    html_patterns:
+      - "trust.*wallet"
+      - "import.*wallet"
+    min_matches: 2
+
+  # Template for adding new kits:
+  # new_kit_name:
+  #   description: Description of the phishing kit
+  #   patterns:
+  #     - "pattern_in_javascript"
+  #   html_patterns:
+  #     - "pattern_in_html"
+  #   min_matches: 2

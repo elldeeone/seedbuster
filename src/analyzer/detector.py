@@ -71,17 +71,18 @@ class VisualMatchRule:
         score = 0
         reasons: list[str] = []
         metadata: dict = {}
+        s = detector.scoring  # Shorthand for scoring weights
 
         if context.browser_result.screenshot:
             visual_score, matched = detector._check_visual_match(context.browser_result.screenshot)
             metadata["visual_match_score"] = visual_score
             metadata["matched_fingerprint"] = matched
 
-            if visual_score >= 80:
-                score += 40
+            if visual_score >= s.get("visual_threshold_high", 80):
+                score += s.get("visual_match_high", 40)
                 reasons.append(f"Visual match to {matched}: {visual_score:.0f}%")
-            elif visual_score >= 60:
-                score += 20
+            elif visual_score >= s.get("visual_threshold_partial", 60):
+                score += s.get("visual_match_partial", 20)
                 reasons.append(f"Partial visual match to {matched}: {visual_score:.0f}%")
 
         return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
@@ -212,12 +213,19 @@ class DomainScoreRule:
     def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
         score = 0
         reasons: list[str] = []
+        s = detector.scoring
         domain_score = context.domain_score
-        if domain_score >= 50:
-            score += 15
+
+        high_threshold = s.get("domain_score_high_threshold", 50)
+        high_points = s.get("domain_score_high_points", 15)
+        medium_threshold = s.get("domain_score_medium_threshold", 30)
+        medium_points = s.get("domain_score_medium_points", 10)
+
+        if domain_score >= high_threshold:
+            score += high_points
             reasons.append(f"High domain suspicion score: {domain_score}")
-        elif domain_score >= 30:
-            score += 10
+        elif domain_score >= medium_threshold:
+            score += medium_points
             reasons.append(f"Moderate domain suspicion score: {domain_score}")
         return RuleResult(self.name, score=score, reasons=reasons)
 
@@ -393,6 +401,33 @@ class PhishingDetector:
         r"recovery\s*words?",
     ]
 
+    # Default scoring weights
+    DEFAULT_SCORING = {
+        "visual_match_high": 40,
+        "visual_match_partial": 20,
+        "visual_threshold_high": 80,
+        "visual_threshold_partial": 60,
+        "seed_form_definitive": 50,
+        "seed_form_12_24_inputs": 35,
+        "seed_form_possible": 25,
+        "seed_form_inputs": 15,
+        "domain_score_high_threshold": 50,
+        "domain_score_high_points": 15,
+        "domain_score_medium_threshold": 30,
+        "domain_score_medium_points": 10,
+        "infra_new_tls": 10,
+        "infra_free_short_tls": 5,
+        "infra_very_new_domain": 20,
+        "infra_new_domain": 10,
+        "infra_privacy_dns": 20,
+        "infra_bulletproof": 25,
+        "code_kit_high_confidence": 30,
+        "code_kit_medium_confidence": 15,
+        "verdict_high": 70,
+        "verdict_medium": 40,
+        "verdict_low": 20,
+    }
+
     def __init__(
         self,
         fingerprints_dir: Path,
@@ -402,6 +437,8 @@ class PhishingDetector:
         seed_keywords: list[str] | None = None,
         title_keywords: list[tuple[str, int, str]] | None = None,
         pattern_categories: list[dict] | None = None,
+        infrastructure_thresholds: dict | None = None,
+        scoring_weights: dict | None = None,
     ):
         self.fingerprints_dir = fingerprints_dir
         self.fingerprints_dir.mkdir(parents=True, exist_ok=True)
@@ -418,6 +455,12 @@ class PhishingDetector:
             ("airdrop", 5, "Airdrop-related title"),
         ]
         self.pattern_categories = pattern_categories or []
+        self.infrastructure_thresholds = infrastructure_thresholds or {}
+        # Merge scoring weights with defaults
+        self.scoring = dict(self.DEFAULT_SCORING)
+        if scoring_weights:
+            self.scoring.update(scoring_weights)
+
         self._fingerprints: dict[str, imagehash.ImageHash] = {}
         self._load_fingerprints()
 
@@ -426,8 +469,8 @@ class PhishingDetector:
         self._threat_intel_loader = ThreatIntelLoader(self.config_dir)
         self._threat_intel = self._threat_intel_loader.load()
 
-        # Code analyzer for JS/HTML analysis
-        self._code_analyzer = CodeAnalyzer()
+        # Code analyzer for JS/HTML analysis (pass config_dir for kit signatures)
+        self._code_analyzer = CodeAnalyzer(config_dir=self.config_dir)
 
         # Build rule list - use ContentPatternRule if pattern_categories configured,
         # otherwise fall back to legacy KeywordRule + CryptoDoublerRule
@@ -444,10 +487,13 @@ class PhishingDetector:
                 f"{[c.get('name') for c in self.pattern_categories]}"
             )
         else:
-            # Fall back to legacy rules for backward compatibility
+            # Legacy fallback - deprecated, use pattern_categories in heuristics.yaml instead
             self._rules.append(KeywordRule())
             self._rules.append(CryptoDoublerRule())
-            logger.info("Using legacy KeywordRule + CryptoDoublerRule (no pattern_categories configured)")
+            logger.warning(
+                "Using legacy KeywordRule + CryptoDoublerRule. "
+                "Configure detection.pattern_categories in heuristics.yaml for flexibility."
+            )
 
         self._rules.extend([
             NetworkExfilRule(),
@@ -569,16 +615,20 @@ class PhishingDetector:
         elif result.seed_form_detected or seed_phishing_detected:
             result.scam_type = "seed_phishing"
 
-        # Cap and classify
+        # Cap and classify using configurable thresholds
         result.score = min(total_score, 100)
         result.confidence = result.score / 100.0
         result.reasons = combined_reasons
 
-        if result.score >= 70:
+        verdict_high = self.scoring.get("verdict_high", 70)
+        verdict_medium = self.scoring.get("verdict_medium", 40)
+        verdict_low = self.scoring.get("verdict_low", 20)
+
+        if result.score >= verdict_high:
             result.verdict = "high"
-        elif result.score >= 40:
+        elif result.score >= verdict_medium:
             result.verdict = "medium"
-        elif result.score >= 20:
+        elif result.score >= verdict_low:
             result.verdict = "low"
         else:
             result.verdict = "benign"
@@ -915,32 +965,33 @@ class PhishingDetector:
         """
         score = 0
         reasons = []
+        s = self.scoring  # Shorthand for scoring weights
 
         # TLS Certificate signals
         if infra.tls:
             # Very new certificates are suspicious
             if infra.tls.is_new:
-                score += 10
+                score += s.get("infra_new_tls", 10)
                 reasons.append(f"INFRA: New TLS cert ({infra.tls.age_days} days old)")
 
             # Free + short-lived is common pattern for phishing
             if infra.tls.is_free_cert and infra.tls.is_short_lived:
-                score += 5
+                score += s.get("infra_free_short_tls", 5)
                 reasons.append(f"INFRA: Free short-lived cert ({infra.tls.issuer})")
 
         # Domain registration signals
         if infra.domain_info:
             # Very new domains are highly suspicious
             if infra.domain_info.is_very_new:
-                score += 20
+                score += s.get("infra_very_new_domain", 20)
                 reasons.append(f"INFRA: Very new domain ({infra.domain_info.age_days} days)")
             elif infra.domain_info.is_new_domain:
-                score += 10
+                score += s.get("infra_new_domain", 10)
                 reasons.append(f"INFRA: New domain ({infra.domain_info.age_days} days)")
 
             # Privacy-focused DNS is a strong signal
             if infra.domain_info.uses_privacy_dns:
-                score += 20
+                score += s.get("infra_privacy_dns", 20)
                 ns_list = infra.domain_info.nameservers
                 ns_sample = ns_list[0] if ns_list else "detected"
                 reasons.append(f"INFRA: Privacy DNS (Njalla): {ns_sample}")
@@ -949,7 +1000,7 @@ class PhishingDetector:
         if infra.hosting:
             # Bulletproof hosting is very suspicious
             if infra.hosting.is_bulletproof:
-                score += 25
+                score += s.get("infra_bulletproof", 25)
                 reasons.append(f"INFRA: Bulletproof hosting ({infra.hosting.asn_name})")
 
         return score, reasons

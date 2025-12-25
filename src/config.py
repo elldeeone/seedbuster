@@ -239,6 +239,41 @@ class Config:
     # Flexible pattern categories for content detection (loaded from heuristics.yaml)
     pattern_categories: list[dict] = field(default_factory=list)
 
+    # Infrastructure thresholds (loaded from heuristics.yaml)
+    infrastructure_thresholds: dict = field(default_factory=lambda: {
+        "tls_new_days": 30,
+        "tls_short_lived_days": 90,
+        "domain_very_new_days": 7,
+        "domain_new_days": 30,
+    })
+
+    # Scoring weights (loaded from heuristics.yaml)
+    scoring_weights: dict = field(default_factory=lambda: {
+        "visual_match_high": 40,
+        "visual_match_partial": 20,
+        "visual_threshold_high": 80,
+        "visual_threshold_partial": 60,
+        "seed_form_definitive": 50,
+        "seed_form_12_24_inputs": 35,
+        "seed_form_possible": 25,
+        "seed_form_inputs": 15,
+        "domain_score_high_threshold": 50,
+        "domain_score_high_points": 15,
+        "domain_score_medium_threshold": 30,
+        "domain_score_medium_points": 10,
+        "infra_new_tls": 10,
+        "infra_free_short_tls": 5,
+        "infra_very_new_domain": 20,
+        "infra_new_domain": 10,
+        "infra_privacy_dns": 20,
+        "infra_bulletproof": 25,
+        "code_kit_high_confidence": 30,
+        "code_kit_medium_confidence": 15,
+        "verdict_high": 70,
+        "verdict_medium": 40,
+        "verdict_low": 20,
+    })
+
     # Target patterns for domain matching
     target_patterns: list[str] = field(
         default_factory=lambda: [
@@ -406,9 +441,68 @@ def _load_heuristics(config_dir: Path) -> dict:
                 })
         return categories
 
+    def _coerce_infrastructure_thresholds(raw):
+        """Parse infrastructure thresholds from config."""
+        defaults = {
+            "tls_new_days": 30,
+            "tls_short_lived_days": 90,
+            "domain_very_new_days": 7,
+            "domain_new_days": 30,
+        }
+        if not isinstance(raw, dict):
+            return defaults
+        result = dict(defaults)
+        for key in defaults:
+            if key in raw:
+                try:
+                    result[key] = int(raw[key])
+                except (ValueError, TypeError):
+                    pass
+        return result
+
+    def _coerce_scoring_weights(raw):
+        """Parse scoring weights from config."""
+        defaults = {
+            "visual_match_high": 40,
+            "visual_match_partial": 20,
+            "visual_threshold_high": 80,
+            "visual_threshold_partial": 60,
+            "seed_form_definitive": 50,
+            "seed_form_12_24_inputs": 35,
+            "seed_form_possible": 25,
+            "seed_form_inputs": 15,
+            "domain_score_high_threshold": 50,
+            "domain_score_high_points": 15,
+            "domain_score_medium_threshold": 30,
+            "domain_score_medium_points": 10,
+            "infra_new_tls": 10,
+            "infra_free_short_tls": 5,
+            "infra_very_new_domain": 20,
+            "infra_new_domain": 10,
+            "infra_privacy_dns": 20,
+            "infra_bulletproof": 25,
+            "code_kit_high_confidence": 30,
+            "code_kit_medium_confidence": 15,
+            "verdict_high": 70,
+            "verdict_medium": 40,
+            "verdict_low": 20,
+        }
+        if not isinstance(raw, dict):
+            return defaults
+        result = dict(defaults)
+        for key in defaults:
+            if key in raw:
+                try:
+                    result[key] = int(raw[key])
+                except (ValueError, TypeError):
+                    pass
+        return result
+
     domain_cfg = data.get("domain", {}) if isinstance(data, dict) else {}
     detection_cfg = data.get("detection", {}) if isinstance(data, dict) else {}
     browser_cfg = data.get("browser", {}) if isinstance(data, dict) else {}
+    infrastructure_cfg = data.get("infrastructure", {}) if isinstance(data, dict) else {}
+    scoring_cfg = data.get("scoring", {}) if isinstance(data, dict) else {}
 
     return {
         "target_patterns": domain_cfg.get("target_patterns"),
@@ -427,6 +521,8 @@ def _load_heuristics(config_dir: Path) -> dict:
         "pattern_categories": _coerce_pattern_categories(
             detection_cfg.get("pattern_categories")
         ),
+        "infrastructure_thresholds": _coerce_infrastructure_thresholds(infrastructure_cfg),
+        "scoring_weights": _coerce_scoring_weights(scoring_cfg),
     }
 
 
@@ -535,6 +631,8 @@ def load_config() -> Config:
         title_keywords=heuristics.get("title_keywords", list(DEFAULT_TITLE_KEYWORDS)),
         exploration_targets=heuristics.get("exploration_targets", list(DEFAULT_EXPLORATION_TARGETS)),
         pattern_categories=heuristics.get("pattern_categories", []),
+        infrastructure_thresholds=heuristics.get("infrastructure_thresholds", {}),
+        scoring_weights=heuristics.get("scoring_weights", {}),
     )
 
 

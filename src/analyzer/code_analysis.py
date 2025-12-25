@@ -7,9 +7,31 @@ obfuscation patterns, and phishing kit signatures.
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
+import yaml
+
 logger = logging.getLogger(__name__)
+
+
+def load_kit_signatures(config_dir: Path | None = None) -> dict:
+    """Load phishing kit signatures from config file."""
+    config_dir = config_dir or Path("config")
+    path = config_dir / "kit_signatures.yaml"
+
+    if not path.exists():
+        logger.warning(f"Kit signatures config not found: {path}")
+        return {}
+
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+        signatures = data.get("kit_signatures", {})
+        logger.info(f"Loaded {len(signatures)} kit signatures from config")
+        return signatures
+    except Exception as e:
+        logger.error(f"Failed to load kit signatures: {e}")
+        return {}
 
 
 @dataclass
@@ -227,8 +249,8 @@ class CodeAnalyzer:
         ],
     }
 
-    # Known phishing kit signatures
-    PHISHING_KIT_SIGNATURES = {
+    # Default phishing kit signatures (used if config file not found)
+    DEFAULT_KIT_SIGNATURES = {
         "kaspa_stealer_v1": {
             "patterns": [
                 r"ondigitalocean\.app",
@@ -240,28 +262,6 @@ class CodeAnalyzer:
                 r"kaspa.*wallet",
                 r"enter.*your.*seed",
                 r"recovery.*phrase",
-            ],
-            "min_matches": 2,
-        },
-        "kaspa_ng_phishing": {
-            # Phishing clone of legitimate kaspa-ng.org
-            # Key indicators: malicious backend infrastructure + SEO hiding
-            "patterns": [
-                r"kaspa-backend\.vercel\.app",  # Known C2 notification backend
-                r"whale-app.*\.ondigitalocean\.app",  # Known exfil backend
-                r"walrus-app.*\.ondigitalocean\.app",  # Known IP logging backend
-                r"kaspanet\.one",  # Phishing redirect target
-                r"appName.*Kaspa\.ng",  # Kit identity string (domain doesn't exist)
-                r"appName.*Kaspa\.one",  # Kit identity string (parked domain)
-                r"/api/form/text",  # Exfil endpoint pattern
-                r"/api/notification",  # C2 notification pattern
-                r"/log-ip",  # IP logging endpoint
-            ],
-            "html_patterns": [
-                r'noindex.*nofollow',  # SEO hiding - legitimate sites don't hide
-                r"is_datacenter|is_vpn|is_tor|is_proxy",  # Anti-bot cloaking variables
-                r"hasSeenWallet|hasVisited",  # Cloaking state tracking
-                r"broswer",  # Typo fingerprint unique to this kit
             ],
             "min_matches": 2,
         },
@@ -278,30 +278,6 @@ class CodeAnalyzer:
                 r"import.*wallet",
             ],
             "min_matches": 3,
-        },
-        "metamask_phish": {
-            "patterns": [
-                r"metamask",
-                r"secret.*recovery.*phrase",
-                r"12.*word",
-            ],
-            "html_patterns": [
-                r"metamask",
-                r"connect.*wallet",
-            ],
-            "min_matches": 2,
-        },
-        "trust_wallet_phish": {
-            "patterns": [
-                r"trustwallet",
-                r"trust.*wallet",
-                r"recovery.*phrase",
-            ],
-            "html_patterns": [
-                r"trust.*wallet",
-                r"import.*wallet",
-            ],
-            "min_matches": 2,
         },
     }
 
@@ -338,7 +314,22 @@ class CodeAnalyzer:
         ],
     }
 
-    def __init__(self):
+    def __init__(self, config_dir: Path | None = None):
+        """Initialize code analyzer.
+
+        Args:
+            config_dir: Path to config directory. If provided, kit signatures
+                        are loaded from config/kit_signatures.yaml.
+        """
+        self.config_dir = config_dir
+        # Load kit signatures from config or use defaults
+        self._kit_signatures = load_kit_signatures(config_dir) if config_dir else {}
+        if not self._kit_signatures:
+            self._kit_signatures = self.DEFAULT_KIT_SIGNATURES
+            logger.info("Using default kit signatures (no config loaded)")
+        else:
+            logger.info(f"Loaded {len(self._kit_signatures)} kit signatures from config")
+
         # Compile regex patterns for efficiency
         self._compiled_patterns = {}
         self._compile_patterns()
@@ -524,7 +515,7 @@ class CodeAnalyzer:
         """Match against known phishing kit signatures."""
         matches = []
 
-        for kit_name, signature in self.PHISHING_KIT_SIGNATURES.items():
+        for kit_name, signature in self._kit_signatures.items():
             matched_patterns = []
 
             # Check code patterns
@@ -652,7 +643,8 @@ def analyze_code(
     domain: str,
     html: Optional[str] = None,
     javascript: Optional[str] = None,
+    config_dir: Path | None = None,
 ) -> CodeAnalysisResult:
     """Analyze code for phishing indicators."""
-    analyzer = CodeAnalyzer()
+    analyzer = CodeAnalyzer(config_dir=config_dir)
     return analyzer.analyze(domain, html=html, javascript=javascript)
