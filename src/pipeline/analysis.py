@@ -518,6 +518,9 @@ class AnalysisEngine:
                                 else None
                             ),
                         },
+                        "scam_type": detection.scam_type,
+                        "crypto_doubler_detected": detection.crypto_doubler_detected,
+                        "scammer_wallets": detection.scammer_wallets,
                         "code_analysis": {
                             "score": detection.code_score,
                             "reasons": detection.code_reasons,
@@ -550,12 +553,21 @@ class AnalysisEngine:
 
             # Update database
             evidence_path = str(self.evidence_store.get_evidence_path(domain))
+            # Convert scam_type string to ScamType enum if present
+            from ..storage.database import ScamType
+            scam_type_enum = None
+            if detection.scam_type:
+                try:
+                    scam_type_enum = ScamType(detection.scam_type)
+                except ValueError:
+                    pass
             await self.database.update_domain_analysis(
                 domain_id=domain_id,
                 analysis_score=analysis_score,
                 verdict=verdict,
                 verdict_reasons="\n".join(reasons),
                 evidence_path=evidence_path,
+                scam_type=scam_type_enum,
             )
 
             # Determine if we should send an alert

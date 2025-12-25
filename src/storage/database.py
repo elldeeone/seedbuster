@@ -36,6 +36,15 @@ class Verdict(str, Enum):
     BENIGN = "benign"  # Confirmed safe
 
 
+class ScamType(str, Enum):
+    """Type of scam detected on a domain."""
+
+    SEED_PHISHING = "seed_phishing"  # Seed phrase theft (wallet impersonation)
+    CRYPTO_DOUBLER = "crypto_doubler"  # "Send X, get 2X back" scams
+    FAKE_AIRDROP = "fake_airdrop"  # Fake airdrop/giveaway (overlaps with doubler)
+    UNKNOWN = "unknown"  # Detected as malicious but type unclear
+
+
 class Database:
     """Async SQLite database for domain tracking."""
 
@@ -83,6 +92,7 @@ class Database:
                         verdict_reasons TEXT,
                         operator_notes TEXT,
                         status TEXT DEFAULT 'pending',
+                        scam_type TEXT,
                         analyzed_at TIMESTAMP,
                         reported_at TIMESTAMP,
                         takedown_status TEXT DEFAULT 'active',
@@ -234,6 +244,8 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_detected_at TIMESTAMP")
         if "takedown_confirmed_at" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_confirmed_at TIMESTAMP")
+        if "scam_type" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN scam_type TEXT")
 
         for stmt in migrations:
             try:
@@ -806,8 +818,10 @@ class Database:
         verdict: Verdict,
         verdict_reasons: str,
         evidence_path: str,
+        scam_type: Optional["ScamType"] = None,
     ):
         """Update domain with analysis results."""
+        scam_type_value = scam_type.value if scam_type else None
         async with self._lock:
             await self._connection.execute(
                 """
@@ -816,6 +830,7 @@ class Database:
                     verdict = ?,
                     verdict_reasons = ?,
                     evidence_path = ?,
+                    scam_type = COALESCE(?, scam_type),
                     status = ?,
                     analyzed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
@@ -826,6 +841,7 @@ class Database:
                     verdict.value,
                     verdict_reasons,
                     evidence_path,
+                    scam_type_value,
                     DomainStatus.ANALYZED.value,
                     domain_id,
                 ),

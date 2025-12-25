@@ -130,17 +130,31 @@ malicious_domains:
   source: seedbuster_auto
   notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
 - domain: kaspadrop.org
-  type: phishing_host
+  type: crypto_doubler
+  scam_type: crypto_doubler
   confidence: high
   first_seen: '2025-12-23'
-  source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+  source: manual_analysis
+  notes: >-
+    Crypto doubler scam impersonating kaspa.org. Landing page clones official
+    site with "Join Event" button leading to /kas/ page. Promises 3X returns
+    on KAS sent. Uses fake countdown timer, fake transaction history, and
+    Yandex analytics tracking. Part of coordinated campaign with kaspa.insure.
+  scammer_wallets:
+    - kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
 - domain: kaspa.insure
-  type: phishing_host
+  type: crypto_doubler
+  scam_type: crypto_doubler
   confidence: high
   first_seen: '2025-12-23'
-  source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+  source: manual_analysis
+  notes: >-
+    Crypto doubler scam impersonating kaspa.org. Landing page clones official
+    site with "Join Event" button leading to /kas/index.html page. Promises 3X
+    returns on KAS sent. Uses fake countdown timer, fake testimonials, fake
+    transaction history. Part of coordinated campaign with kaspadrop.org.
+  scammer_wallets:
+    - kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
 malicious_patterns:
 - pattern: /log-ip
   type: ip_logging
@@ -259,6 +273,30 @@ scammer_signatures:
   - www.kaspawallet.net
   cloaking_method: IP-based via walrus backend + ipdata.co bot detection
   attack_flow: landing -> redirect -> 12-word seed form -> whale exfil + vercel notification
+- name: crypto_doubler_campaign
+  scam_type: crypto_doubler
+  indicators:
+  - x3 kas
+  - triple returns
+  - generated address
+  - join event
+  - kaspa-ldsp-dark-full-color
+  - yandex.metrica
+  confidence: high
+  notes: >-
+    Crypto doubler/giveaway scam campaign. Clones kaspa.org landing page with
+    "Join Event" CTA leading to fake airdrop page. Uses Divi WordPress theme,
+    Yandex analytics, fake countdown timers, and fake transaction history.
+    Promises 3X returns on sent KAS.
+  known_frontends:
+  - kaspadrop.org
+  - kaspa.insure
+  known_wallets:
+  - kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
+  - kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
+  attack_flow: >-
+    landing (kaspa.org clone) -> "Join Event" button -> /kas/ page ->
+    fake airdrop form with wallet address -> victim sends KAS -> funds stolen
 kit_fingerprints:
   typos:
   - pattern: broswer
@@ -336,3 +374,58 @@ kit_fingerprints:
   - pattern: noindex.*nofollow
     confidence: high
     notes: Hiding from search engines - phishing sites hide, legitimate sites don't
+  crypto_doubler:
+  - pattern: x3\s*(kas|triple|returns?)
+    confidence: very_high
+    kit: crypto_doubler_campaign
+    notes: Promises 3X returns - classic crypto doubler language
+  - pattern: send.*to\s*(the\s*)?generated\s*(pool\s*)?address
+    confidence: very_high
+    kit: crypto_doubler_campaign
+    notes: Instruction to send crypto to scammer wallet
+  - pattern: (get|receive|gain)\s*\d+x\s*(back|returns?)?
+    confidence: very_high
+    kit: crypto_doubler_campaign
+    notes: Multiplier return promises (2x, 3x, etc.)
+  - pattern: waiting\s*confirmation
+    confidence: high
+    kit: crypto_doubler_campaign
+    notes: Fake transaction confirmation UI element
+  - pattern: generated\s*address
+    confidence: high
+    kit: crypto_doubler_campaign
+    notes: UI element for scammer wallet display
+  - pattern: (join|participate)\s*(in\s*)?(the\s*)?(event|airdrop|giveaway)
+    confidence: high
+    kit: crypto_doubler_campaign
+    notes: CTA button text for fake events
+  - pattern: kaspa.*ldsp.*dark.*full.*color
+    confidence: very_high
+    kit: crypto_doubler_campaign
+    notes: Stolen Kaspa logo asset filename
+  - pattern: updateCountdown
+    confidence: high
+    kit: crypto_doubler_campaign
+    notes: Fake countdown timer JavaScript function
+  - pattern: mc4wp|yandex.*metrica
+    confidence: medium
+    kit: crypto_doubler_campaign
+    notes: Common analytics/form plugins used by scam sites
+  - pattern: tawk\.to
+    confidence: low
+    kit: crypto_doubler_campaign
+    notes: Chat widget often used for social engineering
+scammer_wallets:
+  kaspa:
+  - address: kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
+    first_seen: '2025-12-25'
+    associated_domains:
+      - kaspadrop.org
+    scam_type: crypto_doubler
+    notes: Crypto doubler scam wallet - promises 3X returns
+  - address: kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
+    first_seen: '2025-12-25'
+    associated_domains:
+      - kaspa.insure
+    scam_type: crypto_doubler
+    notes: Crypto doubler scam wallet - promises 3X returns

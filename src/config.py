@@ -236,6 +236,8 @@ class Config:
     exploration_targets: list[dict] = field(
         default_factory=lambda: list(DEFAULT_EXPLORATION_TARGETS)
     )
+    # Flexible pattern categories for content detection (loaded from heuristics.yaml)
+    pattern_categories: list[dict] = field(default_factory=list)
 
     # Target patterns for domain matching
     target_patterns: list[str] = field(
@@ -366,6 +368,44 @@ def _load_heuristics(config_dir: Path) -> dict:
             items.append({"text": text, "priority": priority})
         return items or default
 
+    def _coerce_pattern_categories(raw):
+        """Parse flexible pattern categories from config."""
+        categories: list[dict] = []
+        for cat in raw or []:
+            if not isinstance(cat, dict):
+                continue
+            name = str(cat.get("name") or "").strip()
+            if not name:
+                continue
+            label = str(cat.get("label") or name.upper()).strip()
+            try:
+                threshold = int(cat.get("threshold", 2))
+            except Exception:
+                threshold = 2
+
+            patterns: list[dict] = []
+            for p in cat.get("patterns") or []:
+                if not isinstance(p, dict):
+                    continue
+                pattern = str(p.get("pattern") or "").strip()
+                if not pattern:
+                    continue
+                try:
+                    points = int(p.get("points", 10))
+                except Exception:
+                    points = 10
+                reason = str(p.get("reason") or "").strip() or f"{label} pattern match"
+                patterns.append({"pattern": pattern, "points": points, "reason": reason})
+
+            if patterns:
+                categories.append({
+                    "name": name,
+                    "label": label,
+                    "threshold": threshold,
+                    "patterns": patterns,
+                })
+        return categories
+
     domain_cfg = data.get("domain", {}) if isinstance(data, dict) else {}
     detection_cfg = data.get("detection", {}) if isinstance(data, dict) else {}
     browser_cfg = data.get("browser", {}) if isinstance(data, dict) else {}
@@ -383,6 +423,9 @@ def _load_heuristics(config_dir: Path) -> dict:
         ),
         "exploration_targets": _coerce_exploration_targets(
             browser_cfg.get("exploration_targets"), list(DEFAULT_EXPLORATION_TARGETS)
+        ),
+        "pattern_categories": _coerce_pattern_categories(
+            detection_cfg.get("pattern_categories")
         ),
     }
 
@@ -491,6 +534,7 @@ def load_config() -> Config:
         seed_keywords=heuristics.get("seed_keywords", list(DEFAULT_SEED_KEYWORDS)) or list(DEFAULT_SEED_KEYWORDS),
         title_keywords=heuristics.get("title_keywords", list(DEFAULT_TITLE_KEYWORDS)),
         exploration_targets=heuristics.get("exploration_targets", list(DEFAULT_EXPLORATION_TARGETS)),
+        pattern_categories=heuristics.get("pattern_categories", []),
     )
 
 

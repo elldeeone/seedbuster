@@ -88,6 +88,7 @@ class SeedBusterPipeline:
             analysis_threshold=config.analysis_score_threshold,
             seed_keywords=config.seed_keywords,
             title_keywords=config.title_keywords,
+            pattern_categories=config.pattern_categories,
         )
         self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
         self.takedown_checker = TakedownChecker()

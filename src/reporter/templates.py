@@ -98,7 +98,12 @@ class ReportTemplates:
         """
         Generate a generic abuse report email.
         Action-first format optimized for busy abuse teams.
+        Routes to appropriate template based on scam_type.
         """
+        # Route to crypto doubler template if applicable
+        if evidence.scam_type == "crypto_doubler":
+            return cls.crypto_doubler_generic(evidence, reporter_email)
+
         subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
 
         seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
@@ -276,6 +281,10 @@ network logs) upon request.
     @classmethod
     def cloudflare(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
         """Generate a Cloudflare abuse report."""
+        # Route to crypto doubler template if applicable
+        if evidence.scam_type == "crypto_doubler":
+            return cls.crypto_doubler_cloudflare(evidence, reporter_email)
+
         subject = f"Phishing report: {evidence.domain}"
 
         seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
@@ -314,6 +323,10 @@ Captured evidence (screenshot + HTML) available on request.
         registrar_name: Optional[str] = None,
     ) -> dict:
         """Generate a domain registrar abuse report."""
+        # Route to crypto doubler template if applicable
+        if evidence.scam_type == "crypto_doubler":
+            return cls.crypto_doubler_registrar(evidence, reporter_email, registrar_name)
+
         registrar_str = f" - {registrar_name}" if registrar_name else ""
         subject = f"Domain Abuse Report (phishing / seed phrase theft): {evidence.domain}"
 
@@ -378,6 +391,10 @@ Source: https://github.com/elldeeone/seedbuster
     @classmethod
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
+        # Use appropriate comment based on scam type
+        if evidence.scam_type == "crypto_doubler":
+            return cls._google_safebrowsing_doubler_comment(evidence)
+        # Default to seed phishing
         seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
         seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
@@ -391,6 +408,192 @@ Source: https://github.com/elldeeone/seedbuster
             lines.append(f"- {reason}")
         lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
         return "\n".join(lines)
+
+    @classmethod
+    def _google_safebrowsing_doubler_comment(cls, evidence: ReportEvidence) -> str:
+        """Generate Google Safe Browsing comment for crypto doubler scams."""
+        lines = [
+            "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
+            "Impersonates official project to steal cryptocurrency.",
+            "",
+        ]
+        if evidence.scammer_wallets:
+            lines.append(f"Scammer wallet: {evidence.scammer_wallets[0]}")
+            lines.append("")
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+        lines.append("Key evidence (automated capture):")
+        for reason in highlights:
+            lines.append(f"- {reason}")
+        lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
+        return "\n".join(lines)
+
+    # -------------------------------------------------------------------------
+    # Crypto Doubler / Fake Giveaway Templates
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def crypto_doubler_generic(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
+        """Generate a generic abuse report for crypto doubler scams."""
+        subject = f"Fraud Report (Crypto Doubler/Giveaway Scam): {evidence.domain}"
+
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+
+        body = f"""Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)
+
+Action requested:
+- Please suspend/disable this fraudulent site.
+
+Target:
+- Domain: {evidence.domain}
+- URL: {evidence.url}
+- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
+- Confidence: {evidence.confidence_score}%
+- Scam type: Crypto Doubler / Fake Giveaway
+
+What we observed:
+{cls._format_list(highlights, prefix='- ')}
+
+"""
+
+        if evidence.scammer_wallets:
+            body += f"""Scammer wallet addresses:
+{cls._format_list(evidence.scammer_wallets, prefix='- ')}
+
+"""
+
+        body += """How this scam works:
+- Site impersonates official Kaspa project (kaspa.org)
+- Claims users will receive 3X back if they send cryptocurrency
+- Shows fake transaction history and countdown timers
+- Victim sends crypto to scammer's wallet; receives nothing back
+
+Impact:
+- This is advance-fee fraud. Victims lose all cryptocurrency sent.
+
+"""
+
+        attachments: list[str] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(f"{evidence.html_path.name} (HTML capture)")
+        if attachments:
+            body += f"""Attachments:
+{cls._format_list(attachments, prefix='- ')}
+
+"""
+
+        body += f"""Reporter: {reporter_email}
+Tool: SeedBuster (automated phishing detection)
+Source: https://github.com/elldeeone/seedbuster
+"""
+
+        return {"subject": subject, "body": body}
+
+    @classmethod
+    def crypto_doubler_registrar(
+        cls,
+        evidence: ReportEvidence,
+        reporter_email: str,
+        registrar_name: Optional[str] = None,
+    ) -> dict:
+        """Generate a domain registrar abuse report for crypto doubler scams."""
+        registrar_str = f" - {registrar_name}" if registrar_name else ""
+        subject = f"Domain Abuse Report (crypto fraud): {evidence.domain}"
+
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+
+        body = f"""Registrar abuse report{registrar_str}
+
+Action requested:
+- Please suspend/disable this domain for advance-fee fraud / cryptocurrency scam.
+
+Target:
+- Domain: {evidence.domain}
+- URL: {evidence.url}
+- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
+- Confidence: {evidence.confidence_score}%
+- Scam type: Crypto Doubler / Fake Giveaway
+
+What we observed:
+{cls._format_list(highlights, prefix='- ')}
+
+"""
+
+        if evidence.scammer_wallets:
+            body += f"""Scammer wallet addresses (crypto sent here is stolen):
+{cls._format_list(evidence.scammer_wallets, prefix='- ')}
+
+"""
+
+        body += """How this scam works:
+- Site clones official cryptocurrency project branding (kaspa.org)
+- Promotes fake "airdrop" or "giveaway event"
+- Claims users will receive 3X returns if they send cryptocurrency
+- Shows fabricated transaction history to build false trust
+- Victim sends crypto to scammer's wallet address
+- Scammer keeps the funds; victim receives nothing
+
+This is advance-fee fraud targeting cryptocurrency users.
+
+"""
+
+        attachments: list[str] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(f"{evidence.html_path.name} (HTML capture)")
+        if attachments:
+            body += f"""Attachments:
+{cls._format_list(attachments, prefix='- ')}
+
+"""
+
+        body += f"""Reporter: {reporter_email}
+Tool: SeedBuster (automated phishing detection)
+Source: https://github.com/elldeeone/seedbuster
+"""
+
+        return {"subject": subject, "body": body}
+
+    @classmethod
+    def crypto_doubler_cloudflare(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
+        """Generate a Cloudflare abuse report for crypto doubler scams."""
+        subject = f"Fraud report: {evidence.domain}"
+
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+
+        body = f"""Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)
+
+Evidence URL: {evidence.url}
+Scam type: Fake crypto giveaway promising 3X returns
+Confidence: {evidence.confidence_score}%
+
+"""
+
+        if evidence.scammer_wallets:
+            body += f"""Scammer wallet: {evidence.scammer_wallets[0]}
+
+"""
+
+        body += f"""Key evidence (automated capture):
+{cls._format_list(highlights, prefix='- ')}
+
+Steps to reproduce:
+1) Open the evidence URL above.
+2) The page impersonates kaspa.org with a "Join Event" button.
+3) Clicking leads to a page promising 3X returns on sent crypto.
+4) A wallet address is displayed for victims to send funds.
+
+Captured evidence (screenshot + HTML) available on request.
+"""
+
+        return {
+            "subject": subject,
+            "body": body,
+            "abuse_type": "phishing",
+            "url": evidence.url,
+        }
 
     @staticmethod
     def _format_list(items: list[str], prefix: str = "  - ") -> str:

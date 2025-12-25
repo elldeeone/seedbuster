@@ -47,8 +47,22 @@ class ReportEvidence:
     api_keys_found: list[str] = field(default_factory=list)
     hosting_provider: Optional[str] = None
 
+    # Scam type classification
+    scam_type: Optional[str] = None  # "seed_phishing", "crypto_doubler", "fake_airdrop"
+
+    # Crypto doubler specific (wallet addresses for advance-fee fraud)
+    scammer_wallets: list[str] = field(default_factory=list)
+
     def to_summary(self) -> str:
         """Generate a human-readable summary for reports with context."""
+        # Choose summary based on scam type
+        if self.scam_type == "crypto_doubler":
+            return self._crypto_doubler_summary()
+        # Default to seed phishing summary
+        return self._seed_phishing_summary()
+
+    def _seed_phishing_summary(self) -> str:
+        """Generate summary for seed phrase phishing scams."""
         lines = [
             "PHISHING REPORT - Cryptocurrency Seed Phrase Theft",
             "",
@@ -83,6 +97,50 @@ class ReportEvidence:
                 lines.append(f"  - {endpoint}")
 
         lines.extend([
+            "",
+            "Reported by: SeedBuster (automated phishing detection)",
+            "Source: https://github.com/elldeeone/seedbuster",
+        ])
+
+        return "\n".join(lines)
+
+    def _crypto_doubler_summary(self) -> str:
+        """Generate summary for crypto doubler / fake giveaway scams."""
+        lines = [
+            "FRAUD REPORT - Cryptocurrency Doubler/Giveaway Scam",
+            "",
+            "This site impersonates the official Kaspa project to run an advance-fee",
+            "fraud scheme. It promises to multiply (e.g., 3X) any cryptocurrency sent",
+            "to their address, but victims receive nothing back.",
+            "",
+            "SITE DETAILS:",
+            f"  Domain: {self.domain}",
+            f"  URL: {self.url}",
+            f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
+            f"  Confidence: {self.confidence_score}%",
+            "",
+        ]
+
+        if self.scammer_wallets:
+            lines.append("SCAMMER WALLET ADDRESSES:")
+            for wallet in self.scammer_wallets[:5]:
+                lines.append(f"  - {wallet}")
+            lines.append("")
+
+        lines.append("KEY EVIDENCE:")
+        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+        for reason in self.detection_reasons[:5]:
+            if not any(s in (reason or "").lower() for s in skip_terms):
+                lines.append(f"  - {reason}")
+
+        lines.extend([
+            "",
+            "HOW THE SCAM WORKS:",
+            "  1. Site clones official project branding (kaspa.org)",
+            "  2. Claims users will receive 3X back if they send crypto",
+            "  3. Shows fake transaction history and countdown timers",
+            "  4. Victim sends crypto to scammer's wallet address",
+            "  5. Scammer keeps funds; victim receives nothing",
             "",
             "Reported by: SeedBuster (automated phishing detection)",
             "Source: https://github.com/elldeeone/seedbuster",

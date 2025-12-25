@@ -31,6 +31,9 @@ class DetectionResult:
     reasons: list[str] = field(default_factory=list)
     confidence: float = 0.0
 
+    # Scam type classification
+    scam_type: Optional[str] = None  # "seed_phishing", "crypto_doubler", "fake_airdrop"
+
     # Visual analysis
     visual_match_score: float = 0.0
     matched_fingerprint: Optional[str] = None
@@ -55,6 +58,10 @@ class DetectionResult:
     temporal_score: int = 0
     temporal_reasons: list[str] = field(default_factory=list)
     cloaking_detected: bool = False
+
+    # Crypto doubler specific
+    crypto_doubler_detected: bool = False
+    scammer_wallets: list[str] = field(default_factory=list)
 
 
 class VisualMatchRule:
@@ -93,11 +100,101 @@ class SeedFormRule:
 
 
 class KeywordRule:
+    """Legacy keyword rule - kept for backward compatibility when no pattern_categories configured."""
+
     name = "keywords"
 
     def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
         score, reasons = detector._detect_keywords(context.browser_result.html or "")
         return RuleResult(self.name, score=score, reasons=reasons)
+
+
+class ContentPatternRule:
+    """Flexible content pattern detection rule that loads categories from config.
+
+    This replaces hardcoded keyword detection with a config-driven approach.
+    Pattern categories are defined in heuristics.yaml and can include any scam type
+    (seed_phishing, crypto_doubler, fake_airdrop, etc.) without code changes.
+    """
+
+    name = "content_patterns"
+
+    def __init__(self, categories: list[dict] | None = None):
+        """Initialize with pattern categories from config.
+
+        Args:
+            categories: List of category dicts with keys:
+                - name: Category identifier (e.g., "seed_phishing", "crypto_doubler")
+                - label: Short label for reasons (e.g., "SEED", "DOUBLER")
+                - threshold: Number of matches to flag as this scam type
+                - patterns: List of {pattern, points, reason} dicts
+        """
+        self.categories = categories or []
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score = 0
+        reasons: list[str] = []
+        metadata: dict = {}
+
+        html = context.browser_result.html or ""
+        html_lower = html.lower()
+
+        detected_types: list[str] = []
+
+        for category in self.categories:
+            cat_name = category.get("name", "unknown")
+            cat_label = category.get("label", cat_name.upper())
+            cat_threshold = category.get("threshold", 2)
+            patterns = category.get("patterns", [])
+
+            pattern_matches = 0
+            cat_score = 0
+
+            for p in patterns:
+                pattern = p.get("pattern", "")
+                points = p.get("points", 10)
+                reason = p.get("reason", "Pattern match")
+
+                if not pattern:
+                    continue
+
+                if re.search(pattern, html_lower, re.I):
+                    cat_score += points
+                    pattern_matches += 1
+                    reasons.append(f"{cat_label}: {reason}")
+
+            score += cat_score
+
+            # Check if this category's threshold is met
+            if pattern_matches >= cat_threshold:
+                detected_types.append(cat_name)
+                metadata[f"{cat_name}_detected"] = True
+
+        # Set primary scam type based on highest-scoring detected type
+        if detected_types:
+            metadata["scam_type"] = detected_types[0]
+
+        # Also check for wallet addresses (crypto_doubler specific but useful generally)
+        if any(cat.get("name") == "crypto_doubler" for cat in self.categories):
+            wallets = re.findall(r"kaspa:[a-z0-9]{60,70}", html, re.I)
+            unique_wallets = list(set(wallets))
+            if unique_wallets:
+                metadata["scammer_wallets"] = unique_wallets
+                # Check against known scammer wallets
+                intel = detector._threat_intel
+                for wallet in unique_wallets:
+                    for known in getattr(intel, "scammer_wallets", {}).get("kaspa", []):
+                        if known.get("address", "").lower() == wallet.lower():
+                            score += 50
+                            reasons.append(f"DOUBLER: Known scammer wallet: {wallet[:40]}...")
+                            break
+                    else:
+                        # Unknown wallet on a suspicious page with doubler patterns
+                        if metadata.get("crypto_doubler_detected"):
+                            score += 20
+                            reasons.append(f"DOUBLER: Wallet address found: {wallet[:40]}...")
+
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
 
 
 class NetworkExfilRule:
@@ -206,6 +303,75 @@ class ExplorationRule:
         return RuleResult(self.name, score=score, reasons=reasons)
 
 
+class CryptoDoublerRule:
+    """Detect crypto doubler / fake giveaway scams."""
+
+    name = "crypto_doubler"
+
+    # Patterns that indicate crypto doubler scams
+    DOUBLER_PATTERNS = [
+        (r"(send|transfer).*to\s*(the\s*)?(generated|pool)\s*address", 40, "Send to generated address instruction"),
+        (r"(get|receive|gain)\s*(\d+)?x\s*(back|returns?|kas)?", 35, "Multiplier return promise"),
+        (r"x\s*[23]\s*(kas|triple|returns?)", 35, "3X return promise"),
+        (r"(triple|double|multiply)\s*(your\s*)?(kas|crypto|funds?)", 35, "Multiplier promise"),
+        (r"(join|participate)\s*(in\s*)?(the\s*)?(event|airdrop|giveaway)", 25, "Fake event CTA"),
+        (r"waiting\s*confirmation", 20, "Fake confirmation UI"),
+        (r"generated\s*address", 20, "Scammer wallet display"),
+        (r"(happy\s*holiday|special\s*event|limited\s*time)\s*(promotion|offer|event)?", 15, "Urgency language"),
+        (r"kaspa.*ldsp.*dark.*full.*color", 30, "Stolen Kaspa branding asset"),
+        (r"updateCountdown", 15, "Fake countdown timer"),
+        (r"yandex.*metrica", 10, "Yandex analytics (common in scam sites)"),
+    ]
+
+    # Kaspa wallet address pattern
+    KASPA_WALLET_PATTERN = r"kaspa:[a-z0-9]{60,70}"
+
+    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
+        score = 0
+        reasons: list[str] = []
+        metadata: dict = {
+            "crypto_doubler_detected": False,
+            "scammer_wallets": [],
+        }
+
+        html = context.browser_result.html or ""
+        html_lower = html.lower()
+
+        # Check for doubler patterns
+        pattern_matches = 0
+        for pattern, points, reason in self.DOUBLER_PATTERNS:
+            if re.search(pattern, html_lower, re.I):
+                score += points
+                reasons.append(f"DOUBLER: {reason}")
+                pattern_matches += 1
+
+        # Extract Kaspa wallet addresses
+        wallets = re.findall(self.KASPA_WALLET_PATTERN, html, re.I)
+        unique_wallets = list(set(wallets))
+        if unique_wallets:
+            metadata["scammer_wallets"] = unique_wallets
+            # Check if any wallet is known malicious
+            intel = detector._threat_intel
+            for wallet in unique_wallets:
+                for known in getattr(intel, "scammer_wallets", {}).get("kaspa", []):
+                    if known.get("address", "").lower() == wallet.lower():
+                        score += 50
+                        reasons.append(f"DOUBLER: Known scammer wallet: {wallet[:40]}...")
+                        break
+                else:
+                    # Unknown wallet on a suspicious page
+                    if pattern_matches >= 2:
+                        score += 20
+                        reasons.append(f"DOUBLER: Wallet address found: {wallet[:40]}...")
+
+        # If we found multiple doubler patterns, it's likely a doubler scam
+        if pattern_matches >= 3:
+            metadata["crypto_doubler_detected"] = True
+            metadata["scam_type"] = "crypto_doubler"
+
+        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
+
+
 class PhishingDetector:
     """Detects phishing characteristics in analyzed websites."""
 
@@ -235,6 +401,7 @@ class PhishingDetector:
         analysis_threshold: int = 70,
         seed_keywords: list[str] | None = None,
         title_keywords: list[tuple[str, int, str]] | None = None,
+        pattern_categories: list[dict] | None = None,
     ):
         self.fingerprints_dir = fingerprints_dir
         self.fingerprints_dir.mkdir(parents=True, exist_ok=True)
@@ -250,6 +417,7 @@ class PhishingDetector:
             ("claim", 5, "Claim-related title"),
             ("airdrop", 5, "Airdrop-related title"),
         ]
+        self.pattern_categories = pattern_categories or []
         self._fingerprints: dict[str, imagehash.ImageHash] = {}
         self._load_fingerprints()
 
@@ -260,10 +428,28 @@ class PhishingDetector:
 
         # Code analyzer for JS/HTML analysis
         self._code_analyzer = CodeAnalyzer()
+
+        # Build rule list - use ContentPatternRule if pattern_categories configured,
+        # otherwise fall back to legacy KeywordRule + CryptoDoublerRule
         self._rules: list[DetectionRule] = [
             VisualMatchRule(),
             SeedFormRule(),
-            KeywordRule(),
+        ]
+
+        if self.pattern_categories:
+            # Use new flexible content pattern detection
+            self._rules.append(ContentPatternRule(self.pattern_categories))
+            logger.info(
+                f"Using ContentPatternRule with {len(self.pattern_categories)} categories: "
+                f"{[c.get('name') for c in self.pattern_categories]}"
+            )
+        else:
+            # Fall back to legacy rules for backward compatibility
+            self._rules.append(KeywordRule())
+            self._rules.append(CryptoDoublerRule())
+            logger.info("Using legacy KeywordRule + CryptoDoublerRule (no pattern_categories configured)")
+
+        self._rules.extend([
             NetworkExfilRule(),
             DomainScoreRule(),
             TitleRule(),
@@ -272,7 +458,7 @@ class PhishingDetector:
             CodeRule(),
             TemporalRule(),
             ExplorationRule(),
-        ]
+        ])
 
     def reload_threat_intel(self) -> str:
         """Reload threat intelligence from file (hot reload). Returns version."""
@@ -369,6 +555,19 @@ class PhishingDetector:
         result.temporal_score = int(metadata.get("temporal_score", 0) or 0)
         result.temporal_reasons = metadata.get("temporal_reasons", []) or []
         result.cloaking_detected = bool(metadata.get("cloaking_detected", False))
+        result.crypto_doubler_detected = bool(metadata.get("crypto_doubler_detected", False))
+        result.scammer_wallets = metadata.get("scammer_wallets", []) or []
+
+        # Also check for seed_phishing_detected from ContentPatternRule
+        seed_phishing_detected = bool(metadata.get("seed_phishing_detected", False))
+
+        # Determine scam type based on detection results
+        if metadata.get("scam_type"):
+            result.scam_type = metadata.get("scam_type")
+        elif result.crypto_doubler_detected:
+            result.scam_type = "crypto_doubler"
+        elif result.seed_form_detected or seed_phishing_detected:
+            result.scam_type = "seed_phishing"
 
         # Cap and classify
         result.score = min(total_score, 100)

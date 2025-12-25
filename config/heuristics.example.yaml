@@ -52,6 +52,102 @@ domain:
     "$": "s"
 
 detection:
+  # Flexible pattern categories - add new scam types here without code changes.
+  # Each category is applied independently during content scanning.
+  # To add a new scam type (e.g., fake_airdrop), just add a new category block.
+  pattern_categories:
+    - name: seed_phishing
+      label: SEED
+      threshold: 2  # Matches needed to classify as this scam type
+      patterns:
+        - pattern: "recovery\\s*phrase"
+          points: 10
+          reason: Recovery phrase terminology
+        - pattern: "seed\\s*phrase"
+          points: 10
+          reason: Seed phrase terminology
+        - pattern: "mnemonic"
+          points: 10
+          reason: Mnemonic terminology
+        - pattern: "secret\\s*phrase"
+          points: 10
+          reason: Secret phrase terminology
+        - pattern: "backup\\s*phrase"
+          points: 10
+          reason: Backup phrase terminology
+        - pattern: "12\\s*words?"
+          points: 8
+          reason: 12-word reference
+        - pattern: "24\\s*words?"
+          points: 8
+          reason: 24-word reference
+        - pattern: "enter\\s*(your\\s*)?seed"
+          points: 15
+          reason: Seed entry prompt
+        - pattern: "restore\\s*wallet"
+          points: 10
+          reason: Wallet restore terminology
+        - pattern: "import\\s*wallet"
+          points: 10
+          reason: Wallet import terminology
+        - pattern: "recover\\s*wallet"
+          points: 10
+          reason: Wallet recovery terminology
+        - pattern: "enter\\s*mnemonic"
+          points: 15
+          reason: Mnemonic entry prompt
+        - pattern: "word\\s*#?\\d+"
+          points: 5
+          reason: Numbered word input
+        - pattern: "recovery\\s*words?"
+          points: 10
+          reason: Recovery words terminology
+
+    - name: crypto_doubler
+      label: DOUBLER
+      threshold: 3
+      patterns:
+        - pattern: "(send|transfer).*to\\s*(the\\s*)?(generated|pool)\\s*address"
+          points: 40
+          reason: Send to generated address instruction
+        - pattern: "(get|receive|gain)\\s*(\\d+)?x\\s*(back|returns?|kas)?"
+          points: 35
+          reason: Multiplier return promise
+        - pattern: "x\\s*[23]\\s*(kas|triple|returns?)"
+          points: 35
+          reason: 3X return promise
+        - pattern: "(triple|double|multiply)\\s*(your\\s*)?(kas|crypto|funds?)"
+          points: 35
+          reason: Multiplier promise
+        - pattern: "(join|participate)\\s*(in\\s*)?(the\\s*)?(event|airdrop|giveaway)"
+          points: 25
+          reason: Fake event CTA
+        - pattern: "waiting\\s*confirmation"
+          points: 20
+          reason: Fake confirmation UI
+        - pattern: "generated\\s*address"
+          points: 20
+          reason: Scammer wallet display
+        - pattern: "(happy\\s*holiday|special\\s*event|limited\\s*time)\\s*(promotion|offer|event)?"
+          points: 15
+          reason: Urgency language
+        - pattern: "kaspa.*ldsp.*dark.*full.*color"
+          points: 30
+          reason: Stolen Kaspa branding asset
+        - pattern: "updateCountdown"
+          points: 15
+          reason: Fake countdown timer
+
+    # Example: Add new scam types by copying this template
+    # - name: fake_airdrop
+    #   label: AIRDROP
+    #   threshold: 2
+    #   patterns:
+    #     - pattern: "claim your .* airdrop"
+    #       points: 30
+    #       reason: Fake airdrop claim prompt
+
+  # Legacy seed_keywords (still supported, used when pattern_categories is empty)
   seed_keywords:
     - "recovery\\s*phrase"
     - "seed\\s*phrase"
@@ -67,6 +163,7 @@ detection:
     - "enter\\s*mnemonic"
     - "word\\s*#?\\d+"
     - "recovery\\s*words?"
+
   title_keywords:
     - keyword: kaspa
       points: 10
