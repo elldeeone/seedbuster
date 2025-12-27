@@ -17,7 +17,7 @@ import hashlib
 import secrets
 import ipaddress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlencode, urlparse
@@ -26,6 +26,15 @@ from aiohttp import web
 
 from ..storage.database import Database, DomainStatus, Verdict
 from ..utils.domains import canonicalize_domain
+
+EVIDENCE_HTML_CSP = (
+    "sandbox; "
+    "default-src 'none'; "
+    "img-src 'self' data:; "
+    "style-src 'unsafe-inline'; "
+    "base-uri 'none'; "
+    "form-action 'none'"
+)
 
 
 def _escape(value: object) -> str:
@@ -2456,7 +2465,7 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
 
       // Show confirmation dialog
       function showConfirmDialog(platformId, platform, domainId) {{
-        const panelId = platformId.replace(/_platform_\d+$/, '');
+        const panelId = platformId.replace(/_platform_\\d+$/, '');
         const csrf = document.querySelector('input[name="csrf"]')?.value || '';
         pendingMarkDone = {{ platformId, platform, domainId, csrf, panelId }};
 
@@ -4246,8 +4255,17 @@ class DashboardServer:
         self._site: web.TCPSite | None = None
         # Simple per-IP rate limiter for public submission endpoint
         self._public_rate_limits: dict[str, list[float]] = {}
+        self._dns_cache: dict[str, tuple[float, list[str]]] = {}
+        self._ns_cache: dict[str, tuple[float, list[str]]] = {}
+        self._cache_ttl_seconds = 600
+        self._http_session: aiohttp.ClientSession | None = None
 
-        self._app = web.Application(middlewares=[self._admin_auth_middleware])
+        self._app = web.Application(
+            middlewares=[
+                self._admin_auth_middleware,
+                self._evidence_sandbox_middleware,
+            ]
+        )
         self._register_routes()
 
     def _load_clusters(self) -> list[dict]:
@@ -4321,7 +4339,7 @@ class DashboardServer:
         Simple sliding-window rate limiter keyed by arbitrary string (e.g., IP).
         Returns True when within limit.
         """
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         window_start = now - float(window_seconds)
         entries = [t for t in self._public_rate_limits.get(key, []) if t >= window_start]
         if len(entries) >= limit:
@@ -4330,6 +4348,28 @@ class DashboardServer:
         entries.append(now)
         self._public_rate_limits[key] = entries
         return True
+
+    def _cache_get(self, cache: dict[str, tuple[float, list[str]]], key: str) -> list[str] | None:
+        now = datetime.now(timezone.utc).timestamp()
+        entry = cache.get(key)
+        if not entry:
+            return None
+        expires_at, values = entry
+        if expires_at < now:
+            cache.pop(key, None)
+            return None
+        return values
+
+    def _cache_set(self, cache: dict[str, tuple[float, list[str]]], key: str, values: list[str]) -> None:
+        expires_at = datetime.now(timezone.utc).timestamp() + float(self._cache_ttl_seconds)
+        cache[key] = (expires_at, values)
+
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        if self._http_session and not self._http_session.closed:
+            return self._http_session
+        timeout = aiohttp.ClientTimeout(total=5)
+        self._http_session = aiohttp.ClientSession(timeout=timeout)
+        return self._http_session
 
     async def _filter_clusters(self, clusters: list[dict]) -> list[dict]:
         """Hide campaigns whose members are all allowlisted/watchlist/false positive."""
@@ -4449,14 +4489,18 @@ class DashboardServer:
         if not url:
             return None
         try:
+            session = await self._get_http_session()
             timeout = aiohttp.ClientTimeout(total=2)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    try:
-                        payload = await resp.json(content_type=None)
-                    except Exception:
-                        payload = {"body": await resp.text()}
-                    return {"ok": resp.status == 200, "status": payload.get("status") if isinstance(payload, dict) else None, "data": payload}
+            async with session.get(url, timeout=timeout) as resp:
+                try:
+                    payload = await resp.json(content_type=None)
+                except Exception:
+                    payload = {"body": await resp.text()}
+                return {
+                    "ok": resp.status == 200,
+                    "status": payload.get("status") if isinstance(payload, dict) else None,
+                    "data": payload,
+                }
         except Exception as exc:  # pragma: no cover - best-effort
             return {"ok": False, "error": str(exc)}
 
@@ -4497,7 +4541,8 @@ class DashboardServer:
         return candidates
 
     async def _admin_api_cleanup_evidence(self, request: web.Request) -> web.Response:
-        data = await request.json()
+        self._require_csrf_header(request)
+        data = await self._read_json(request)
         days = int(data.get("days") or 30)
         if days < 1:
             days = 1
@@ -4630,17 +4675,23 @@ class DashboardServer:
 
         # Explicitly set mode: /admin -> admin, everything else -> public
         mode = "admin" if (request.path or "").startswith("/admin") else "public"
-        mode_script = f"<script>window.__SB_MODE=\"{mode}\";</script>"
+        response = web.Response(
+            text=html_out,
+            content_type="text/html",
+            headers={"Cache-Control": "no-cache"},
+        )
+        csrf_token = ""
+        if mode == "admin":
+            csrf_token = self._get_or_set_csrf(request, response)
+        csrf_fragment = f";window.__SB_CSRF=\"{csrf_token}\"" if csrf_token else ""
+        mode_script = f"<script>window.__SB_MODE=\"{mode}\"{csrf_fragment};</script>"
         if "</head>" in html_out:
             html_out = html_out.replace("</head>", f"{mode_script}</head>", 1)
         else:
             html_out = mode_script + html_out
 
-        return web.Response(
-            text=html_out,
-            content_type="text/html",
-            headers={"Cache-Control": "no-cache"},
-        )
+        response.text = html_out
+        return response
 
     @web.middleware
     async def _admin_auth_middleware(self, request: web.Request, handler):  # type: ignore[override]
@@ -4685,6 +4736,15 @@ class DashboardServer:
 
         return await handler(request)
 
+    @web.middleware
+    async def _evidence_sandbox_middleware(self, request: web.Request, handler):  # type: ignore[override]
+        response = await handler(request)
+        path = (request.path or "").lower()
+        if path.startswith("/evidence") and path.endswith((".html", ".htm")):
+            response.headers["Content-Security-Policy"] = EVIDENCE_HTML_CSP
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     def _get_or_set_csrf(self, request: web.Request, response: web.StreamResponse) -> str:
         name = "sb_admin_csrf"
         token = (request.cookies.get(name) or "").strip()
@@ -4709,6 +4769,25 @@ class DashboardServer:
             raise web.HTTPForbidden(text="CSRF check failed.")
         return data
 
+    def _require_csrf_header(self, request: web.Request) -> None:
+        name = "sb_admin_csrf"
+        cookie = (request.cookies.get(name) or "").strip()
+        sent = (request.headers.get("X-CSRF-Token") or "").strip()
+        if not cookie or not sent or sent != cookie:
+            raise web.HTTPForbidden(text="CSRF check failed.")
+
+    async def _read_json(self, request: web.Request, *, allow_empty: bool = False) -> dict:
+        if allow_empty:
+            if not request.can_read_body or request.content_length in (None, 0):
+                return {}
+        try:
+            data = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(text="Invalid JSON payload")
+        if not isinstance(data, dict):
+            raise web.HTTPBadRequest(text="Invalid JSON payload")
+        return data
+
     async def start(self) -> None:
         if not self.config.enabled:
             return
@@ -4724,6 +4803,9 @@ class DashboardServer:
             await self._runner.cleanup()
         self._runner = None
         self._site = None
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+        self._http_session = None
 
     async def _healthz(self, request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
@@ -4947,6 +5029,7 @@ class DashboardServer:
             // Fallback
             if (type === 'error') {{ console.error(message); }} else {{ console.log(message); }}
           }};
+          const csrfToken = (document.querySelector('input[name="csrf"]') || {{}}).value || '';
 
           const cleanupForm = document.getElementById('cleanup-form');
           const cleanupResult = document.getElementById('cleanup-result');
@@ -4958,7 +5041,7 @@ class DashboardServer:
               try {{
                 const res = await fetch('/admin/api/cleanup_evidence', {{
                   method: 'POST',
-                  headers: {{ 'Content-Type': 'application/json' }},
+                  headers: {{ 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }},
                   body: JSON.stringify({{ days }}),
                 }});
                 const data = await res.json();
@@ -4991,7 +5074,7 @@ class DashboardServer:
               try {{
                 const res = await fetch('/admin/api/submit', {{
                   method: 'POST',
-                  headers: {{ 'Content-Type': 'application/json' }},
+                  headers: {{ 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }},
                   body: JSON.stringify({{ target }}),
                 }});
                 const data = await res.json();
@@ -5011,7 +5094,7 @@ class DashboardServer:
           async function postJSON(url, payload) {{
             const res = await fetch(url, {{
               method: 'POST',
-              headers: {{ 'Content-Type': 'application/json' }},
+              headers: {{ 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }},
               body: JSON.stringify(payload || {{}}),
             }});
             const data = await res.json();
@@ -5537,43 +5620,54 @@ class DashboardServer:
             evidence = {}
 
         # Opportunistic live DNS enrichments if missing (avoid blocking; best-effort)
-        try:
-            if infrastructure.get("ip_addresses") in (None, [], ()):
-                loop = asyncio.get_event_loop()
-                addrs = await loop.run_in_executor(
-                    None,
-                    lambda: socket.getaddrinfo(row["domain"], None, socket.AF_UNSPEC, socket.SOCK_STREAM),
-                )
-                ips = sorted({sockaddr[0] for *_rest, sockaddr in addrs})
-                global_ips = []
-                for ip in ips:
-                    try:
-                        if ipaddress.ip_address(ip).is_global:
-                            global_ips.append(ip)
-                    except ValueError:
-                        continue
-                infrastructure["ip_addresses"] = global_ips or ips
-        except Exception:
-            pass
+        domain_name = str(row.get("domain") or "").strip()
+        if domain_name:
+            try:
+                if infrastructure.get("ip_addresses") in (None, [], ()):
+                    cached_ips = self._cache_get(self._dns_cache, domain_name)
+                    if cached_ips is None:
+                        loop = asyncio.get_event_loop()
+                        addrs = await loop.run_in_executor(
+                            None,
+                            lambda: socket.getaddrinfo(domain_name, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                        )
+                        ips = sorted({sockaddr[0] for *_rest, sockaddr in addrs})
+                        global_ips = []
+                        for ip in ips:
+                            try:
+                                if ipaddress.ip_address(ip).is_global:
+                                    global_ips.append(ip)
+                            except ValueError:
+                                continue
+                        cached_ips = global_ips or ips
+                        self._cache_set(self._dns_cache, domain_name, cached_ips)
+                    infrastructure["ip_addresses"] = cached_ips
+            except Exception:
+                pass
 
-        try:
-            if not infrastructure.get("nameservers"):
-                timeout = aiohttp.ClientTimeout(total=5)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    params = {"name": row["domain"], "type": "NS"}
-                    async with session.get("https://dns.google/resolve", params=params) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            answers = data.get("Answer") or []
-                            ns = []
-                            for ans in answers:
-                                raw = str(ans.get("data", "")).strip()
-                                if raw:
-                                    ns.append(raw.rstrip("."))
-                            if ns:
-                                infrastructure["nameservers"] = ns
-        except Exception:
-            pass
+            try:
+                if not infrastructure.get("nameservers"):
+                    cached_ns = self._cache_get(self._ns_cache, domain_name)
+                    if cached_ns is None:
+                        session = await self._get_http_session()
+                        params = {"name": domain_name, "type": "NS"}
+                        async with session.get("https://dns.google/resolve", params=params) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                answers = data.get("Answer") or []
+                                ns = []
+                                for ans in answers:
+                                    raw = str(ans.get("data", "")).strip()
+                                    if raw:
+                                        ns.append(raw.rstrip("."))
+                                cached_ns = ns
+                            else:
+                                cached_ns = []
+                        self._cache_set(self._ns_cache, domain_name, cached_ns)
+                    if cached_ns:
+                        infrastructure["nameservers"] = cached_ns
+            except Exception:
+                pass
 
         return web.json_response(
             {
@@ -5588,7 +5682,8 @@ class DashboardServer:
         )
 
     async def _admin_api_submit(self, request: web.Request) -> web.Response:
-        data = await request.json()
+        self._require_csrf_header(request)
+        data = await self._read_json(request)
         target = (data.get("target") or data.get("domain") or "").strip()
         domain = _extract_hostname(target)
         if not domain:
@@ -5607,6 +5702,7 @@ class DashboardServer:
         return web.json_response({"status": "submitted", "domain": domain})
 
     async def _admin_api_rescan(self, request: web.Request) -> web.Response:
+        self._require_csrf_header(request)
         domain_id = int(request.match_info.get("domain_id") or 0)
         domain = (request.match_info.get("domain") or "").strip()
         if not domain and domain_id:
@@ -5621,7 +5717,8 @@ class DashboardServer:
         return web.json_response({"status": "rescan_queued", "domain": domain})
 
     async def _admin_api_report(self, request: web.Request) -> web.Response:
-        data = await request.json()
+        self._require_csrf_header(request)
+        data = await self._read_json(request)
         domain_id = int(data.get("domain_id") or 0)
         domain = (data.get("domain") or "").strip()
         platforms_raw = data.get("platforms")
@@ -5867,6 +5964,7 @@ class DashboardServer:
         return web.json_response({"submission": submission})
 
     async def _admin_api_approve_submission(self, request: web.Request) -> web.Response:
+        self._require_csrf_header(request)
         submission_id = _coerce_int(request.match_info.get("submission_id"), default=0, min_value=1)
         if not submission_id:
             raise web.HTTPBadRequest(text="submission_id required")
@@ -5878,10 +5976,7 @@ class DashboardServer:
         if str(submission.get("status") or "").strip().lower() != "pending_review":
             return web.json_response({"error": "Submission already reviewed"}, status=400)
 
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
+        data = await self._read_json(request, allow_empty=True)
         reviewer_notes = (data.get("notes") or "").strip()
         if reviewer_notes and len(reviewer_notes) > 1000:
             reviewer_notes = reviewer_notes[:1000]
@@ -5937,6 +6032,7 @@ class DashboardServer:
         )
 
     async def _admin_api_reject_submission(self, request: web.Request) -> web.Response:
+        self._require_csrf_header(request)
         submission_id = _coerce_int(request.match_info.get("submission_id"), default=0, min_value=1)
         if not submission_id:
             raise web.HTTPBadRequest(text="submission_id required")
@@ -5948,10 +6044,7 @@ class DashboardServer:
         if str(submission.get("status") or "").strip().lower() != "pending_review":
             return web.json_response({"error": "Submission already reviewed"}, status=400)
 
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
+        data = await self._read_json(request, allow_empty=True)
 
         reason = (data.get("reason") or "rejected").strip().lower()
         notes = (data.get("notes") or "").strip()
@@ -5967,6 +6060,7 @@ class DashboardServer:
         return web.json_response({"status": "rejected", "reason": reason})
 
     async def _admin_api_false_positive(self, request: web.Request) -> web.Response:
+        self._require_csrf_header(request)
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
@@ -5975,11 +6069,12 @@ class DashboardServer:
 
     async def _admin_api_update_domain_status(self, request: web.Request) -> web.Response:
         """Update domain status (PATCH /admin/api/domains/{domain_id}/status)."""
+        self._require_csrf_header(request)
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
 
-        data = await request.json()
+        data = await self._read_json(request)
         new_status = (data.get("status") or "").strip().lower()
 
         # Validate status
@@ -5996,6 +6091,7 @@ class DashboardServer:
 
     async def _admin_api_update_baseline(self, request: web.Request) -> web.Response:
         """Update watchlist baseline to current snapshot (POST /admin/api/domains/{domain_id}/baseline)."""
+        self._require_csrf_header(request)
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
@@ -6078,6 +6174,7 @@ class DashboardServer:
 
     async def _admin_api_update_notes(self, request: web.Request) -> web.Response:
         """Update operator notes for a domain (PATCH /admin/api/domains/{domain_id}/notes)."""
+        self._require_csrf_header(request)
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
@@ -6086,7 +6183,7 @@ class DashboardServer:
         if not domain:
             raise web.HTTPNotFound(text="Domain not found")
 
-        data = await request.json()
+        data = await self._read_json(request)
         notes = data.get("notes", "")
 
         # Update notes via database
@@ -6098,11 +6195,12 @@ class DashboardServer:
 
     async def _admin_api_update_cluster_name(self, request: web.Request) -> web.Response:
         """Update campaign name (PATCH /admin/api/clusters/{cluster_id}/name)."""
+        self._require_csrf_header(request)
         cluster_id = (request.match_info.get("cluster_id") or "").strip()
         if not cluster_id:
             raise web.HTTPBadRequest(text="campaign_id required")
 
-        data = await request.json()
+        data = await self._read_json(request)
         new_name = (data.get("name") or "").strip()
         if not new_name:
             return web.json_response({"error": "Name cannot be empty"}, status=400)

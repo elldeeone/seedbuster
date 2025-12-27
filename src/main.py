@@ -350,9 +350,13 @@ class SeedBusterPipeline:
         logger.info("Temporal tracker initialized")
 
         # Start worker tasks
+        analysis_worker_count = max(1, int(self.config.max_concurrent_analyses or 1))
         self._tasks = [
             asyncio.create_task(self._discovery_worker()),
-            asyncio.create_task(self._analysis_worker()),
+            *[
+                asyncio.create_task(self._analysis_worker(worker_id=i + 1))
+                for i in range(analysis_worker_count)
+            ],
             asyncio.create_task(self._dashboard_actions_worker()),
             asyncio.create_task(self.temporal.run_rescan_loop()),
             asyncio.create_task(self._report_retry_worker()),
@@ -612,12 +616,10 @@ class SeedBusterPipeline:
 
         raise ValueError(f"unknown action kind: {action}")
 
-    async def _analysis_worker(self):
+    async def _analysis_worker(self, worker_id: int | None = None):
         """Analyze queued domains for phishing signals."""
-        logger.info("Analysis worker started")
-
-        # Semaphore for concurrent analysis limit
-        sem = asyncio.Semaphore(self.config.max_concurrent_analyses)
+        label = f"Analysis worker {worker_id}" if worker_id else "Analysis worker"
+        logger.info("%s started", label)
 
         while self._running:
             try:
@@ -638,14 +640,12 @@ class SeedBusterPipeline:
                     domain_record = await self.database.get_domain(domain)
 
                     if domain_record:
-                        async with sem:
-                            await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
+                        await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
                     else:
                         logger.warning(f"Rescan: domain not found in DB: {domain}")
                 else:
                     # Regular task from discovery
-                    async with sem:
-                        await self.analysis_engine.analyze(task)
+                    await self.analysis_engine.analyze(task)
 
             except Exception as e:
                 logger.error(f"Analysis worker error: {e}")

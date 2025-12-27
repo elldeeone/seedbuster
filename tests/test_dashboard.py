@@ -97,6 +97,24 @@ def _make_basic_auth(username: str, password: str) -> str:
     return f"Basic {encoded}"
 
 
+def _admin_headers(csrf_token: str | None = None) -> dict[str, str]:
+    """Build admin headers with optional CSRF token."""
+    headers = {"Authorization": _make_basic_auth("admin", "testpassword")}
+    if csrf_token:
+        headers["X-CSRF-Token"] = csrf_token
+    return headers
+
+
+async def _get_admin_csrf(client) -> str:
+    """Fetch admin CSRF token for API calls."""
+    resp = await client.get(
+        "/admin",
+        headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+    )
+    token = resp.cookies.get("sb_admin_csrf")
+    return token.value if token else ""
+
+
 # =============================================================================
 # Utility Function Tests
 # =============================================================================
@@ -517,19 +535,14 @@ async def test_admin_api_submit_domain(dashboard_server, database):
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         # First get a CSRF token by visiting admin page
-        admin_resp = await client.get(
-            "/admin",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert admin_resp.status == 200
+        csrf_token = await _get_admin_csrf(client)
 
-        # Submit domain via API (API doesn't require CSRF)
+        # Submit domain via API with CSRF header
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             "/admin/api/submit",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={"domain": "newdomain.example.com"},
         )
         assert resp.status == 200
@@ -544,12 +557,12 @@ async def test_admin_api_submit_empty_domain(dashboard_server):
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             "/admin/api/submit",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={"domain": ""},
         )
         assert resp.status == 400
@@ -574,12 +587,12 @@ async def test_admin_api_rescan_domain(dashboard_server, database):
     dashboard_server.rescan_callback = capture_rescan
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             f"/admin/api/domains/{domain_id}/rescan",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={},
         )
         assert resp.status == 200
@@ -725,17 +738,15 @@ async def test_admin_api_handles_invalid_json(dashboard_server):
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             "/admin/api/submit",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             data=b"not valid json",
         )
-        # Server returns 500 on JSON decode error (unhandled exception)
-        # This could be improved but test documents current behavior
-        assert resp.status in (400, 500)
+        assert resp.status == 400
 
 
 # =============================================================================
@@ -832,12 +843,12 @@ async def test_admin_api_cleanup_evidence(dashboard_server, evidence_dir):
     (new_domain_dir / "analysis.json").write_text(json.dumps(new_analysis))
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             "/admin/api/cleanup_evidence",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={"days": 30},
         )
         assert resp.status == 200
@@ -897,12 +908,12 @@ async def test_api_report_domain(dashboard_server, database):
     dashboard_server.report_callback = capture_report
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
         resp = await client.post(
             "/admin/api/report",
-            headers={
-                "Authorization": _make_basic_auth("admin", "testpassword"),
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={"domain_id": domain_id, "platforms": ["google", "cloudflare"]},
         )
         assert resp.status == 200

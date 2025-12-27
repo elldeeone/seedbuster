@@ -23,6 +23,7 @@ import {
   updateClusterName,
   fetchReportOptions,
   fetchAnalytics,
+  updateWatchlistBaseline,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type {
@@ -1872,19 +1873,10 @@ export default function App() {
                           if (!domainDetail.domain.id) return;
                           setActionBusy(prev => ({ ...prev, [domainDetail.domain.id!]: "baseline" }));
                           try {
-                            const response = await fetch(
-                              `/admin/api/domains/${domainDetail.domain.id}/baseline`,
-                              { method: "POST" }
-                            );
-                            if (response.ok) {
-                              const data = await response.json();
-                              showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
-                              // Refresh domain detail
-                              await loadDomainDetail(domainDetail.domain.id);
-                            } else {
-                              const error = await response.text();
-                              showToast(`Failed to update baseline: ${error}`, "error");
-                            }
+                            const data = await updateWatchlistBaseline(domainDetail.domain.id);
+                            showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
+                            // Refresh domain detail
+                            await loadDomainDetail(domainDetail.domain.id);
                           } catch (err) {
                             showToast(`Error updating baseline: ${err}`, "error");
                           } finally {

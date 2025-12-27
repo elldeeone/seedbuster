@@ -18,8 +18,14 @@ export function isAdminMode(): boolean {
 
 // Use admin API for admin mode, public API for public mode (resolved per call so navigation can switch modes)
 const getApiBase = () => (isAdminMode() ? "/admin/api" : "/api");
-const BASIC_AUTH = import.meta.env.VITE_ADMIN_AUTH;
+const BASIC_AUTH = import.meta.env.DEV ? import.meta.env.VITE_ADMIN_AUTH : "";
 const AUTH_HEADER = BASIC_AUTH ? { Authorization: `Basic ${btoa(BASIC_AUTH)}` } : undefined;
+const getCsrfHeader = (): Record<string, string> | undefined => {
+  if (!isAdminMode()) return undefined;
+  const token = (window as any).__SB_CSRF;
+  if (!token) return undefined;
+  return { "X-CSRF-Token": String(token) };
+};
 
 type RequestOptions = RequestInit & { skipJson?: boolean };
 
@@ -31,6 +37,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers: {
       "Content-Type": "application/json",
       ...(AUTH_HEADER || {}),
+      ...(getCsrfHeader() || {}),
       ...(options.headers || {}),
     },
   });

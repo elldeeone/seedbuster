@@ -383,8 +383,8 @@ class BrowserAnalyzer:
                             ipaddress.ip_address(ip).is_global for ip in resolved_ips
                         )
                     except Exception:
-                        # If we can't resolve, let the request proceed (it will likely fail anyway).
-                        safe = True
+                        # Fail closed on resolution errors to avoid SSRF surprises.
+                        safe = False
 
                 # Cache denials always; cache allows only for non-target hosts.
                 if safe is False or host_key != (target_host or "").lower():
