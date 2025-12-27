@@ -144,6 +144,108 @@ detection:
           points: 10
           reason: Yandex analytics (common in scam sites)
 
+    - name: fake_airdrop
+      label: AIRDROP
+      threshold: 3
+      patterns:
+        - pattern: "connect\\s*(your\\s*)?wallet"
+          points: 15
+          reason: Wallet connection prompt
+        - pattern: "claim\\s*(your\\s*)?(free\\s*)?(kas|kaspa|tokens?|airdrop)"
+          points: 25
+          reason: Fake claim prompt
+        - pattern: "eligible\\s*(wallet|address|holder)"
+          points: 20
+          reason: Eligibility language
+        - pattern: "unclaimed\\s*(kas|kaspa|tokens?)"
+          points: 25
+          reason: Unclaimed tokens lure
+        - pattern: "(metamask|walletconnect|trustwallet)"
+          points: 10
+          reason: Wallet provider reference
+        - pattern: "check\\s*eligibility"
+          points: 20
+          reason: Eligibility check CTA
+        - pattern: "allocation\\s*(available|ready)"
+          points: 20
+          reason: Allocation language
+        - pattern: "claim\\s*now"
+          points: 15
+          reason: Urgency claim CTA
+        - pattern: "connect.*to\\s*(claim|receive|get)"
+          points: 25
+          reason: Connect-to-claim flow
+        - pattern: "web3modal|ethers\\.js|wagmi"
+          points: 10
+          reason: Web3 libraries (wallet connection)
+
+    - name: malware_download
+      label: MALWARE
+      threshold: 2
+      patterns:
+        - pattern: "download\\s*(kasware|kaspium|kaspa.*wallet|kaspapay)"
+          points: 30
+          reason: Wallet download on unofficial site
+        - pattern: "(download|install)\\s*(now|here|button)"
+          points: 10
+          reason: Download prompt
+        - pattern: "\\.(exe|dmg|msi|apk|deb)([\"'\\s>]|$)"
+          points: 25
+          reason: Executable file extension
+        - pattern: "(windows|macos|linux|android)\\s*(version|download)"
+          points: 15
+          reason: Platform-specific download
+        - pattern: "click\\s*(here\\s*)?to\\s*download"
+          points: 15
+          reason: Download CTA
+        - pattern: "(latest|new|official)\\s*version"
+          points: 10
+          reason: Version update lure
+        - pattern: "setup\\s*wizard|installer"
+          points: 15
+          reason: Installer terminology
+        - pattern: "chrome\\s*extension|browser\\s*extension"
+          points: 10
+          reason: Extension download prompt
+        - pattern: "github\\.io.*download|download.*github\\.io"
+          points: 20
+          reason: Fake GitHub hosting
+
+    - name: fake_support
+      label: SUPPORT
+      threshold: 2
+      patterns:
+        - pattern: "(kaspa|kas)\\s*(support|help\\s*desk|team)"
+          points: 25
+          reason: Fake Kaspa support claim
+        - pattern: "(contact|reach)\\s*(us|support|team)"
+          points: 10
+          reason: Contact prompt
+        - pattern: "recovery\\s*service"
+          points: 30
+          reason: Fake recovery service
+        - pattern: "(lost|stolen)\\s*(funds?|wallet|crypto)"
+          points: 20
+          reason: Lost funds lure
+        - pattern: "(retrieve|recover)\\s*(your\\s*)?(lost|stolen)"
+          points: 25
+          reason: Recovery promise
+        - pattern: "(telegram|discord|whatsapp).*support"
+          points: 20
+          reason: Social media support redirect
+        - pattern: "live\\s*(chat|support|agent)"
+          points: 15
+          reason: Fake live support
+        - pattern: "customer\\s*(service|support)"
+          points: 10
+          reason: Customer service terminology
+        - pattern: "(fix|resolve|solve)\\s*(your\\s*)?(issue|problem)"
+          points: 15
+          reason: Problem-solving lure
+        - pattern: "certified\\s*(expert|technician|support)"
+          points: 20
+          reason: Fake certification claim
+
   # Legacy format (still supported for backward compatibility)
   seed_keywords:
     - "recovery\\s*phrase"
@@ -197,6 +299,36 @@ detection:
     - keyword: 3x
       points: 10
       reason: Multiplier scam indicator
+    # Fake airdrop indicators
+    - keyword: eligible
+      points: 10
+      reason: Eligibility language (airdrop scam indicator)
+    - keyword: connect wallet
+      points: 10
+      reason: Wallet connection prompt (airdrop scam indicator)
+    - keyword: unclaimed
+      points: 15
+      reason: Unclaimed tokens lure
+    # Malware download indicators
+    - keyword: download
+      points: 5
+      reason: Download-related title
+    - keyword: install
+      points: 5
+      reason: Install-related title
+    - keyword: extension
+      points: 5
+      reason: Extension-related title
+    # Fake support indicators
+    - keyword: support
+      points: 10
+      reason: Support-related title (fake support indicator)
+    - keyword: help desk
+      points: 15
+      reason: Help desk terminology (fake support indicator)
+    - keyword: customer service
+      points: 10
+      reason: Customer service terminology
 
 browser:
   exploration_targets:
