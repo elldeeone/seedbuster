@@ -49,6 +49,26 @@ class AnalysisEngine:
         self.report_manager = report_manager
         self.bot = bot
 
+    def _is_allowlisted(self, domain: str) -> bool:
+        """Check if a domain matches an allowlisted entry.
+
+        Supports both exact matches and parent domain matches,
+        e.g., 'explorer.kaspa.org' matches allowlist entry 'kaspa.org'.
+        """
+        if not self.config.allowlist:
+            return False
+
+        domain = domain.lower().strip()
+        if domain in self.config.allowlist:
+            return True
+
+        # Check if any allowlisted domain is a parent of this domain
+        for allowed in self.config.allowlist:
+            if domain.endswith(f".{allowed}"):
+                return True
+
+        return False
+
     async def _lookup_urlscan_history(self, domain: str) -> tuple[list[str], str | None, bool]:
         """Find historical urlscan.io scans with wallet/seed UI for unreachable pages."""
         reasons: list[str] = []
@@ -93,6 +113,13 @@ class AnalysisEngine:
             raw_target = (domain or "").strip()
             parsed_target = urlparse(raw_target if "://" in raw_target else f"http://{raw_target}")
             hostname = (parsed_target.hostname or raw_target.split("/")[0]).strip()
+
+            # Check allowlist early to skip analysis of known-good domains
+            if self._is_allowlisted(hostname):
+                logger.info(f"Skipping allowlisted domain: {hostname}")
+                await self.database.update_domain_status(domain_id, DomainStatus.BENIGN)
+                await self.database.update_domain_analysis_score(domain_id, 0, "benign")
+                return
 
             dns_resolves = True
             resolved_ips: set[str] = set()

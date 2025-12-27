@@ -324,7 +324,8 @@ class Config:
 
         if allowlist_path.exists():
             raw_allowlist = self._load_list_file(allowlist_path)
-            self.allowlist = {
+            # Merge with domains from heuristics.yaml (already in self.allowlist)
+            self.allowlist = self.allowlist | {
                 canonicalize_domain(item) or item for item in raw_allowlist
             }
         if denylist_path.exists():
@@ -569,6 +570,16 @@ def load_config() -> Config:
         else None
     )
 
+    # Parse allowlist from heuristics
+    allowlist_data = heuristics.get("allowlist", {})
+    allowlist_domains = set()
+    if isinstance(allowlist_data, dict):
+        raw_domains = allowlist_data.get("domains", [])
+        if isinstance(raw_domains, list):
+            for d in raw_domains:
+                if isinstance(d, str) and d.strip():
+                    allowlist_domains.add(d.strip().lower())
+
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -643,7 +654,61 @@ def load_config() -> Config:
         pattern_categories=heuristics.get("pattern_categories", []),
         infrastructure_thresholds=heuristics.get("infrastructure_thresholds", {}),
         scoring_weights=heuristics.get("scoring_weights", {}),
+        allowlist=allowlist_domains,
     )
+
+
+def _validate_pattern_categories(pattern_categories: list[dict]) -> list[str]:
+    """Validate pattern categories and their regex patterns.
+
+    Returns a list of error/warning messages.
+    """
+    import re
+
+    errors: list[str] = []
+    required_fields = {"name", "threshold", "patterns"}
+
+    for i, category in enumerate(pattern_categories):
+        if not isinstance(category, dict):
+            errors.append(f"Pattern category {i}: must be a dict, got {type(category).__name__}")
+            continue
+
+        name = category.get("name", f"<unnamed-{i}>")
+
+        # Check required fields
+        missing = required_fields - set(category.keys())
+        if missing:
+            errors.append(f"Pattern category '{name}': missing required fields: {', '.join(missing)}")
+            continue
+
+        # Validate threshold
+        threshold = category.get("threshold")
+        if not isinstance(threshold, int) or threshold < 1:
+            errors.append(f"Pattern category '{name}': threshold must be a positive integer")
+
+        # Validate patterns
+        patterns = category.get("patterns", [])
+        if not isinstance(patterns, list) or not patterns:
+            errors.append(f"Pattern category '{name}': patterns must be a non-empty list")
+            continue
+
+        for j, pattern_entry in enumerate(patterns):
+            if not isinstance(pattern_entry, dict):
+                errors.append(f"Pattern category '{name}' pattern {j}: must be a dict")
+                continue
+
+            pattern = pattern_entry.get("pattern")
+            if not pattern:
+                errors.append(f"Pattern category '{name}' pattern {j}: missing 'pattern' field")
+                continue
+
+            # Try to compile the regex
+            try:
+                re.compile(pattern, re.IGNORECASE)
+            except re.error as e:
+                errors.append(f"Pattern category '{name}' pattern {j}: invalid regex '{pattern}': {e}")
+
+    return errors
 
 
 def validate_config(config: Config) -> list[str]:
@@ -664,5 +729,9 @@ def validate_config(config: Config) -> list[str]:
     if not (config.resend_api_key or config.smtp_host):
         # Reporting will still run in manual/preview mode, but automatic email submissions will fail.
         logger.info("No RESEND_API_KEY or SMTP_HOST configured; email reporting will be disabled")
+
+    # Validate pattern categories
+    pattern_errors = _validate_pattern_categories(config.pattern_categories)
+    errors.extend(pattern_errors)
 
     return errors

@@ -17,6 +17,7 @@ from .infrastructure import InfrastructureResult
 from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 from .temporal import TemporalAnalysis
 from .rules import DetectionRule, DetectionContext, RuleResult
+from .metrics import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,8 @@ class ContentPatternRule:
                     cat_score += points
                     pattern_matches += 1
                     reasons.append(f"{cat_label}: {reason}")
+                    # Record pattern hit for metrics
+                    metrics.record_pattern_hit(cat_name, pattern, context.browser_result.domain)
 
             score += cat_score
 
@@ -160,6 +163,7 @@ class ContentPatternRule:
             if pattern_matches >= cat_threshold:
                 detected_types.append(cat_name)
                 metadata[f"{cat_name}_detected"] = True
+                metrics.record_category_detection(cat_name, context.browser_result.domain)
 
         # Set primary scam type based on highest-scoring detected type
         if detected_types:
@@ -543,6 +547,11 @@ class PhishingDetector:
             result.verdict = "low"
         else:
             result.verdict = "benign"
+
+        # Record metrics
+        metrics.record_verdict(result.verdict)
+        if result.scam_type:
+            metrics.record_scam_type(result.scam_type)
 
         return result
 

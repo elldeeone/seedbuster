@@ -4577,6 +4577,7 @@ class DashboardServer:
         self._app.router.add_patch("/admin/api/clusters/{cluster_id}/name", self._admin_api_update_cluster_name)
         self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
         self._app.router.add_get("/admin/api/analytics", self._admin_api_analytics)
+        self._app.router.add_get("/admin/api/detection-metrics", self._admin_api_detection_metrics)
         self._app.router.add_get("/admin/api/submissions", self._admin_api_submissions)
         self._app.router.add_get("/admin/api/submissions/{submission_id}", self._admin_api_submission)
         self._app.router.add_post("/admin/api/submissions/{submission_id}/approve", self._admin_api_approve_submission)
@@ -5653,6 +5654,11 @@ class DashboardServer:
         engagement = await self.database.get_engagement_summary()
         takedown = await self.database.get_takedown_metrics()
         return web.json_response({"engagement": engagement, "takedown": takedown})
+
+    async def _admin_api_detection_metrics(self, request: web.Request) -> web.Response:
+        """Return detection pattern metrics (admin-only)."""
+        from ..analyzer.metrics import metrics
+        return web.json_response(metrics.get_summary())
 
     # -------------------------------------------------------------------------
     # Public submission + reporting APIs

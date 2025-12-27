@@ -154,6 +154,7 @@ async def test_urlscan_history_runs_on_timeout(monkeypatch):
         analysis_score_threshold=50,
         report_require_approval=False,
         report_min_score=80,
+        allowlist=set(),
     )
 
     engine = AnalysisEngine(
@@ -203,6 +204,7 @@ async def test_urlscan_history_bumps_unresolvable_domains(monkeypatch):
         analysis_score_threshold=70,
         report_require_approval=False,
         report_min_score=80,
+        allowlist=set(),
     )
 
     engine = AnalysisEngine(

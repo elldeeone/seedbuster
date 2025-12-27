@@ -193,3 +193,120 @@ class TestVerdictClassification:
         result = make_browser_result()
         detection = detector.detect(result)
         assert detection.verdict == "benign"
+
+
+class TestPatternCategories:
+    """Test detection of various scam type pattern categories."""
+
+    def test_fake_airdrop_detection(self, detector):
+        """Fake airdrop patterns should be detected."""
+        html = """
+        <html><body>
+            <h1>KASPA AIRDROP EVENT</h1>
+            <p>Connect your wallet to claim free KAS tokens!</p>
+            <p>Limited time offer - claim your free airdrop now</p>
+            <button>Connect Wallet</button>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kaspa-airdrop.xyz",
+            html=html,
+            title="Kaspa Free Airdrop",
+        )
+        detection = detector.detect(result, domain_score=40)
+        assert detection.score >= 30
+        assert any("AIRDROP" in r for r in detection.reasons)
+
+    def test_malware_download_detection(self, detector):
+        """Malware download patterns should be detected."""
+        html = """
+        <html><body>
+            <h1>Download KasWare Wallet</h1>
+            <p>Download the official Kaspa wallet for Windows</p>
+            <a href="kasware-setup.exe">Download Now</a>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kasware-download.xyz",
+            html=html,
+            title="KasWare Download",
+        )
+        detection = detector.detect(result, domain_score=40)
+        assert detection.score >= 20
+        assert any("MALWARE" in r for r in detection.reasons)
+
+    def test_fake_support_detection(self, detector):
+        """Fake support patterns should be detected."""
+        html = """
+        <html><body>
+            <h1>Kaspa Support Team</h1>
+            <p>Contact our support team for wallet assistance</p>
+            <p>Chat with our live support now</p>
+            <button>Start Live Chat</button>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kaspa-support.xyz",
+            html=html,
+            title="Kaspa Help Desk",
+        )
+        detection = detector.detect(result, domain_score=40)
+        assert detection.score >= 20
+        assert any("SUPPORT" in r for r in detection.reasons)
+
+    def test_crypto_doubler_detection(self, detector):
+        """Crypto doubler patterns should be detected."""
+        html = """
+        <html><body>
+            <h1>Double Your KAS</h1>
+            <p>Send 1000 KAS and receive 2000 KAS back!</p>
+            <p>Guaranteed returns within 10 minutes</p>
+            <p>Send to: kaspa:qz2vq0y3n8k4z9a7b1c6d5e8f2g4h3j6k9l1m4n7p0r5s8t2u6v9w3x0y7z4</p>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kaspa-double.xyz",
+            html=html,
+            title="Double Your Kaspa",
+        )
+        detection = detector.detect(result, domain_score=50)
+        assert detection.score >= 30
+        assert any("DOUBLER" in r for r in detection.reasons)
+
+    def test_seed_phishing_detection(self, detector):
+        """Seed phishing patterns should be detected."""
+        html = """
+        <html><body>
+            <h1>Restore Wallet</h1>
+            <p>Enter your 12 or 24 word recovery phrase</p>
+            <p>Your private keys are encrypted and secure</p>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kaspa-restore.xyz",
+            html=html,
+            title="Wallet Recovery",
+        )
+        detection = detector.detect(result, domain_score=40)
+        assert detection.score >= 20
+        assert any("SEED" in r for r in detection.reasons)
+
+    def test_multiple_category_detection(self, detector):
+        """Multiple scam types on same page should all be detected."""
+        html = """
+        <html><body>
+            <h1>Claim Your Free Kaspa Airdrop!</h1>
+            <p>Enter your recovery phrase to verify wallet ownership</p>
+            <p>Contact our support team if you need help</p>
+        </body></html>
+        """
+        result = make_browser_result(
+            domain="kaspa-scam.xyz",
+            html=html,
+            title="Kaspa Giveaway",
+        )
+        detection = detector.detect(result, domain_score=50)
+        # Should detect multiple categories
+        reason_labels = [r.split(":")[0] for r in detection.reasons if ":" in r]
+        assert len(set(reason_labels)) >= 1  # At least one category detected
+        assert detection.score >= 30

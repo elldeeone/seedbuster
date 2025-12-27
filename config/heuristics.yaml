@@ -1,5 +1,24 @@
 # Heuristics overrides for SeedBuster (editable without code changes).
 
+# Allowlist - domains that should never be flagged as malicious.
+# These are official/legitimate sites. Subdomains are also allowed.
+allowlist:
+  domains:
+    # Official Kaspa project
+    - kaspa.org
+    - kaspa.com
+    - kaspanet.io
+    # Official wallets
+    - kasware.xyz
+    - kaspium.io
+    - chainge.finance
+    # Official explorers/tools
+    - kas.fyi
+    - explorer.kaspa.org
+    # Development/community
+    - github.com/kaspanet
+    - discord.gg/kaspa
+
 domain:
   target_patterns:
     - kaspa
