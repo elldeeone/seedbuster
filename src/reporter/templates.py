@@ -123,11 +123,7 @@ class ReportTemplates:
 Action requested:
 - Please suspend/disable the phishing content for the URL below.
 
-Target:
-- Domain: {evidence.domain}
-- URL: {evidence.url}
-- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-- Confidence: {evidence.confidence_score}%
+{cls._build_target_section(evidence)}
 
 What we observed:
 {cls._format_list(observations, prefix='- ')}
@@ -136,40 +132,11 @@ Impact:
 - A seed phrase is the master key for a crypto wallet; theft enables immediate, irreversible loss of funds.
 
 """
-
-        if evidence.backend_domains:
-            body += f"""Backend infrastructure (if applicable):
-{cls._format_list(evidence.backend_domains, prefix='- ')}
-
-"""
-
-        if evidence.suspicious_endpoints:
-            body += f"""Observed data collection endpoints:
-{cls._format_list(evidence.suspicious_endpoints[:5], prefix='- ')}
-
-"""
-
-        if evidence.api_keys_found:
-            body += f"""API keys found in malicious code:
-{cls._format_list(evidence.api_keys_found, prefix='- ')}
-
-"""
-
-        attachments: list[str] = []
-        if evidence.screenshot_path and evidence.screenshot_path.exists():
-            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
-        if evidence.html_path and evidence.html_path.exists():
-            attachments.append(f"{evidence.html_path.name} (HTML capture)")
-        if attachments:
-            body += f"""Attachments:
-{cls._format_list(attachments, prefix='- ')}
-
-"""
-
-        body += f"""Reporter: {reporter_email}
-Tool: SeedBuster (automated phishing detection)
-Source: https://github.com/elldeeone/seedbuster
-"""
+        body += cls._build_backend_section(evidence)
+        body += cls._build_endpoints_section(evidence)
+        body += cls._build_api_keys_section(evidence)
+        body += cls._build_attachments_section(evidence)
+        body += cls._build_footer(reporter_email)
 
         return {"subject": subject, "body": body}
 
@@ -347,44 +314,16 @@ Captured evidence (screenshot + HTML) available on request.
 Action requested:
 - Please suspend/disable this domain for phishing / cryptocurrency theft.
 
-Target:
-- Domain: {evidence.domain}
-- URL: {evidence.url}
-- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-- Confidence: {evidence.confidence_score}%
+{cls._build_target_section(evidence)}
 
 What we observed:
 {cls._format_list(observations, prefix='- ')}
 
 """
-
-        if evidence.backend_domains:
-            body += f"""Backend infrastructure (if applicable):
-{cls._format_list(evidence.backend_domains, prefix='- ')}
-
-"""
-
-        if evidence.suspicious_endpoints:
-            body += f"""Observed data collection endpoints:
-{cls._format_list(evidence.suspicious_endpoints[:5], prefix='- ')}
-
-"""
-
-        attachments: list[str] = []
-        if evidence.screenshot_path and evidence.screenshot_path.exists():
-            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
-        if evidence.html_path and evidence.html_path.exists():
-            attachments.append(f"{evidence.html_path.name} (HTML capture)")
-        if attachments:
-            body += f"""Attachments:
-{cls._format_list(attachments, prefix='- ')}
-
-"""
-
-        body += f"""Reporter: {reporter_email}
-Tool: SeedBuster (automated phishing detection)
-Source: https://github.com/elldeeone/seedbuster
-"""
+        body += cls._build_backend_section(evidence)
+        body += cls._build_endpoints_section(evidence)
+        body += cls._build_attachments_section(evidence)
+        body += cls._build_footer(reporter_email)
 
         return {"subject": subject, "body": body}
 
@@ -443,24 +382,13 @@ Source: https://github.com/elldeeone/seedbuster
 Action requested:
 - Please suspend/disable this fraudulent site.
 
-Target:
-- Domain: {evidence.domain}
-- URL: {evidence.url}
-- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-- Confidence: {evidence.confidence_score}%
-- Scam type: Crypto Doubler / Fake Giveaway
+{cls._build_target_section(evidence, include_scam_type=True, scam_type_label="Crypto Doubler / Fake Giveaway")}
 
 What we observed:
 {cls._format_list(highlights, prefix='- ')}
 
 """
-
-        if evidence.scammer_wallets:
-            body += f"""Scammer wallet addresses:
-{cls._format_list(evidence.scammer_wallets, prefix='- ')}
-
-"""
-
+        body += cls._build_scammer_wallets_section(evidence)
         body += """How this scam works:
 - Site impersonates official Kaspa project (kaspa.org)
 - Claims users will receive 3X back if they send cryptocurrency
@@ -471,22 +399,8 @@ Impact:
 - This is advance-fee fraud. Victims lose all cryptocurrency sent.
 
 """
-
-        attachments: list[str] = []
-        if evidence.screenshot_path and evidence.screenshot_path.exists():
-            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
-        if evidence.html_path and evidence.html_path.exists():
-            attachments.append(f"{evidence.html_path.name} (HTML capture)")
-        if attachments:
-            body += f"""Attachments:
-{cls._format_list(attachments, prefix='- ')}
-
-"""
-
-        body += f"""Reporter: {reporter_email}
-Tool: SeedBuster (automated phishing detection)
-Source: https://github.com/elldeeone/seedbuster
-"""
+        body += cls._build_attachments_section(evidence)
+        body += cls._build_footer(reporter_email)
 
         return {"subject": subject, "body": body}
 
@@ -508,23 +422,15 @@ Source: https://github.com/elldeeone/seedbuster
 Action requested:
 - Please suspend/disable this domain for advance-fee fraud / cryptocurrency scam.
 
-Target:
-- Domain: {evidence.domain}
-- URL: {evidence.url}
-- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}
-- Confidence: {evidence.confidence_score}%
-- Scam type: Crypto Doubler / Fake Giveaway
+{cls._build_target_section(evidence, include_scam_type=True, scam_type_label="Crypto Doubler / Fake Giveaway")}
 
 What we observed:
 {cls._format_list(highlights, prefix='- ')}
 
 """
-
+        # Custom scammer wallet section with different label
         if evidence.scammer_wallets:
-            body += f"""Scammer wallet addresses (crypto sent here is stolen):
-{cls._format_list(evidence.scammer_wallets, prefix='- ')}
-
-"""
+            body += f"Scammer wallet addresses (crypto sent here is stolen):\n{cls._format_list(evidence.scammer_wallets, prefix='- ')}\n\n"
 
         body += """How this scam works:
 - Site clones official cryptocurrency project branding (kaspa.org)
@@ -537,22 +443,8 @@ What we observed:
 This is advance-fee fraud targeting cryptocurrency users.
 
 """
-
-        attachments: list[str] = []
-        if evidence.screenshot_path and evidence.screenshot_path.exists():
-            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
-        if evidence.html_path and evidence.html_path.exists():
-            attachments.append(f"{evidence.html_path.name} (HTML capture)")
-        if attachments:
-            body += f"""Attachments:
-{cls._format_list(attachments, prefix='- ')}
-
-"""
-
-        body += f"""Reporter: {reporter_email}
-Tool: SeedBuster (automated phishing detection)
-Source: https://github.com/elldeeone/seedbuster
-"""
+        body += cls._build_attachments_section(evidence)
+        body += cls._build_footer(reporter_email)
 
         return {"subject": subject, "body": body}
 
@@ -601,6 +493,78 @@ Captured evidence (screenshot + HTML) available on request.
         if not items:
             return "  (none)"
         return "\n".join(f"{prefix}{item}" for item in items)
+
+    # -------------------------------------------------------------------------
+    # Shared Section Builders (reduce duplication across templates)
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def _build_target_section(
+        cls,
+        evidence: ReportEvidence,
+        *,
+        include_scam_type: bool = False,
+        scam_type_label: str = "",
+    ) -> str:
+        """Build the common 'Target:' section used in most templates."""
+        lines = [
+            "Target:",
+            f"- Domain: {evidence.domain}",
+            f"- URL: {evidence.url}",
+            f"- Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC')}",
+            f"- Confidence: {evidence.confidence_score}%",
+        ]
+        if include_scam_type and scam_type_label:
+            lines.append(f"- Scam type: {scam_type_label}")
+        return "\n".join(lines)
+
+    @classmethod
+    def _build_attachments_section(cls, evidence: ReportEvidence) -> str:
+        """Build the attachments section if evidence files exist."""
+        attachments: list[str] = []
+        if evidence.screenshot_path and evidence.screenshot_path.exists():
+            attachments.append(f"{evidence.screenshot_path.name} (screenshot)")
+        if evidence.html_path and evidence.html_path.exists():
+            attachments.append(f"{evidence.html_path.name} (HTML capture)")
+        if not attachments:
+            return ""
+        return f"Attachments:\n{cls._format_list(attachments, prefix='- ')}\n\n"
+
+    @staticmethod
+    def _build_footer(reporter_email: str) -> str:
+        """Build the common footer with reporter info."""
+        return f"""Reporter: {reporter_email}
+Tool: SeedBuster (automated phishing detection)
+Source: https://github.com/elldeeone/seedbuster
+"""
+
+    @classmethod
+    def _build_backend_section(cls, evidence: ReportEvidence) -> str:
+        """Build backend infrastructure section if applicable."""
+        if not evidence.backend_domains:
+            return ""
+        return f"Backend infrastructure (if applicable):\n{cls._format_list(evidence.backend_domains, prefix='- ')}\n\n"
+
+    @classmethod
+    def _build_endpoints_section(cls, evidence: ReportEvidence, max_items: int = 5) -> str:
+        """Build suspicious endpoints section if applicable."""
+        if not evidence.suspicious_endpoints:
+            return ""
+        return f"Observed data collection endpoints:\n{cls._format_list(evidence.suspicious_endpoints[:max_items], prefix='- ')}\n\n"
+
+    @classmethod
+    def _build_api_keys_section(cls, evidence: ReportEvidence) -> str:
+        """Build API keys section if applicable."""
+        if not evidence.api_keys_found:
+            return ""
+        return f"API keys found in malicious code:\n{cls._format_list(evidence.api_keys_found, prefix='- ')}\n\n"
+
+    @classmethod
+    def _build_scammer_wallets_section(cls, evidence: ReportEvidence) -> str:
+        """Build scammer wallet addresses section if applicable."""
+        if not evidence.scammer_wallets:
+            return ""
+        return f"Scammer wallet addresses:\n{cls._format_list(evidence.scammer_wallets, prefix='- ')}\n\n"
 
     # -------------------------------------------------------------------------
     # Campaign-Level Templates

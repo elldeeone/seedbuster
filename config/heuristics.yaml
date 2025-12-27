@@ -355,3 +355,35 @@ scoring:
   verdict_high: 70
   verdict_medium: 40
   verdict_low: 20
+
+  # Seed form detection thresholds
+  seed_form_exact_counts: [12, 24]          # Exact input counts that indicate seed form
+  seed_form_possible_range: [10, 26]        # Range of inputs for "possible" seed form
+  seed_like_inputs_definitive: 10           # Seed-like inputs for definitive detection
+  seed_like_inputs_possible: 3              # Seed-like inputs for possible detection
+
+  # External intel scoring (urlscan.io, VirusTotal, URLhaus)
+  external_urlhaus_found: 40                # Known threat in URLhaus database
+  external_vt_malicious_high: 35            # VirusTotal >= 5 engines flagged malicious
+  external_vt_malicious_medium: 20          # VirusTotal >= 2 engines flagged malicious
+  external_vt_malicious_low: 10             # VirusTotal 1 engine flagged malicious
+  external_vt_suspicious: 10                # VirusTotal >= 3 engines flagged suspicious
+  external_vt_negative_rep: 5               # VirusTotal negative reputation
+  external_urlscan_malicious: 30            # urlscan.io verdict: malicious
+  external_urlscan_suspicious_high: 15      # urlscan.io suspicious (score >= 50)
+  external_urlscan_suspicious_low: 5        # urlscan.io low suspicion
+
+  # External intel thresholds
+  external_vt_malicious_high_threshold: 5   # Engines for high malicious score
+  external_vt_malicious_medium_threshold: 2 # Engines for medium malicious score
+  external_vt_suspicious_threshold: 3       # Engines for suspicious score
+  external_vt_reputation_threshold: -10     # Reputation below this is flagged
+  external_urlscan_suspicious_threshold: 50 # urlscan score for "suspicious_high"
+
+  # urlscan.io best-scan selection (for picking most useful historical scan)
+  urlscan_malicious_bonus: 200              # Bonus for malicious verdict
+  urlscan_seed_keyword_bonus: 50            # Per keyword match in DOM
+  urlscan_ui_keyword_bonus: 20              # Per UI button match in DOM
+  urlscan_exact_input_bonus: 80             # 12 or 24 input fields found
+  urlscan_many_inputs_bonus: 20             # 8+ input fields found
+  urlscan_many_inputs_threshold: 8          # Threshold for "many inputs"

@@ -1,17 +1,23 @@
 """Tests for phishing detection."""
 
 import pytest
+from pathlib import Path
 from src.analyzer.detector import PhishingDetector
 from src.analyzer.browser import BrowserResult, ExplorationStep
+from src.config import load_config
 
 
 @pytest.fixture
 def detector(tmp_path):
     """Create a phishing detector for testing."""
+    config = load_config()
     return PhishingDetector(
         fingerprints_dir=tmp_path / "fingerprints",
+        config_dir=Path("config"),
         keywords=["recovery phrase", "seed phrase"],
         analysis_threshold=70,
+        pattern_categories=config.pattern_categories,
+        scoring_weights=config.scoring_weights,
     )
 
 

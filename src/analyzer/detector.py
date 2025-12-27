@@ -100,16 +100,6 @@ class SeedFormRule:
         return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
 
 
-class KeywordRule:
-    """Legacy keyword rule - kept for backward compatibility when no pattern_categories configured."""
-
-    name = "keywords"
-
-    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
-        score, reasons = detector._detect_keywords(context.browser_result.html or "")
-        return RuleResult(self.name, score=score, reasons=reasons)
-
-
 class ContentPatternRule:
     """Flexible content pattern detection rule that loads categories from config.
 
@@ -311,75 +301,6 @@ class ExplorationRule:
         return RuleResult(self.name, score=score, reasons=reasons)
 
 
-class CryptoDoublerRule:
-    """Detect crypto doubler / fake giveaway scams."""
-
-    name = "crypto_doubler"
-
-    # Patterns that indicate crypto doubler scams
-    DOUBLER_PATTERNS = [
-        (r"(send|transfer).*to\s*(the\s*)?(generated|pool)\s*address", 40, "Send to generated address instruction"),
-        (r"(get|receive|gain)\s*(\d+)?x\s*(back|returns?|kas)?", 35, "Multiplier return promise"),
-        (r"x\s*[23]\s*(kas|triple|returns?)", 35, "3X return promise"),
-        (r"(triple|double|multiply)\s*(your\s*)?(kas|crypto|funds?)", 35, "Multiplier promise"),
-        (r"(join|participate)\s*(in\s*)?(the\s*)?(event|airdrop|giveaway)", 25, "Fake event CTA"),
-        (r"waiting\s*confirmation", 20, "Fake confirmation UI"),
-        (r"generated\s*address", 20, "Scammer wallet display"),
-        (r"(happy\s*holiday|special\s*event|limited\s*time)\s*(promotion|offer|event)?", 15, "Urgency language"),
-        (r"kaspa.*ldsp.*dark.*full.*color", 30, "Stolen Kaspa branding asset"),
-        (r"updateCountdown", 15, "Fake countdown timer"),
-        (r"yandex.*metrica", 10, "Yandex analytics (common in scam sites)"),
-    ]
-
-    # Kaspa wallet address pattern
-    KASPA_WALLET_PATTERN = r"kaspa:[a-z0-9]{60,70}"
-
-    def apply(self, detector: "PhishingDetector", context: DetectionContext) -> RuleResult:
-        score = 0
-        reasons: list[str] = []
-        metadata: dict = {
-            "crypto_doubler_detected": False,
-            "scammer_wallets": [],
-        }
-
-        html = context.browser_result.html or ""
-        html_lower = html.lower()
-
-        # Check for doubler patterns
-        pattern_matches = 0
-        for pattern, points, reason in self.DOUBLER_PATTERNS:
-            if re.search(pattern, html_lower, re.I):
-                score += points
-                reasons.append(f"DOUBLER: {reason}")
-                pattern_matches += 1
-
-        # Extract Kaspa wallet addresses
-        wallets = re.findall(self.KASPA_WALLET_PATTERN, html, re.I)
-        unique_wallets = list(set(wallets))
-        if unique_wallets:
-            metadata["scammer_wallets"] = unique_wallets
-            # Check if any wallet is known malicious
-            intel = detector._threat_intel
-            for wallet in unique_wallets:
-                for known in getattr(intel, "scammer_wallets", {}).get("kaspa", []):
-                    if known.get("address", "").lower() == wallet.lower():
-                        score += 50
-                        reasons.append(f"DOUBLER: Known scammer wallet: {wallet[:40]}...")
-                        break
-                else:
-                    # Unknown wallet on a suspicious page
-                    if pattern_matches >= 2:
-                        score += 20
-                        reasons.append(f"DOUBLER: Wallet address found: {wallet[:40]}...")
-
-        # If we found multiple doubler patterns, it's likely a doubler scam
-        if pattern_matches >= 3:
-            metadata["crypto_doubler_detected"] = True
-            metadata["scam_type"] = "crypto_doubler"
-
-        return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
-
-
 class PhishingDetector:
     """Detects phishing characteristics in analyzed websites."""
 
@@ -472,27 +393,17 @@ class PhishingDetector:
         # Code analyzer for JS/HTML analysis (pass config_dir for kit signatures)
         self._code_analyzer = CodeAnalyzer(config_dir=self.config_dir)
 
-        # Build rule list - use ContentPatternRule if pattern_categories configured,
-        # otherwise fall back to legacy KeywordRule + CryptoDoublerRule
+        # Build rule list with ContentPatternRule for flexible pattern detection
         self._rules: list[DetectionRule] = [
             VisualMatchRule(),
             SeedFormRule(),
+            ContentPatternRule(self.pattern_categories),
         ]
 
         if self.pattern_categories:
-            # Use new flexible content pattern detection
-            self._rules.append(ContentPatternRule(self.pattern_categories))
             logger.info(
-                f"Using ContentPatternRule with {len(self.pattern_categories)} categories: "
+                f"Loaded {len(self.pattern_categories)} pattern categories: "
                 f"{[c.get('name') for c in self.pattern_categories]}"
-            )
-        else:
-            # Legacy fallback - deprecated, use pattern_categories in heuristics.yaml instead
-            self._rules.append(KeywordRule())
-            self._rules.append(CryptoDoublerRule())
-            logger.warning(
-                "Using legacy KeywordRule + CryptoDoublerRule. "
-                "Configure detection.pattern_categories in heuristics.yaml for flexibility."
             )
 
         self._rules.extend([
@@ -668,21 +579,28 @@ class PhishingDetector:
         score = 0
         reasons = []
 
+        # Get configurable thresholds
+        s = self.scoring
+        exact_counts = s.get("seed_form_exact_counts", [12, 24])
+        possible_range = s.get("seed_form_possible_range", [10, 26])
+        seed_like_definitive = s.get("seed_like_inputs_definitive", 10)
+        seed_like_possible = s.get("seed_like_inputs_possible", 3)
+
         # Check exploration steps for seed forms found during click-through
         if result.exploration_steps:
             for step in result.exploration_steps:
                 if getattr(step, "is_seed_form", False):
-                    score += 50  # High score - definitive evidence
+                    score += s.get("seed_form_definitive", 50)
                     reasons.append(f"Seed phrase form found via exploration: '{step.button_text}'")
                     return score, reasons  # This is definitive, no need to check further
-                # Fallback: 12/24 input pattern discovered via exploration (common in classic wallet templates)
+                # Fallback: 12/24 input pattern discovered via exploration
                 text_input_count = sum(
                     1
                     for inp in step.input_fields
                     if (inp.get("type", "") or "").lower() in ("text", "password", "")
                 )
-                if text_input_count in (12, 24):
-                    score += 50
+                if text_input_count in exact_counts:
+                    score += s.get("seed_form_definitive", 50)
                     reasons.append(
                         f"Seed phrase form found via exploration: '{step.button_text}' ({text_input_count} inputs)"
                     )
@@ -708,19 +626,19 @@ class PhishingDetector:
                 elif re.search(r"(word|w|seed|phrase)\s*#?\d+", placeholder + name + inp_id, re.I):
                     seed_like_inputs += 1
 
-        # 12 or 24 text inputs is very suspicious
+        # Count total text inputs
         text_input_count = sum(
             1 for inp in result.input_fields if inp.get("type", "") in ("text", "password", "")
         )
 
-        if text_input_count in (12, 24) or seed_like_inputs >= 10:
-            score += 35
+        if text_input_count in exact_counts or seed_like_inputs >= seed_like_definitive:
+            score += s.get("seed_form_12_24_inputs", 35)
             reasons.append(f"Seed phrase form detected ({text_input_count} inputs)")
-        elif text_input_count in range(10, 26) and seed_like_inputs >= 3:
-            score += 25
+        elif text_input_count in range(possible_range[0], possible_range[1]) and seed_like_inputs >= seed_like_possible:
+            score += s.get("seed_form_possible", 25)
             reasons.append(f"Possible seed form ({text_input_count} inputs, {seed_like_inputs} seed-like)")
-        elif seed_like_inputs >= 3:
-            score += 15
+        elif seed_like_inputs >= seed_like_possible:
+            score += s.get("seed_form_inputs", 15)
             reasons.append(f"Seed-related inputs detected ({seed_like_inputs} found)")
 
         return score, reasons
@@ -1039,6 +957,13 @@ class PhishingDetector:
         score = 0
         reasons = []
 
+        # Get configurable thresholds
+        s = self.scoring
+        exact_counts = s.get("seed_form_exact_counts", [12, 24])
+        possible_range = s.get("seed_form_possible_range", [10, 26])
+        seed_like_definitive = s.get("seed_like_inputs_definitive", 10)
+        seed_like_possible = s.get("seed_like_inputs_possible", 3)
+
         for step in browser_result.exploration_steps:
             if not step.success:
                 continue
@@ -1058,25 +983,25 @@ class PhishingDetector:
                     elif re.search(r"(word|w|seed)\s*#?\d+", combined, re.I):
                         seed_like_inputs += 1
 
-            # Check for 12/24 text inputs (seed phrase form pattern)
+            # Check for seed phrase form pattern
             text_input_count = sum(
                 1 for inp in step.input_fields if inp.get("type", "") in ("text", "password", "")
             )
 
-            if text_input_count in (12, 24) or seed_like_inputs >= 10:
-                score += 40
+            if text_input_count in exact_counts or seed_like_inputs >= seed_like_definitive:
+                score += s.get("explore_seed_form", 40)
                 reasons.append(
                     f"EXPLORE: Seed form found after clicking '{step.button_text}' "
                     f"({text_input_count} inputs)"
                 )
-            elif text_input_count in range(10, 26) and seed_like_inputs >= 3:
-                score += 30
+            elif text_input_count in range(possible_range[0], possible_range[1]) and seed_like_inputs >= seed_like_possible:
+                score += s.get("explore_possible_seed", 30)
                 reasons.append(
                     f"EXPLORE: Possible seed form after '{step.button_text}' "
                     f"({text_input_count} inputs, {seed_like_inputs} seed-like)"
                 )
-            elif seed_like_inputs >= 3:
-                score += 20
+            elif seed_like_inputs >= seed_like_possible:
+                score += s.get("explore_seed_inputs", 20)
                 reasons.append(
                     f"EXPLORE: Seed inputs after '{step.button_text}' ({seed_like_inputs} found)"
                 )

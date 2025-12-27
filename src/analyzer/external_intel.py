@@ -144,11 +144,13 @@ class ExternalIntelligence:
         virustotal_api_key: Optional[str] = None,
         cache_dir: Optional[Path] = None,
         cache_ttl_hours: int = 24,
+        scoring_weights: Optional[Dict[str, Any]] = None,
     ):
         self.urlscan_api_key = urlscan_api_key
         self.virustotal_api_key = virustotal_api_key
         self.cache_dir = cache_dir
         self.cache_ttl = timedelta(hours=cache_ttl_hours)
+        self.scoring = scoring_weights or {}
 
         # Rate limiting
         self._last_vt_request = 0.0
@@ -399,10 +401,11 @@ class ExternalIntelligence:
                     candidate.categories = list(overall.get("categories", []) or [])
                     candidate.brands_targeted = list(overall.get("brands", []) or [])
 
-                    # Base selection score
+                    # Base selection score (using configurable weights)
+                    s = self.scoring  # shorthand
                     selection_score = 0
                     if candidate.verdict == "malicious":
-                        selection_score += 200
+                        selection_score += s.get("urlscan_malicious_bonus", 200)
                     selection_score += candidate.score
 
                     # Only fetch DOM for a limited number of candidates to keep this lightweight.
@@ -424,14 +427,16 @@ class ExternalIntelligence:
                             inputs_count = len(re.findall(r"<input\\b", dom_lower))
 
                             # Seed/mnemonic keywords are strong evidence.
-                            selection_score += seed_hits * 50
-                            selection_score += ui_hits * 20
+                            selection_score += seed_hits * s.get("urlscan_seed_keyword_bonus", 50)
+                            selection_score += ui_hits * s.get("urlscan_ui_keyword_bonus", 20)
 
                             # 12/24 input grids are common for mnemonic capture.
-                            if inputs_count in (12, 24):
-                                selection_score += 80
-                            elif inputs_count >= 8:
-                                selection_score += 20
+                            exact_counts = s.get("seed_form_exact_counts", [12, 24])
+                            many_inputs_threshold = s.get("urlscan_many_inputs_threshold", 8)
+                            if inputs_count in exact_counts:
+                                selection_score += s.get("urlscan_exact_input_bonus", 80)
+                            elif inputs_count >= many_inputs_threshold:
+                                selection_score += s.get("urlscan_many_inputs_bonus", 20)
 
                     if selection_score > best_score:
                         best_score = selection_score
@@ -704,10 +709,11 @@ class ExternalIntelligence:
         """Calculate aggregated score and reasons from external intel."""
         score = 0
         reasons = []
+        s = self.scoring  # shorthand for scoring weights
 
         # URLhaus (highest priority - known malware/phishing)
         if result.urlhaus and result.urlhaus.found:
-            score += 40
+            score += s.get("external_urlhaus_found", 40)
             threat = result.urlhaus.threat_type or "unknown"
             reasons.append(f"EXTERNAL: URLhaus known threat ({threat})")
             if result.urlhaus.tags:
@@ -716,40 +722,47 @@ class ExternalIntelligence:
         # VirusTotal
         if result.virustotal and result.virustotal.found:
             vt = result.virustotal
-            if vt.malicious_count >= 5:
-                score += 35
+            vt_high_threshold = s.get("external_vt_malicious_high_threshold", 5)
+            vt_med_threshold = s.get("external_vt_malicious_medium_threshold", 2)
+            vt_susp_threshold = s.get("external_vt_suspicious_threshold", 3)
+            vt_rep_threshold = s.get("external_vt_reputation_threshold", -10)
+
+            if vt.malicious_count >= vt_high_threshold:
+                score += s.get("external_vt_malicious_high", 35)
                 reasons.append(
                     f"EXTERNAL: VirusTotal {vt.malicious_count}/{vt.total_engines} engines flagged malicious"
                 )
-            elif vt.malicious_count >= 2:
-                score += 20
+            elif vt.malicious_count >= vt_med_threshold:
+                score += s.get("external_vt_malicious_medium", 20)
                 reasons.append(
                     f"EXTERNAL: VirusTotal {vt.malicious_count} engines flagged malicious"
                 )
             elif vt.malicious_count >= 1:
-                score += 10
+                score += s.get("external_vt_malicious_low", 10)
                 reasons.append("EXTERNAL: VirusTotal 1 engine flagged malicious")
 
-            if vt.suspicious_count >= 3:
-                score += 10
+            if vt.suspicious_count >= vt_susp_threshold:
+                score += s.get("external_vt_suspicious", 10)
                 reasons.append(f"EXTERNAL: VirusTotal {vt.suspicious_count} engines flagged suspicious")
 
             # Negative reputation is suspicious
-            if vt.reputation < -10:
-                score += 5
+            if vt.reputation < vt_rep_threshold:
+                score += s.get("external_vt_negative_rep", 5)
                 reasons.append(f"EXTERNAL: VirusTotal negative reputation ({vt.reputation})")
 
         # urlscan.io
         if result.urlscan and result.urlscan.found:
             us = result.urlscan
+            urlscan_susp_threshold = s.get("external_urlscan_suspicious_threshold", 50)
+
             if us.verdict == "malicious":
-                score += 30
+                score += s.get("external_urlscan_malicious", 30)
                 reasons.append(f"EXTERNAL: urlscan.io verdict: malicious (score: {us.score})")
-            elif us.verdict == "suspicious" and us.score >= 50:
-                score += 15
+            elif us.verdict == "suspicious" and us.score >= urlscan_susp_threshold:
+                score += s.get("external_urlscan_suspicious_high", 15)
                 reasons.append(f"EXTERNAL: urlscan.io verdict: suspicious (score: {us.score})")
             elif us.verdict == "suspicious":
-                score += 5
+                score += s.get("external_urlscan_suspicious_low", 5)
                 reasons.append(f"EXTERNAL: urlscan.io: low suspicion (score: {us.score})")
 
             if us.brands_targeted:
@@ -768,6 +781,7 @@ async def query_external_intel(
     urlscan_api_key: Optional[str] = None,
     virustotal_api_key: Optional[str] = None,
     cache_dir: Optional[Path] = None,
+    scoring_weights: Optional[Dict[str, Any]] = None,
 ) -> ExternalIntelResult:
     """
     Convenience function to query external intelligence for a domain.
@@ -777,6 +791,7 @@ async def query_external_intel(
         urlscan_api_key: Optional API key for urlscan.io (increases limits)
         virustotal_api_key: Optional API key for VirusTotal (required for VT)
         cache_dir: Optional directory for caching results
+        scoring_weights: Optional scoring weights from config
 
     Returns:
         ExternalIntelResult with scores and reasons
@@ -785,5 +800,6 @@ async def query_external_intel(
         urlscan_api_key=urlscan_api_key,
         virustotal_api_key=virustotal_api_key,
         cache_dir=cache_dir,
+        scoring_weights=scoring_weights,
     )
     return await intel.query_all(domain)

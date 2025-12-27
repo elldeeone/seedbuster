@@ -486,16 +486,26 @@ def _load_heuristics(config_dir: Path) -> dict:
             "verdict_high": 70,
             "verdict_medium": 40,
             "verdict_low": 20,
+            # Seed form detection thresholds
+            "seed_form_exact_counts": [12, 24],
+            "seed_form_possible_range": [10, 26],
+            "seed_like_inputs_definitive": 10,
+            "seed_like_inputs_possible": 3,
         }
         if not isinstance(raw, dict):
             return defaults
         result = dict(defaults)
         for key in defaults:
             if key in raw:
-                try:
-                    result[key] = int(raw[key])
-                except (ValueError, TypeError):
-                    pass
+                value = raw[key]
+                # Handle list values (like seed_form_exact_counts)
+                if isinstance(value, list):
+                    result[key] = value
+                else:
+                    try:
+                        result[key] = int(value)
+                    except (ValueError, TypeError):
+                        pass
         return result
 
     domain_cfg = data.get("domain", {}) if isinstance(data, dict) else {}

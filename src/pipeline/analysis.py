@@ -604,9 +604,9 @@ class AnalysisEngine:
                             baseline_verdict = baseline_snapshot.verdict.lower() if baseline_snapshot.verdict else "low"
                             current_verdict = verdict.value.lower()
 
-                            # Verdict escalation check
-                            verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
-                            verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(baseline_verdict, 0)
+                            # Verdict escalation check using centralized comparison
+                            from ..constants import verdict_escalated as check_verdict_escalated
+                            verdict_escalated = check_verdict_escalated(current_verdict, baseline_verdict)
 
                             # Seed form detection check
                             seed_form_now_detected = detection.seed_form_detected if detection else False
@@ -658,9 +658,9 @@ class AnalysisEngine:
                         previous_verdict = previous_snapshot.verdict.lower() if previous_snapshot.verdict else "low"
                         current_verdict = verdict.value.lower()
 
-                        # Verdict escalation check
-                        verdict_order = {"benign": 0, "low": 1, "medium": 2, "high": 3}
-                        verdict_escalated = verdict_order.get(current_verdict, 0) > verdict_order.get(previous_verdict, 0)
+                        # Verdict escalation check using centralized comparison
+                        from ..constants import verdict_escalated as check_verdict_escalated
+                        verdict_escalated = check_verdict_escalated(current_verdict, previous_verdict)
 
                         # Seed form is a smoking gun - always alert
                         seed_form_now_detected = detection.seed_form_detected if detection else False

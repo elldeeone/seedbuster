@@ -311,26 +311,10 @@ class Database:
         Returns:
             Number of canonical groups merged.
         """
-        # Helper orderings
-        verdict_rank = {
-            "high": 4,
-            "medium": 3,
-            "low": 2,
-            "benign": 1,
-            None: 0,
-            "": 0,
-        }
-        status_rank = {
-            "reported": 5,
-            "analyzed": 4,
-            "watchlist": 3,
-            "pending": 2,
-            "allowlisted": 2,
-            "false_positive": 2,
-            "analyzing": 1,
-            None: 0,
-            "": 0,
-        }
+        # Use centralized verdict/status rankings from constants module
+        from ..constants import VERDICT_RANK, STATUS_RANK
+        verdict_rank = VERDICT_RANK
+        status_rank = STATUS_RANK
 
         async with self._lock:
             cursor = await self._connection.execute(

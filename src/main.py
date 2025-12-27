@@ -81,6 +81,7 @@ class SeedBusterPipeline:
             urlscan_api_key=config.urlscan_api_key or None,
             virustotal_api_key=config.virustotal_api_key or None,
             cache_dir=config.data_dir / "intel_cache",
+            scoring_weights=config.scoring_weights,
         )
         self.detector = PhishingDetector(
             fingerprints_dir=config.data_dir / "fingerprints",
