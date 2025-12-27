@@ -792,7 +792,7 @@ Read
 Read 50 lines
 Edit
 /home/user/seedbuster/src/dashboard/server.py
-            location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Reports submitted to all platforms")
+            location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg="Reports submitted to all platforms")
 
         )
 
@@ -836,4 +836,3 @@ Show full diff (295 more lines)
 Limit reached · resets 8am (UTC)
 
 Limit reached · resets 8am (UTC)
-

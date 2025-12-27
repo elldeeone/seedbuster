@@ -77,7 +77,7 @@ export interface DomainDetailResponse {
   reports: Report[];
   evidence: EvidenceSummary;
   related_domains?: Domain[];
-  cluster?: Cluster | null;
+  campaign?: Campaign | null;
   instruction_files?: string[];
   infrastructure?: {
     hosting_provider?: string | null;
@@ -140,19 +140,19 @@ export interface AnalyticsResponse {
   takedown: { by_status: Record<string, number>; avg_hours_to_detect?: number | null };
 }
 
-export interface ClusterMember {
+export interface CampaignMember {
   domain: string;
   added_at?: string;
   score?: number;
   [key: string]: unknown;
 }
 
-export interface Cluster {
-  cluster_id: string;
+export interface Campaign {
+  campaign_id: string;
   name?: string;
   created_at?: string;
   updated_at?: string;
-  members?: ClusterMember[];
+  members?: CampaignMember[];
   shared_backends?: string[];
   shared_nameservers?: string[];
   shared_kits?: string[];

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from ..analyzer.clustering import ThreatClusterManager
+    from ..analyzer.campaigns import ThreatCampaignManager
     from ..storage.database import Database
     from ..storage.evidence import EvidenceStore
 
@@ -36,15 +36,15 @@ class SubmissionAttachments:
     all_screenshots: List[Path]  # All available screenshots
     # Metadata
     report_generated_at: datetime
-    cluster_context: Optional[str]  # If part of campaign
+    campaign_context: Optional[str]  # If part of campaign
 
 
 @dataclass
 class CampaignSubmissionAttachments:
     """Attachments for campaign-level submission."""
 
-    cluster_id: str
-    cluster_name: str
+    campaign_id: str
+    campaign_name: str
     pdf_path: Optional[Path]
     html_path: Path
     domain_count: int
@@ -64,19 +64,19 @@ class EvidencePackager:
         self,
         database: "Database",
         evidence_store: "EvidenceStore",
-        cluster_manager: "ThreatClusterManager",
+        campaign_manager: "ThreatCampaignManager",
         output_dir: Optional[Path] = None,
     ):
         self.database = database
         self.evidence_store = evidence_store
-        self.cluster_manager = cluster_manager
+        self.campaign_manager = campaign_manager
         self.output_dir = output_dir or Path("data/packages")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.report_generator = ReportGenerator(
             database=database,
             evidence_store=evidence_store,
-            cluster_manager=cluster_manager,
+            campaign_manager=campaign_manager,
             output_dir=self.output_dir / "reports",
         )
 
@@ -107,13 +107,13 @@ class EvidencePackager:
         screenshots = self.evidence_store.get_all_screenshot_paths(domain)
         best_screenshot = screenshots[0] if screenshots else None
 
-        # Get cluster context
-        cluster = self.cluster_manager.get_cluster_for_domain(domain)
-        cluster_context = None
-        if cluster:
-            cluster_context = (
-                f"Part of '{cluster.name}' campaign with "
-                f"{len(cluster.members)} domains"
+        # Get campaign context
+        campaign = self.campaign_manager.get_campaign_for_domain(domain)
+        campaign_context = None
+        if campaign:
+            campaign_context = (
+                f"Part of '{campaign.name}' campaign with "
+                f"{len(campaign.members)} domains"
             )
 
         return SubmissionAttachments(
@@ -123,34 +123,34 @@ class EvidencePackager:
             best_screenshot=best_screenshot,
             all_screenshots=screenshots,
             report_generated_at=datetime.now(),
-            cluster_context=cluster_context,
+            campaign_context=campaign_context,
         )
 
     async def prepare_campaign_submission(
-        self, cluster_id: str
+        self, campaign_id: str
     ) -> CampaignSubmissionAttachments:
         """
         Prepare attachments for submitting a campaign-level report.
 
         Returns campaign PDF plus individual domain attachments.
         """
-        cluster = self.cluster_manager.clusters.get(cluster_id)
-        if not cluster:
-            raise ValueError(f"Cluster not found: {cluster_id}")
+        campaign = self.campaign_manager.campaigns.get(campaign_id)
+        if not campaign:
+            raise ValueError(f"Campaign not found: {campaign_id}")
 
         # Generate campaign HTML report (always)
-        html_path = await self.report_generator.generate_campaign_html(cluster_id)
+        html_path = await self.report_generator.generate_campaign_html(campaign_id)
 
         # Try to generate PDF
         pdf_path = None
         try:
-            pdf_path = await self.report_generator.generate_campaign_pdf(cluster_id)
+            pdf_path = await self.report_generator.generate_campaign_pdf(campaign_id)
         except ImportError:
             logger.info("PDF generation unavailable - using HTML only")
 
         # Prepare individual domain attachments (for platforms that need them)
         domain_attachments = {}
-        for member in cluster.members:
+        for member in campaign.members:
             try:
                 attachments = await self.prepare_domain_submission(member.domain)
                 domain_attachments[member.domain] = attachments
@@ -158,11 +158,11 @@ class EvidencePackager:
                 logger.warning(f"Failed to prepare attachments for {member.domain}: {e}")
 
         return CampaignSubmissionAttachments(
-            cluster_id=cluster_id,
-            cluster_name=cluster.name,
+            campaign_id=campaign_id,
+            campaign_name=campaign.name,
             pdf_path=pdf_path,
             html_path=html_path,
-            domain_count=len(cluster.members),
+            domain_count=len(campaign.members),
             domain_attachments=domain_attachments,
         )
 
@@ -235,18 +235,20 @@ class EvidencePackager:
             except Exception as e:
                 logger.warning(f"Failed to generate report for archive: {e}")
 
-        # Add cluster context if applicable
-        cluster = self.cluster_manager.get_cluster_for_domain(domain)
-        if cluster:
-            cluster_info = {
-                "cluster_id": cluster.cluster_id,
-                "cluster_name": cluster.name,
-                "related_domains": [m.domain for m in cluster.members if m.domain != domain],
-                "shared_backends": list(cluster.shared_backends),
-                "confidence": cluster.confidence,
+        # Add campaign context if applicable
+        campaign = self.campaign_manager.get_campaign_for_domain(domain)
+        if campaign:
+            campaign_info = {
+                "campaign_id": campaign.campaign_id,
+                "campaign_name": campaign.name,
+                "related_domains": [m.domain for m in campaign.members if m.domain != domain],
+                "shared_backends": list(campaign.shared_backends),
+                "shared_nameservers": list(campaign.shared_nameservers),
+                "shared_asns": list(campaign.shared_asns),
+                "confidence": campaign.confidence,
             }
-            (archive_dir / "cluster_info.json").write_text(
-                json.dumps(cluster_info, indent=2), encoding="utf-8"
+            (archive_dir / "campaign_info.json").write_text(
+                json.dumps(campaign_info, indent=2), encoding="utf-8"
             )
 
         # Create submission log placeholder
@@ -275,7 +277,7 @@ class EvidencePackager:
 
     async def create_campaign_archive(
         self,
-        cluster_id: str,
+        campaign_id: str,
         include_reports: bool = True,
     ) -> Path:
         """
@@ -283,12 +285,12 @@ class EvidencePackager:
 
         This is for INTERNAL use - not for sending to abuse teams.
         """
-        cluster = self.cluster_manager.clusters.get(cluster_id)
-        if not cluster:
-            raise ValueError(f"Cluster not found: {cluster_id}")
+        campaign = self.campaign_manager.campaigns.get(campaign_id)
+        if not campaign:
+            raise ValueError(f"Campaign not found: {campaign_id}")
 
         timestamp = datetime.now().strftime("%Y%m%d")
-        safe_name = self._safe_filename(cluster.name)
+        safe_name = self._safe_filename(campaign.name)
         archive_name = f"archive_campaign_{safe_name}_{timestamp}"
         archive_dir = self.output_dir / "archives" / archive_name
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -297,7 +299,7 @@ class EvidencePackager:
         evidence_root = archive_dir / "evidence"
         evidence_root.mkdir(exist_ok=True)
 
-        for member in cluster.members:
+        for member in campaign.members:
             domain_evidence_dir = evidence_root / self._safe_filename(member.domain)
             domain_evidence_dir.mkdir(exist_ok=True)
 
@@ -323,11 +325,11 @@ class EvidencePackager:
         # Generate and include campaign report
         if include_reports:
             try:
-                html_path = await self.report_generator.generate_campaign_html(cluster_id)
+                html_path = await self.report_generator.generate_campaign_html(campaign_id)
                 shutil.copy2(html_path, archive_dir / "campaign_report.html")
 
                 try:
-                    pdf_path = await self.report_generator.generate_campaign_pdf(cluster_id)
+                    pdf_path = await self.report_generator.generate_campaign_pdf(campaign_id)
                     shutil.copy2(pdf_path, archive_dir / "campaign_report.pdf")
                 except ImportError:
                     pass
@@ -339,16 +341,16 @@ class EvidencePackager:
         iocs_dir.mkdir(exist_ok=True)
 
         # domains.txt
-        domains = [m.domain for m in cluster.members]
+        domains = [m.domain for m in campaign.members]
         (iocs_dir / "domains.txt").write_text("\n".join(domains), encoding="utf-8")
 
         # backends.txt
-        backends = list(cluster.shared_backends)
+        backends = list(campaign.shared_backends)
         (iocs_dir / "backends.txt").write_text("\n".join(backends), encoding="utf-8")
 
         # Gather all API keys from member analyses
         all_api_keys = set()
-        for member in cluster.members:
+        for member in campaign.members:
             analysis = self.evidence_store.load_analysis(member.domain)
             if analysis:
                 all_api_keys.update(analysis.get("api_keys_found", []))
@@ -357,10 +359,10 @@ class EvidencePackager:
 
         # Create submission log
         submission_log = {
-            "cluster_id": cluster_id,
-            "cluster_name": cluster.name,
+            "campaign_id": campaign_id,
+            "campaign_name": campaign.name,
             "archive_created": datetime.now().isoformat(),
-            "domain_count": len(cluster.members),
+            "domain_count": len(campaign.members),
             "submissions": [],
         }
         (archive_dir / "submission_log.json").write_text(
@@ -407,10 +409,10 @@ class EvidencePackager:
         analysis = self.evidence_store.load_analysis(domain)
         backend_domains = set(analysis.get("backend_domains", [])) if analysis else set()
 
-        # Also check cluster's shared backends
-        cluster = self.cluster_manager.get_cluster_for_domain(domain)
-        if cluster:
-            backend_domains.update(cluster.shared_backends)
+        # Also check campaign's shared backends
+        campaign = self.campaign_manager.get_campaign_for_domain(domain)
+        if campaign:
+            backend_domains.update(campaign.shared_backends)
 
         # Extract matching requests
         backend_requests = []

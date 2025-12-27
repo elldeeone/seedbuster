@@ -2,8 +2,8 @@
 Report generator for SeedBuster - creates PDF/HTML reports for domains and campaigns.
 
 Supports two scopes:
-- Single domain reports with cluster context
-- Campaign/cluster reports showing all linked domains
+- Single domain reports with campaign context
+- Campaign reports showing all linked domains
 """
 
 import base64
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from ..analyzer.clustering import ThreatClusterManager
+    from ..analyzer.campaigns import ThreatCampaignManager
     from ..storage.database import Database
     from ..storage.evidence import EvidenceStore
 
@@ -36,18 +36,18 @@ class DomainReportData:
     hosting_provider: Optional[str]
     screenshots: List[Path]
     analysis_json: dict
-    # Cluster context (if part of a campaign)
-    cluster_id: Optional[str] = None
-    cluster_name: Optional[str] = None
+    # Campaign context (if part of a campaign)
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
     related_domains: List[str] = field(default_factory=list)
 
 
 @dataclass
 class CampaignReportData:
-    """Data for a campaign/cluster report."""
+    """Data for a campaign report."""
 
-    cluster_id: str
-    cluster_name: str
+    campaign_id: str
+    campaign_name: str
     confidence: float
     created_at: datetime
     updated_at: datetime
@@ -70,12 +70,12 @@ class ReportGenerator:
         self,
         database: "Database",
         evidence_store: "EvidenceStore",
-        cluster_manager: "ThreatClusterManager",
+        campaign_manager: "ThreatCampaignManager",
         output_dir: Optional[Path] = None,
     ):
         self.database = database
         self.evidence_store = evidence_store
-        self.cluster_manager = cluster_manager
+        self.campaign_manager = campaign_manager
         self.output_dir = output_dir or Path("data/reports")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,12 +120,12 @@ class ReportGenerator:
         # Get screenshots
         screenshots = self.evidence_store.get_all_screenshot_paths(domain)
 
-        # Get cluster context
-        cluster = self.cluster_manager.get_cluster_for_domain(domain)
-        cluster_id = cluster.cluster_id if cluster else None
-        cluster_name = cluster.name if cluster else None
+        # Get campaign context
+        campaign = self.campaign_manager.get_campaign_for_domain(domain)
+        campaign_id = campaign.campaign_id if campaign else None
+        campaign_name = campaign.name if campaign else None
         related_domains = (
-            [m.domain for m in cluster.members if m.domain != domain] if cluster else []
+            [m.domain for m in campaign.members if m.domain != domain] if campaign else []
         )
 
         # Get domain data from database if available
@@ -147,8 +147,8 @@ class ReportGenerator:
             hosting_provider=analysis.get("hosting_provider"),
             screenshots=screenshots,
             analysis_json=analysis,
-            cluster_id=cluster_id,
-            cluster_name=cluster_name,
+            campaign_id=campaign_id,
+            campaign_name=campaign_name,
             related_domains=related_domains,
         )
 
@@ -157,19 +157,19 @@ class ReportGenerator:
         # Embed screenshots as base64
         screenshot_html = self._render_screenshots(data.screenshots[:5])
 
-        # Build cluster context section
-        cluster_section = ""
-        if data.cluster_id:
+        # Build campaign context section
+        campaign_section = ""
+        if data.campaign_id:
             related_list = ", ".join(data.related_domains[:10]) or "None"
             if len(data.related_domains) > 10:
                 related_list += f" (+{len(data.related_domains) - 10} more)"
-            cluster_section = f"""
-            <div class="section cluster-context">
+            campaign_section = f"""
+            <div class="section campaign-context">
                 <h2>Campaign Context</h2>
                 <p class="warning">This domain is part of a coordinated phishing campaign.</p>
                 <table>
-                    <tr><td><strong>Campaign:</strong></td><td>{data.cluster_name}</td></tr>
-                    <tr><td><strong>Cluster ID:</strong></td><td><code>{data.cluster_id}</code></td></tr>
+                    <tr><td><strong>Campaign:</strong></td><td>{data.campaign_name}</td></tr>
+                    <tr><td><strong>Campaign ID:</strong></td><td><code>{data.campaign_id}</code></td></tr>
                     <tr><td><strong>Related Domains:</strong></td><td>{len(data.related_domains)} domains</td></tr>
                 </table>
                 <p><strong>Related domains:</strong> {related_list}</p>
@@ -230,7 +230,7 @@ class ReportGenerator:
         </table>
     </div>
 
-    {cluster_section}
+    {campaign_section}
 
     <div class="section reasons">
         <h2>Detection Reasons</h2>
@@ -265,23 +265,23 @@ class ReportGenerator:
 </html>"""
 
     # -------------------------------------------------------------------------
-    # Campaign/Cluster Reports
+    # Campaign Reports
     # -------------------------------------------------------------------------
 
-    async def generate_campaign_html(self, cluster_id: str) -> Path:
-        """Generate HTML report for an entire campaign/cluster."""
-        data = await self._gather_campaign_data(cluster_id)
+    async def generate_campaign_html(self, campaign_id: str) -> Path:
+        """Generate HTML report for an entire campaign."""
+        data = await self._gather_campaign_data(campaign_id)
         html = self._render_campaign_html(data)
 
-        safe_name = self._safe_filename(data.cluster_name)
-        output_path = self.output_dir / f"campaign_{safe_name}_{cluster_id[:8]}.html"
+        safe_name = self._safe_filename(data.campaign_name)
+        output_path = self.output_dir / f"campaign_{safe_name}_{campaign_id[:8]}.html"
         output_path.write_text(html, encoding="utf-8")
         logger.info(f"Generated campaign HTML report: {output_path}")
         return output_path
 
-    async def generate_campaign_pdf(self, cluster_id: str) -> Path:
-        """Generate PDF report for an entire campaign/cluster."""
-        html_path = await self.generate_campaign_html(cluster_id)
+    async def generate_campaign_pdf(self, campaign_id: str) -> Path:
+        """Generate PDF report for an entire campaign."""
+        html_path = await self.generate_campaign_html(campaign_id)
         pdf_path = html_path.with_suffix(".pdf")
 
         try:
@@ -296,15 +296,15 @@ class ReportGenerator:
                 "PDF generation requires weasyprint. Install with: pip install weasyprint"
             )
 
-    async def _gather_campaign_data(self, cluster_id: str) -> CampaignReportData:
+    async def _gather_campaign_data(self, campaign_id: str) -> CampaignReportData:
         """Gather all data needed for a campaign report."""
-        cluster = self.cluster_manager.clusters.get(cluster_id)
-        if not cluster:
-            raise ValueError(f"Cluster not found: {cluster_id}")
+        campaign = self.campaign_manager.campaigns.get(campaign_id)
+        if not campaign:
+            raise ValueError(f"Campaign not found: {campaign_id}")
 
         # Gather data for each member domain
         members = []
-        for member in cluster.members:
+        for member in campaign.members:
             try:
                 domain_data = await self._gather_domain_data(member.domain)
                 members.append(domain_data)
@@ -312,22 +312,22 @@ class ReportGenerator:
                 logger.warning(f"Failed to gather data for {member.domain}: {e}")
 
         return CampaignReportData(
-            cluster_id=cluster.cluster_id,
-            cluster_name=cluster.name,
-            confidence=cluster.confidence,
-            created_at=cluster.created_at,
-            updated_at=cluster.updated_at,
+            campaign_id=campaign.campaign_id,
+            campaign_name=campaign.name,
+            confidence=campaign.confidence,
+            created_at=campaign.created_at,
+            updated_at=campaign.updated_at,
             members=members,
-            shared_backends=list(cluster.shared_backends),
-            shared_nameservers=list(cluster.shared_nameservers),
-            shared_kits=list(cluster.shared_kits),
-            shared_asns=list(cluster.shared_asns),
-            total_domains=len(cluster.members),
+            shared_backends=list(campaign.shared_backends),
+            shared_nameservers=list(campaign.shared_nameservers),
+            shared_kits=list(campaign.shared_kits),
+            shared_asns=list(campaign.shared_asns),
+            total_domains=len(campaign.members),
             active_domains=len([m for m in members if m.confidence_score > 0]),
         )
 
     def _render_campaign_html(self, data: CampaignReportData) -> str:
-        """Render HTML for a campaign/cluster report."""
+        """Render HTML for a campaign report."""
         # Domain inventory table
         domain_rows = []
         for m in data.members:
@@ -397,7 +397,7 @@ class ReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Campaign Report: {data.cluster_name}</title>
+    <title>Campaign Report: {data.campaign_name}</title>
     <style>
         {self._get_report_css()}
         {self._get_campaign_css()}
@@ -406,7 +406,7 @@ class ReportGenerator:
 <body>
     <header>
         <h1>Phishing Campaign Report</h1>
-        <p class="subtitle">{data.cluster_name}</p>
+        <p class="subtitle">{data.campaign_name}</p>
     </header>
 
     <div class="section executive-summary">
@@ -426,7 +426,7 @@ class ReportGenerator:
             </div>
         </div>
         <table>
-            <tr><td><strong>Campaign ID:</strong></td><td><code>{data.cluster_id}</code></td></tr>
+            <tr><td><strong>Campaign ID:</strong></td><td><code>{data.campaign_id}</code></td></tr>
             <tr><td><strong>First Detected:</strong></td><td>{data.created_at.strftime('%Y-%m-%d %H:%M UTC')}</td></tr>
             <tr><td><strong>Last Updated:</strong></td><td>{data.updated_at.strftime('%Y-%m-%d %H:%M UTC')}</td></tr>
             <tr><td><strong>Phishing Kits:</strong></td><td>{', '.join(data.shared_kits) or 'Unknown'}</td></tr>
@@ -627,7 +627,7 @@ class ReportGenerator:
             border-radius: 5px;
             margin-bottom: 15px;
         }
-        .cluster-context {
+        .campaign-context {
             border-left: 4px solid #e74c3c;
         }
         .backends, .api-keys {

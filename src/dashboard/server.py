@@ -126,8 +126,8 @@ DANGEROUS_EXCLUDE_STATUSES = ["watchlist", "false_positive", "allowlisted"]
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
     # Build navigation links
-    clusters_href = "/admin/clusters" if admin else "/clusters"
-    nav_items = [f'<a class="nav-link" href="{clusters_href}">Threat Campaigns</a>']
+    campaigns_href = "/admin/campaigns" if admin else "/campaigns"
+    nav_items = [f'<a class="nav-link" href="{campaigns_href}">Threat Campaigns</a>']
     if admin:
         nav_items.append('<a class="nav-link" href="/">Public View</a>')
     nav = "".join(nav_items)
@@ -2978,17 +2978,17 @@ def _render_pending_reports(pending: list[dict], *, admin: bool, limit: int = 50
     """
 
 
-def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admin: bool) -> str:
+def _render_campaign_info(campaign: dict | None, related_domains: list[dict], admin: bool) -> str:
     """Render threat campaign info panel for domain detail page."""
-    if not cluster:
+    if not campaign:
         return ""
 
-    cluster_name = cluster.get("name", "Unknown Campaign")
-    cluster_id = cluster.get("cluster_id", "")
-    confidence = cluster.get("confidence", 0)
-    shared_backends = list(cluster.get("shared_backends", []))
-    shared_kits = list(cluster.get("shared_kits", []))
-    shared_nameservers = list(cluster.get("shared_nameservers", []))
+    campaign_name = campaign.get("name", "Unknown Campaign")
+    campaign_id = campaign.get("campaign_id", "")
+    confidence = campaign.get("confidence", 0)
+    shared_backends = list(campaign.get("shared_backends", []))
+    shared_kits = list(campaign.get("shared_kits", []))
+    shared_nameservers = list(campaign.get("shared_nameservers", []))
 
     # Related domains list - make them clickable links
     related_html = ""
@@ -3084,7 +3084,7 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
     else:
         conf_class = "sb-badge-low"
 
-    clusters_link = "/admin/clusters" if admin else "/campaigns"
+    campaigns_link = "/admin/campaigns" if admin else "/campaigns"
     confidence_display = f"{confidence:.0f}% confidence"
 
     return f"""
@@ -3092,7 +3092,7 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
         <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
           <div>
             <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
-            <a href="{_escape(clusters_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all campaigns &rarr;</a>
+            <a href="{_escape(campaigns_link)}" class="sb-muted" style="margin-left: 12px; font-size: 12px;">View all campaigns &rarr;</a>
           </div>
           <span class="sb-badge {conf_class}">{_escape(confidence_display)}</span>
         </div>
@@ -3100,8 +3100,8 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
           <div class="col-6">
             <div style="margin-bottom: 16px;">
               <div class="sb-label">Campaign Name</div>
-              <div style="font-size: 16px; font-weight: 600; color: var(--text-primary);">{_escape(cluster_name)}</div>
-              <div class="sb-muted" style="font-size: 12px; margin-top: 4px;">ID: <code class="sb-code">{_escape(cluster_id)}</code></div>
+              <div style="font-size: 16px; font-weight: 600; color: var(--text-primary);">{_escape(campaign_name)}</div>
+              <div class="sb-muted" style="font-size: 12px; margin-top: 4px;">ID: <code class="sb-code">{_escape(campaign_id)}</code></div>
             </div>
             <div>
               <div class="sb-label">Shared Indicators</div>
@@ -3117,23 +3117,23 @@ def _render_cluster_info(cluster: dict | None, related_domains: list[dict], admi
     """
 
 
-def _render_clusters_list(clusters: list[dict], admin: bool, q: str = "") -> str:
+def _render_campaigns_list(campaigns: list[dict], admin: bool, q: str = "") -> str:
     """Render the threat campaigns listing page."""
     search = (q or "").strip().lower()
     filtered: list[dict] = []
-    for cluster in clusters:
+    for campaign in campaigns:
         if not search:
-            filtered.append(cluster)
+            filtered.append(campaign)
             continue
-        name = str(cluster.get("name") or cluster.get("cluster_id") or "").lower()
-        cid = str(cluster.get("cluster_id") or "").lower()
-        member_hit = any(search in (m.get("domain", "").lower()) for m in cluster.get("members", []))
+        name = str(campaign.get("name") or campaign.get("campaign_id") or "").lower()
+        cid = str(campaign.get("campaign_id") or "").lower()
+        member_hit = any(search in (m.get("domain", "").lower()) for m in campaign.get("members", []))
         if search in name or search in cid or member_hit:
-            filtered.append(cluster)
+            filtered.append(campaign)
 
-    total_count = len(clusters)
+    total_count = len(campaigns)
     display_count = len(filtered)
-    action_href = "/admin/clusters" if admin else "/campaigns"
+    action_href = "/admin/campaigns" if admin else "/campaigns"
 
     search_form = f"""
       <form class="sb-row" method="get" action="{_escape(action_href)}" style="gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
@@ -3159,17 +3159,17 @@ def _render_clusters_list(clusters: list[dict], admin: bool, q: str = "") -> str
           </div>
         """
 
-    cluster_cards = []
-    for cluster in filtered:
-        cluster_id = cluster.get("cluster_id", "")
-        cluster_name = cluster.get("name", "") or cluster_id or "Unknown Campaign"
-        members = cluster.get("members", []) or []
+    campaign_cards = []
+    for campaign in filtered:
+        campaign_id = campaign.get("campaign_id", "")
+        campaign_name = campaign.get("name", "") or campaign_id or "Unknown Campaign"
+        members = campaign.get("members", []) or []
         member_count = len(members)
-        shared_backends = cluster.get("shared_backends", []) or []
-        shared_kits = cluster.get("shared_kits", []) or []
-        shared_nameservers = cluster.get("shared_nameservers", []) or []
+        shared_backends = campaign.get("shared_backends", []) or []
+        shared_kits = campaign.get("shared_kits", []) or []
+        shared_nameservers = campaign.get("shared_nameservers", []) or []
 
-        detail_href = f"/admin/clusters/{cluster_id}" if admin else f"/campaigns/{cluster_id}"
+        detail_href = f"/admin/campaigns/{campaign_id}" if admin else f"/campaigns/{campaign_id}"
 
         # Members preview (first 3)
         member_items: list[str] = []
@@ -3194,13 +3194,13 @@ def _render_clusters_list(clusters: list[dict], admin: bool, q: str = "") -> str
             for v in indicators[:3]
         )
 
-        cluster_cards.append(f"""
+        campaign_cards.append(f"""
           <div class="col-6">
             <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.25); margin: 0;">
               <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.18);">
                 <div>
-                  <div class="sb-panel-title" style="color: var(--accent-purple);">{_escape(cluster_name)}</div>
-                  <div class="sb-muted" style="font-size: 12px;">Campaign ID: <code class="sb-code">{_escape(cluster_id)}</code></div>
+                  <div class="sb-panel-title" style="color: var(--accent-purple);">{_escape(campaign_name)}</div>
+                  <div class="sb-muted" style="font-size: 12px;">Campaign ID: <code class="sb-code">{_escape(campaign_id)}</code></div>
                   <div class="sb-muted" style="font-size: 12px;">Members: {member_count}</div>
                 </div>
                 <a class="sb-btn" href="{_escape(detail_href)}">View</a>
@@ -3226,38 +3226,38 @@ def _render_clusters_list(clusters: list[dict], admin: bool, q: str = "") -> str
         {search_form}
       </div>
       <div class="sb-grid" style="gap: 16px;">
-        {"".join(cluster_cards)}
+        {"".join(campaign_cards)}
       </div>
     """
 
 
-def _render_cluster_detail(cluster: dict, admin: bool) -> str:
+def _render_campaign_detail(campaign: dict, admin: bool) -> str:
     """Render the detailed threat campaign page with action buttons."""
-    cluster_id = cluster.get("cluster_id", "")
-    cluster_name = cluster.get("name", "Unknown Campaign")
-    members = cluster.get("members", []) or []
-    shared_backends = cluster.get("shared_backends", []) or []
-    shared_kits = cluster.get("shared_kits", []) or []
-    shared_nameservers = cluster.get("shared_nameservers", []) or []
-    shared_asns = cluster.get("shared_asns", []) or []
-    actor_id = cluster.get("actor_id", "")
-    actor_notes = cluster.get("actor_notes", "")
+    campaign_id = campaign.get("campaign_id", "")
+    campaign_name = campaign.get("name", "Unknown Campaign")
+    members = campaign.get("members", []) or []
+    shared_backends = campaign.get("shared_backends", []) or []
+    shared_kits = campaign.get("shared_kits", []) or []
+    shared_nameservers = campaign.get("shared_nameservers", []) or []
+    shared_asns = campaign.get("shared_asns", []) or []
+    actor_id = campaign.get("actor_id", "")
+    actor_notes = campaign.get("actor_notes", "")
 
     # Back button
-    back_href = "/admin/clusters" if admin else "/campaigns"
+    back_href = "/admin/campaigns" if admin else "/campaigns"
 
     # Build action buttons (admin only)
     action_buttons = ""
     if admin:
         action_buttons = f"""
           <div class="sb-row" style="flex-wrap: wrap; gap: 8px; margin-top: 8px;">
-            <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/pdf">Campaign PDF</a>
-            <a class="sb-btn" href="/admin/clusters/{_escape(cluster_id)}/package">Campaign Package</a>
-            <form method="post" action="/admin/clusters/{_escape(cluster_id)}/preview" style="display: inline;">
+            <a class="sb-btn" href="/admin/campaigns/{_escape(campaign_id)}/pdf">Campaign PDF</a>
+            <a class="sb-btn" href="/admin/campaigns/{_escape(campaign_id)}/package">Campaign Package</a>
+            <form method="post" action="/admin/campaigns/{_escape(campaign_id)}/preview" style="display: inline;">
               <input type="hidden" name="csrf" value="__SET_COOKIE__" />
               <button type="submit" class="sb-btn">Preview Reports</button>
             </form>
-            <form method="post" action="/admin/clusters/{_escape(cluster_id)}/submit" style="display: inline;">
+            <form method="post" action="/admin/campaigns/{_escape(campaign_id)}/submit" style="display: inline;">
               <input type="hidden" name="csrf" value="__SET_COOKIE__" />
               <button type="submit" class="sb-btn sb-btn-danger">Submit All Reports</button>
             </form>
@@ -3403,21 +3403,21 @@ def _render_cluster_detail(cluster: dict, admin: bool) -> str:
     return f"""
       <div class="sb-row" style="margin-bottom: 24px; align-items: center; flex-wrap: wrap; gap: 8px;">
         <a class="sb-btn" href="{_escape(back_href)}">&larr; Back to Campaigns</a>
-        <h1 style="flex: 1; margin: 0 0 0 12px; font-size: 24px;">{_escape(cluster_name)}</h1>
+        <h1 style="flex: 1; margin: 0 0 0 12px; font-size: 24px;">{_escape(campaign_name)}</h1>
       </div>
 
       <div class="sb-panel" style="border-color: rgba(163, 113, 247, 0.3); margin-bottom: 16px;">
         <div class="sb-panel-header" style="border-color: rgba(163, 113, 247, 0.2);">
           <div>
             <span class="sb-panel-title" style="color: var(--accent-purple);">Threat Campaign</span>
-            <span class="sb-muted" style="margin-left: 10px; font-size: 12px;">ID: <code class="sb-code">{_escape(cluster_id)}</code></span>
+            <span class="sb-muted" style="margin-left: 10px; font-size: 12px;">ID: <code class="sb-code">{_escape(campaign_id)}</code></span>
           </div>
           {action_buttons}
         </div>
         <div class="sb-grid" style="align-items: flex-start;">
           <div class="col-8">
             <div class="sb-label">Campaign Name</div>
-            <div style="font-size: 20px; font-weight: 700; margin-top: 4px;">{_escape(cluster_name)}</div>
+            <div style="font-size: 20px; font-weight: 700; margin-top: 4px;">{_escape(campaign_name)}</div>
           </div>
           <div class="col-4">
             <div class="sb-label">Members</div>
@@ -3840,7 +3840,7 @@ def _render_domain_detail(
     error: bool,
     available_platforms: list[str],
     platform_info: dict[str, dict] | None = None,
-    cluster: dict | None = None,
+    campaign: dict | None = None,
     related_domains: list[dict] | None = None,
     manual_pending: list[str] | None = None,
 ) -> str:
@@ -4179,7 +4179,7 @@ def _render_domain_detail(
           </div>
         </div>
       </div>
-      {_render_cluster_info(cluster, related_domains or [], admin)}
+      {_render_campaign_info(campaign, related_domains or [], admin)}
       {admin_forms}
       {evidence_bits}
       {reports_table}
@@ -4207,7 +4207,7 @@ class DashboardServer:
         config: DashboardConfig,
         database: Database,
         evidence_dir: Path,
-        clusters_dir: Path | None = None,
+        campaigns_dir: Path | None = None,
         submit_callback: Callable[[str], None] | None = None,
         rescan_callback: Callable[[str], None] | None = None,
         report_callback: Callable[[int, str, Optional[list[str]], bool], object] | None = None,
@@ -4228,7 +4228,7 @@ class DashboardServer:
         self.database = database
         self._allowlist = {d.lower() for d in getattr(config, "allowlist", [])}
         self.evidence_dir = evidence_dir
-        self.clusters_dir = clusters_dir
+        self.campaigns_dir = campaigns_dir
         self.frontend_dir = Path(
             config.frontend_dir
             or os.environ.get("DASHBOARD_FRONTEND_DIST")
@@ -4268,17 +4268,17 @@ class DashboardServer:
         )
         self._register_routes()
 
-    def _load_clusters(self) -> list[dict]:
-        """Load all threat campaigns from clusters.json."""
-        if not self.clusters_dir:
+    def _load_campaigns(self) -> list[dict]:
+        """Load all threat campaigns from campaigns.json."""
+        if not self.campaigns_dir:
             return []
-        clusters_file = self.clusters_dir / "clusters.json"
-        if not clusters_file.exists():
+        campaigns_file = self.campaigns_dir / "campaigns.json"
+        if not campaigns_file.exists():
             return []
         try:
-            with open(clusters_file, "r") as f:
+            with open(campaigns_file, "r") as f:
                 data = json.load(f)
-            return data.get("clusters", [])
+            return data.get("campaigns", [])
         except Exception:
             return []
 
@@ -4371,15 +4371,15 @@ class DashboardServer:
         self._http_session = aiohttp.ClientSession(timeout=timeout)
         return self._http_session
 
-    async def _filter_clusters(self, clusters: list[dict]) -> list[dict]:
+    async def _filter_campaigns(self, campaigns: list[dict]) -> list[dict]:
         """Hide campaigns whose members are all allowlisted/watchlist/false positive."""
-        if not clusters:
+        if not campaigns:
             return []
 
         # Collect member domains for bulk lookup
         member_domains: set[str] = set()
-        for cluster in clusters:
-            for member in cluster.get("members", []):
+        for campaign in campaigns:
+            for member in campaign.get("members", []):
                 name = (member.get("domain") or "").strip().lower()
                 if name:
                     member_domains.add(name)
@@ -4396,10 +4396,10 @@ class DashboardServer:
 
         seen_normalized: set[str] = set()
         filtered: list[dict] = []
-        for cluster in clusters:
+        for campaign in campaigns:
             kept_members: list[dict] = []
             new_keys: set[str] = set()
-            for member in cluster.get("members", []):
+            for member in campaign.get("members", []):
                 domain_name = (member.get("domain") or "").strip()
                 if not domain_name:
                     continue
@@ -4432,29 +4432,29 @@ class DashboardServer:
 
             if kept_members:
                 seen_normalized.update(new_keys)
-                new_cluster = dict(cluster)
-                new_cluster["members"] = kept_members
-                filtered.append(new_cluster)
+                new_campaign = dict(campaign)
+                new_campaign["members"] = kept_members
+                filtered.append(new_campaign)
 
         return filtered
 
-    def _get_cluster_for_domain(self, domain: str) -> dict | None:
+    def _get_campaign_for_domain(self, domain: str) -> dict | None:
         """Get campaign info for a specific domain."""
         if self._is_allowlisted_domain(domain):
             return None
-        clusters = self._load_clusters()
-        for cluster in clusters:
-            members = cluster.get("members", [])
+        campaigns = self._load_campaigns()
+        for campaign in campaigns:
+            members = campaign.get("members", [])
             for member in members:
                 if member.get("domain") == domain:
-                    return cluster
+                    return campaign
         return None
 
-    def _get_related_domains(self, domain: str, cluster: dict | None) -> list[dict]:
+    def _get_related_domains(self, domain: str, campaign: dict | None) -> list[dict]:
         """Get list of related domains from the same campaign."""
-        if not cluster:
+        if not campaign:
             return []
-        members = cluster.get("members", [])
+        members = campaign.get("members", [])
         current_key = self._normalize_domain_key(domain)
         return [
             m for m in members
@@ -4588,8 +4588,8 @@ class DashboardServer:
         # Public API routes (read-only, reuse admin handlers)
         self._app.router.add_get("/api/stats", self._admin_api_stats)
         self._app.router.add_get("/api/domains", self._admin_api_domains)
-        self._app.router.add_get("/api/clusters", self._admin_api_clusters)
-        self._app.router.add_get("/api/clusters/{cluster_id}", self._admin_api_cluster)
+        self._app.router.add_get("/api/campaigns", self._admin_api_campaigns)
+        self._app.router.add_get("/api/campaigns/{campaign_id}", self._admin_api_campaign)
         self._app.router.add_get("/api/domains/{domain_id}", self._admin_api_domain)
         self._app.router.add_get("/api/platforms", self._admin_api_platforms)
         self._app.router.add_post("/api/public/submit", self._public_api_submit)
@@ -4601,8 +4601,8 @@ class DashboardServer:
         # Public download routes for reports/evidence packages
         self._app.router.add_get("/domains/{domain_id}/pdf", self._admin_domain_pdf)
         self._app.router.add_get("/domains/{domain_id}/package", self._admin_domain_package)
-        self._app.router.add_get("/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
-        self._app.router.add_get("/clusters/{cluster_id}/package", self._admin_cluster_package)
+        self._app.router.add_get("/campaigns/{campaign_id}/pdf", self._admin_campaign_pdf)
+        self._app.router.add_get("/campaigns/{campaign_id}/package", self._admin_campaign_package)
 
         # Admin API routes
         self._app.router.add_get("/admin/api/stats", self._admin_api_stats)
@@ -4616,10 +4616,10 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/domains/{domain_id}/baseline", self._admin_api_update_baseline)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
-        self._app.router.add_get("/admin/api/clusters", self._admin_api_clusters)
-        self._app.router.add_get("/admin/api/clusters/{cluster_id}", self._admin_api_cluster)
+        self._app.router.add_get("/admin/api/campaigns", self._admin_api_campaigns)
+        self._app.router.add_get("/admin/api/campaigns/{campaign_id}", self._admin_api_campaign)
         self._app.router.add_patch("/admin/api/domains/{domain_id}/notes", self._admin_api_update_notes)
-        self._app.router.add_patch("/admin/api/clusters/{cluster_id}/name", self._admin_api_update_cluster_name)
+        self._app.router.add_patch("/admin/api/campaigns/{campaign_id}/name", self._admin_api_update_campaign_name)
         self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
         self._app.router.add_get("/admin/api/analytics", self._admin_api_analytics)
         self._app.router.add_get("/admin/api/detection-metrics", self._admin_api_detection_metrics)
@@ -4632,10 +4632,10 @@ class DashboardServer:
         self._app.router.add_get("/admin/domains/{domain_id}/package", self._admin_domain_package)
         self._app.router.add_post("/admin/domains/{domain_id}/preview", self._admin_domain_preview)
         # Campaign routes
-        self._app.router.add_get("/admin/clusters/{cluster_id}/pdf", self._admin_cluster_pdf)
-        self._app.router.add_get("/admin/clusters/{cluster_id}/package", self._admin_cluster_package)
-        self._app.router.add_post("/admin/clusters/{cluster_id}/preview", self._admin_cluster_preview)
-        self._app.router.add_post("/admin/clusters/{cluster_id}/submit", self._admin_cluster_submit)
+        self._app.router.add_get("/admin/campaigns/{campaign_id}/pdf", self._admin_campaign_pdf)
+        self._app.router.add_get("/admin/campaigns/{campaign_id}/package", self._admin_campaign_package)
+        self._app.router.add_post("/admin/campaigns/{campaign_id}/preview", self._admin_campaign_preview)
+        self._app.router.add_post("/admin/campaigns/{campaign_id}/submit", self._admin_campaign_submit)
 
         # UI routes: prefer SPA when built; fall back to server-rendered HTML otherwise
         if self._frontend_available:
@@ -4871,10 +4871,10 @@ class DashboardServer:
         screenshots = self._get_screenshots(domain, evidence_dir)
         instruction_files = self._get_instruction_files(evidence_dir)
 
-        # Get cluster info for this domain
+        # Get campaign info for this domain
         domain_name = domain.get("domain") or ""
-        cluster = self._get_cluster_for_domain(domain_name)
-        related_domains = self._get_related_domains(domain_name, cluster)
+        campaign = self._get_campaign_for_domain(domain_name)
+        related_domains = self._get_related_domains(domain_name, campaign)
         related_domains = await self._enrich_related_domains_with_ids(related_domains)
 
         body = _render_domain_detail(
@@ -4889,47 +4889,47 @@ class DashboardServer:
             msg=request.query.get("msg"),
             error=(request.query.get("error") == "1"),
             available_platforms=[],
-            cluster=cluster,
+            campaign=campaign,
             related_domains=related_domains,
         )
         html_out = _layout(title="SeedBuster Dashboard", body=body, admin=False)
         return web.Response(text=html_out, content_type="text/html")
 
-    async def _public_clusters(self, request: web.Request) -> web.Response:
+    async def _public_campaigns(self, request: web.Request) -> web.Response:
         search = (request.query.get("q") or "").strip()
-        clusters = await self._filter_clusters(self._load_clusters())
-        body = _render_clusters_list(clusters, admin=False, q=search)
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        body = _render_campaigns_list(campaigns, admin=False, q=search)
         html_out = _layout(title="SeedBuster - Threat Campaigns", body=body, admin=False)
         return web.Response(text=html_out, content_type="text/html")
 
-    async def _public_cluster_detail(self, request: web.Request) -> web.Response:
-        cluster_id = (request.match_info.get("cluster_id") or "").strip()
-        if not cluster_id:
+    async def _public_campaign_detail(self, request: web.Request) -> web.Response:
+        campaign_id = (request.match_info.get("campaign_id") or "").strip()
+        if not campaign_id:
             raise web.HTTPNotFound(text="Campaign not found.")
 
-        clusters = await self._filter_clusters(self._load_clusters())
-        cluster = next(
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        campaign = next(
             (
-                c for c in clusters
-                if str(c.get("cluster_id")) == cluster_id or str(c.get("cluster_id", "")).startswith(cluster_id)
+                c for c in campaigns
+                if str(c.get("campaign_id")) == campaign_id or str(c.get("campaign_id", "")).startswith(campaign_id)
             ),
             None,
         )
-        if not cluster:
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
-        enriched_members = await self._enrich_related_domains_with_ids(cluster.get("members", []))
-        cluster = dict(cluster)
-        cluster["members"] = enriched_members
+        enriched_members = await self._enrich_related_domains_with_ids(campaign.get("members", []))
+        campaign = dict(campaign)
+        campaign["members"] = enriched_members
 
-        body = _render_cluster_detail(cluster, admin=False)
-        html_out = _layout(title=f"Campaign: {cluster.get('name', 'Unknown Campaign')}", body=body, admin=False)
+        body = _render_campaign_detail(campaign, admin=False)
+        html_out = _layout(title=f"Campaign: {campaign.get('name', 'Unknown Campaign')}", body=body, admin=False)
         return web.Response(text=html_out, content_type="text/html")
 
-    async def _admin_clusters(self, request: web.Request) -> web.Response:
+    async def _admin_campaigns(self, request: web.Request) -> web.Response:
         search = (request.query.get("q") or "").strip()
-        clusters = await self._filter_clusters(self._load_clusters())
-        body = _render_clusters_list(clusters, admin=True, q=search)
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        body = _render_campaigns_list(campaigns, admin=True, q=search)
         html_out = _layout(title="SeedBuster - Threat Campaigns", body=body, admin=True)
         return web.Response(text=html_out, content_type="text/html")
 
@@ -5195,10 +5195,10 @@ class DashboardServer:
         screenshots = self._get_screenshots(domain, evidence_dir)
         instruction_files = self._get_instruction_files(evidence_dir)
 
-        # Get cluster info for this domain
+        # Get campaign info for this domain
         domain_name = domain.get("domain") or ""
-        cluster = self._get_cluster_for_domain(domain_name)
-        related_domains = self._get_related_domains(domain_name, cluster)
+        campaign = self._get_campaign_for_domain(domain_name)
+        related_domains = self._get_related_domains(domain_name, campaign)
         related_domains = await self._enrich_related_domains_with_ids(related_domains)
 
         msg = request.query.get("msg")
@@ -5223,7 +5223,7 @@ class DashboardServer:
                     error=error,
                     available_platforms=self.get_available_platforms(),
                     platform_info=self.get_platform_info(),
-                    cluster=cluster,
+                    campaign=campaign,
                     related_domains=related_domains,
                     manual_pending=manual_pending if manual_pending else None,
                 ),
@@ -5571,13 +5571,13 @@ class DashboardServer:
         evidence = {}
         infrastructure = {}
         instruction_files: list[str] = []
-        cluster = self._get_cluster_for_domain(row["domain"])
-        filtered_cluster = None
-        if cluster:
-            filtered = await self._filter_clusters([cluster])
-            filtered_cluster = filtered[0] if filtered else None
+        campaign = self._get_campaign_for_domain(row["domain"])
+        filtered_campaign = None
+        if campaign:
+            filtered = await self._filter_campaigns([campaign])
+            filtered_campaign = filtered[0] if filtered else None
         related_domains = await self._enrich_related_domains_with_ids(
-            self._get_related_domains(row["domain"], filtered_cluster)
+            self._get_related_domains(row["domain"], filtered_campaign)
         )
         try:
             domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
@@ -5675,7 +5675,7 @@ class DashboardServer:
                 "reports": reports,
                 "evidence": evidence,
                 "infrastructure": infrastructure,
-                "cluster": filtered_cluster,
+                "campaign": filtered_campaign,
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
             }
@@ -6157,20 +6157,20 @@ class DashboardServer:
                     })
         return web.json_response({"files": files})
 
-    async def _admin_api_clusters(self, request: web.Request) -> web.Response:
-        clusters = await self._filter_clusters(self._load_clusters())
-        return web.json_response({"clusters": clusters})
+    async def _admin_api_campaigns(self, request: web.Request) -> web.Response:
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        return web.json_response({"campaigns": campaigns})
 
-    async def _admin_api_cluster(self, request: web.Request) -> web.Response:
-        cluster_id = (request.match_info.get("cluster_id") or "").strip()
-        if not cluster_id:
+    async def _admin_api_campaign(self, request: web.Request) -> web.Response:
+        campaign_id = (request.match_info.get("campaign_id") or "").strip()
+        if not campaign_id:
             raise web.HTTPBadRequest(text="campaign_id required")
-        clusters = await self._filter_clusters(self._load_clusters())
-        cluster = next((c for c in clusters if str(c.get("cluster_id")) == cluster_id), None)
-        if not cluster:
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        campaign = next((c for c in campaigns if str(c.get("campaign_id")) == campaign_id), None)
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found")
-        enriched = await self._enrich_related_domains_with_ids(cluster.get("members", []))
-        return web.json_response({"cluster": cluster, "domains": enriched})
+        enriched = await self._enrich_related_domains_with_ids(campaign.get("members", []))
+        return web.json_response({"campaign": campaign, "domains": enriched})
 
     async def _admin_api_update_notes(self, request: web.Request) -> web.Response:
         """Update operator notes for a domain (PATCH /admin/api/domains/{domain_id}/notes)."""
@@ -6193,11 +6193,11 @@ class DashboardServer:
         )
         return web.json_response({"status": "ok"})
 
-    async def _admin_api_update_cluster_name(self, request: web.Request) -> web.Response:
-        """Update campaign name (PATCH /admin/api/clusters/{cluster_id}/name)."""
+    async def _admin_api_update_campaign_name(self, request: web.Request) -> web.Response:
+        """Update campaign name (PATCH /admin/api/campaigns/{campaign_id}/name)."""
         self._require_csrf_header(request)
-        cluster_id = (request.match_info.get("cluster_id") or "").strip()
-        if not cluster_id:
+        campaign_id = (request.match_info.get("campaign_id") or "").strip()
+        if not campaign_id:
             raise web.HTTPBadRequest(text="campaign_id required")
 
         data = await self._read_json(request)
@@ -6205,24 +6205,24 @@ class DashboardServer:
         if not new_name:
             return web.json_response({"error": "Name cannot be empty"}, status=400)
 
-        # Load clusters, update, and save
-        if not self.clusters_dir:
+        # Load campaigns, update, and save
+        if not self.campaigns_dir:
             return web.json_response({"error": "Campaigns not configured"}, status=500)
 
-        clusters_file = self.clusters_dir / "clusters.json"
-        if not clusters_file.exists():
+        campaigns_file = self.campaigns_dir / "campaigns.json"
+        if not campaigns_file.exists():
             raise web.HTTPNotFound(text="Campaign file not found")
 
         try:
-            with open(clusters_file, "r") as f:
+            with open(campaigns_file, "r") as f:
                 data_file = json.load(f)
 
-            clusters = data_file.get("clusters", [])
+            campaigns = data_file.get("campaigns", [])
             found = False
-            for cluster in clusters:
-                if str(cluster.get("cluster_id")) == cluster_id or str(cluster.get("cluster_id", "")).startswith(cluster_id):
-                    cluster["name"] = new_name
-                    cluster["updated_at"] = datetime.now().isoformat()
+            for campaign in campaigns:
+                if str(campaign.get("campaign_id")) == campaign_id or str(campaign.get("campaign_id", "")).startswith(campaign_id):
+                    campaign["name"] = new_name
+                    campaign["updated_at"] = datetime.now().isoformat()
                     found = True
                     break
 
@@ -6231,7 +6231,7 @@ class DashboardServer:
 
             # Save back
             data_file["saved_at"] = datetime.now().isoformat()
-            with open(clusters_file, "w") as f:
+            with open(campaigns_file, "w") as f:
                 json.dump(data_file, f, indent=2)
 
             return web.json_response({"status": "ok", "name": new_name})
@@ -6320,39 +6320,39 @@ class DashboardServer:
     # Campaign Detail and Reporting Routes
     # -------------------------------------------------------------------------
 
-    def _get_cluster_by_id(self, cluster_id: str) -> dict | None:
+    def _get_campaign_by_id(self, campaign_id: str) -> dict | None:
         """Get a specific campaign by ID (supports prefix matching)."""
-        clusters = self._load_clusters()
-        for cluster in clusters:
-            cid = cluster.get("cluster_id", "")
-            if cid == cluster_id or cid.startswith(cluster_id):
-                return cluster
+        campaigns = self._load_campaigns()
+        for campaign in campaigns:
+            cid = campaign.get("campaign_id", "")
+            if cid == campaign_id or cid.startswith(campaign_id):
+                return campaign
         return None
 
-    async def _admin_cluster_detail(self, request: web.Request) -> web.Response:
+    async def _admin_campaign_detail(self, request: web.Request) -> web.Response:
         """Show detailed threat campaign view with action buttons."""
-        cluster_id = request.match_info.get("cluster_id", "")
-        clusters = await self._filter_clusters(self._load_clusters())
-        cluster = next(
+        campaign_id = request.match_info.get("campaign_id", "")
+        campaigns = await self._filter_campaigns(self._load_campaigns())
+        campaign = next(
             (
-                c for c in clusters
-                if str(c.get("cluster_id")) == cluster_id or str(c.get("cluster_id", "")).startswith(cluster_id)
+                c for c in campaigns
+                if str(c.get("campaign_id")) == campaign_id or str(c.get("campaign_id", "")).startswith(campaign_id)
             ),
             None,
         )
-        if not cluster:
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
-        enriched_members = await self._enrich_related_domains_with_ids(cluster.get("members", []))
-        cluster = dict(cluster)
-        cluster["members"] = enriched_members
+        enriched_members = await self._enrich_related_domains_with_ids(campaign.get("members", []))
+        campaign = dict(campaign)
+        campaign["members"] = enriched_members
 
         msg = request.query.get("msg")
         error = request.query.get("error") == "1"
 
-        body = _render_cluster_detail(cluster, admin=True)
+        body = _render_campaign_detail(campaign, admin=True)
         html_out = _layout(
-            title=f"Campaign: {cluster.get('name', 'Unknown')}",
+            title=f"Campaign: {campaign.get('name', 'Unknown')}",
             body=_flash(msg, error=error) + body,
             admin=True,
         )
@@ -6362,45 +6362,45 @@ class DashboardServer:
         resp.text = resp.text.replace("__SET_COOKIE__", csrf)
         return resp
 
-    async def _admin_cluster_pdf(self, request: web.Request) -> web.Response:
+    async def _admin_campaign_pdf(self, request: web.Request) -> web.Response:
         """Generate and download PDF report for a campaign."""
-        cluster_id = request.match_info.get("cluster_id", "")
-        cluster = self._get_cluster_by_id(cluster_id)
-        if not cluster:
+        campaign_id = request.match_info.get("campaign_id", "")
+        campaign = self._get_campaign_by_id(campaign_id)
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
         if not self.generate_campaign_pdf_callback:
             raise web.HTTPServiceUnavailable(text="PDF generation not configured.")
 
-        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        full_campaign_id = campaign.get("campaign_id", campaign_id)
         try:
-            report_path = await self.generate_campaign_pdf_callback(full_cluster_id)
+            report_path = await self.generate_campaign_pdf_callback(full_campaign_id)
             if not report_path or not report_path.exists():
                 raise web.HTTPServiceUnavailable(text="PDF generation failed or unavailable.")
 
-            cluster_name = cluster.get("name", "campaign").replace(" ", "_")
+            campaign_name = campaign.get("name", "campaign").replace(" ", "_")
             return web.FileResponse(
                 report_path,
                 headers={
-                    "Content-Disposition": f'attachment; filename="{cluster_name}_report{report_path.suffix}"'
+                    "Content-Disposition": f'attachment; filename="{campaign_name}_report{report_path.suffix}"'
                 },
             )
         except Exception as e:
             raise web.HTTPInternalServerError(text=f"PDF generation failed: {e}")
 
-    async def _admin_cluster_package(self, request: web.Request) -> web.Response:
+    async def _admin_campaign_package(self, request: web.Request) -> web.Response:
         """Generate and download evidence archive for a campaign."""
-        cluster_id = request.match_info.get("cluster_id", "")
-        cluster = self._get_cluster_by_id(cluster_id)
-        if not cluster:
+        campaign_id = request.match_info.get("campaign_id", "")
+        campaign = self._get_campaign_by_id(campaign_id)
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
         if not self.generate_campaign_package_callback:
             raise web.HTTPServiceUnavailable(text="Package generation not configured.")
 
-        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        full_campaign_id = campaign.get("campaign_id", campaign_id)
         try:
-            archive_path = await self.generate_campaign_package_callback(full_cluster_id)
+            archive_path = await self.generate_campaign_package_callback(full_campaign_id)
             if not archive_path or not archive_path.exists():
                 raise web.HTTPServiceUnavailable(text="Archive generation failed.")
 
@@ -6413,54 +6413,54 @@ class DashboardServer:
         except Exception as e:
             raise web.HTTPInternalServerError(text=f"Package generation failed: {e}")
 
-    async def _admin_cluster_preview(self, request: web.Request) -> web.Response:
+    async def _admin_campaign_preview(self, request: web.Request) -> web.Response:
         """Dry-run campaign report submission (sends to operator's email)."""
-        cluster_id = request.match_info.get("cluster_id", "")
-        cluster = self._get_cluster_by_id(cluster_id)
-        if not cluster:
+        campaign_id = request.match_info.get("campaign_id", "")
+        campaign = self._get_campaign_by_id(campaign_id)
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
         await self._require_csrf(request)
 
         if not self.preview_campaign_report_callback:
             raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview not configured", error=1)
+                location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg="Preview not configured", error=1)
             )
 
-        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        full_campaign_id = campaign.get("campaign_id", campaign_id)
         try:
-            await self.preview_campaign_report_callback(full_cluster_id)
+            await self.preview_campaign_report_callback(full_campaign_id)
         except Exception as e:
             raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Preview failed: {e}", error=1)
+                location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg=f"Preview failed: {e}", error=1)
             )
 
         raise web.HTTPSeeOther(
-            location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Preview sent to your email")
+            location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg="Preview sent to your email")
         )
 
-    async def _admin_cluster_submit(self, request: web.Request) -> web.Response:
+    async def _admin_campaign_submit(self, request: web.Request) -> web.Response:
         """Submit campaign reports to all platforms."""
-        cluster_id = request.match_info.get("cluster_id", "")
-        cluster = self._get_cluster_by_id(cluster_id)
-        if not cluster:
+        campaign_id = request.match_info.get("campaign_id", "")
+        campaign = self._get_campaign_by_id(campaign_id)
+        if not campaign:
             raise web.HTTPNotFound(text="Campaign not found.")
 
         await self._require_csrf(request)
 
         if not self.submit_campaign_report_callback:
             raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Submit not configured", error=1)
+                location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg="Submit not configured", error=1)
             )
 
-        full_cluster_id = cluster.get("cluster_id", cluster_id)
+        full_campaign_id = campaign.get("campaign_id", campaign_id)
         try:
-            await self.submit_campaign_report_callback(full_cluster_id)
+            await self.submit_campaign_report_callback(full_campaign_id)
         except Exception as e:
             raise web.HTTPSeeOther(
-                location=_build_query_link(f"/admin/clusters/{cluster_id}", msg=f"Submit failed: {e}", error=1)
+                location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg=f"Submit failed: {e}", error=1)
             )
 
         raise web.HTTPSeeOther(
-            location=_build_query_link(f"/admin/clusters/{cluster_id}", msg="Reports submitted to all platforms")
+            location=_build_query_link(f"/admin/campaigns/{campaign_id}", msg="Reports submitted to all platforms")
         )

@@ -1,5 +1,5 @@
 import type {
-  Cluster,
+  Campaign,
   Domain,
   DomainDetailResponse,
   DomainsResponse,
@@ -193,12 +193,12 @@ export async function recordReportEngagement(domainId: number, platform: string)
   return res.json();
 }
 
-export async function fetchClusters(): Promise<{ clusters: Cluster[] }> {
-  return request("/clusters");
+export async function fetchCampaigns(): Promise<{ campaigns: Campaign[] }> {
+  return request("/campaigns");
 }
 
-export async function fetchCluster(clusterId: string): Promise<{ cluster: Cluster; domains: Domain[] }> {
-  return request(`/clusters/${encodeURIComponent(clusterId)}`);
+export async function fetchCampaign(campaignId: string): Promise<{ campaign: Campaign; domains: Domain[] }> {
+  return request(`/campaigns/${encodeURIComponent(campaignId)}`);
 }
 
 export async function updateDomainStatus(
@@ -242,11 +242,11 @@ export async function updateOperatorNotes(
   });
 }
 
-export async function updateClusterName(
-  clusterId: string,
+export async function updateCampaignName(
+  campaignId: string,
   name: string,
 ): Promise<void> {
-  await request(`/clusters/${encodeURIComponent(clusterId)}/name`, {
+  await request(`/campaigns/${encodeURIComponent(campaignId)}/name`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
     skipJson: true,

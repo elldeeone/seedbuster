@@ -27,13 +27,13 @@ class ThreatIntelUpdater:
     """Updates threat_intel.yaml when new malicious domains are confirmed.
 
     Trigger conditions (any of):
-    - Cluster confidence >= 90% with known campaign
+    - Campaign confidence >= 90% with known campaign
     - Detection of known malicious backends (whale-app, walrus-app, etc.)
     - Matched API keys from known campaigns
     """
 
     # Minimum confidence to auto-add a domain
-    MIN_CLUSTER_CONFIDENCE = 90.0
+    MIN_CAMPAIGN_CONFIDENCE = 90.0
     MIN_ANALYSIS_SCORE = 80
 
     def __init__(self, config_dir: Path):
@@ -45,8 +45,8 @@ class ThreatIntelUpdater:
         self,
         domain: str,
         analysis_score: int,
-        cluster_confidence: float,
-        cluster_name: Optional[str],
+        campaign_confidence: float,
+        campaign_name: Optional[str],
         matched_backends: list[str],
         matched_api_keys: list[str],
     ) -> bool:
@@ -56,7 +56,7 @@ class ThreatIntelUpdater:
             return False
 
         # Any of these conditions triggers learning
-        if cluster_confidence >= self.MIN_CLUSTER_CONFIDENCE and cluster_name:
+        if campaign_confidence >= self.MIN_CAMPAIGN_CONFIDENCE and campaign_name:
             return True
 
         if len(matched_backends) >= 1:
@@ -71,8 +71,8 @@ class ThreatIntelUpdater:
         self,
         domain: str,
         analysis_score: int,
-        cluster_confidence: float,
-        cluster_name: Optional[str],
+        campaign_confidence: float,
+        campaign_name: Optional[str],
         matched_backends: list[str],
         matched_api_keys: list[str],
         detection_source: str = "seedbuster_auto",
@@ -82,8 +82,8 @@ class ThreatIntelUpdater:
         Args:
             domain: The confirmed malicious domain
             analysis_score: Final analysis score (0-100)
-            cluster_confidence: Confidence of cluster match (0-100)
-            cluster_name: Name of matched cluster/campaign
+            campaign_confidence: Confidence of campaign match (0-100)
+            campaign_name: Name of matched campaign
             matched_backends: List of matched malicious backend domains
             matched_api_keys: List of matched API key services
             detection_source: Source of detection for notes
@@ -127,9 +127,9 @@ class ThreatIntelUpdater:
                         "notes": f"Auto-detected: score={analysis_score}",
                     }
 
-                    # Add cluster info to notes if available
-                    if cluster_name:
-                        new_entry["notes"] += f", cluster={cluster_name}"
+                    # Add campaign info to notes if available
+                    if campaign_name:
+                        new_entry["notes"] += f", campaign={campaign_name}"
                     if matched_backends:
                         new_entry["notes"] += f", backends={','.join(matched_backends[:2])}"
 
@@ -153,8 +153,8 @@ class ThreatIntelUpdater:
                         if matched_sig:
                             break
 
-                    # Also match by cluster name
-                    if cluster_name and sig_name.lower() in cluster_name.lower():
+                    # Also match by campaign name
+                    if campaign_name and sig_name.lower() in campaign_name.lower():
                         matched_sig = True
 
                     if matched_sig:

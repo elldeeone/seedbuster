@@ -9,9 +9,9 @@ import socket
 from datetime import datetime
 from urllib.parse import urlparse
 
-from ..analyzer.clustering import analyze_for_clustering
+from ..analyzer.campaigns import analyze_for_campaign
 from ..analyzer.temporal import ScanReason
-from ..bot.formatters import AlertData, ClusterInfo, LearningInfo, TemporalInfo
+from ..bot.formatters import AlertData, CampaignInfo, LearningInfo, TemporalInfo
 from ..storage.database import DomainStatus, Verdict
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class AnalysisEngine:
         temporal,
         external_intel,
         detector,
-        cluster_manager,
+        campaign_manager,
         threat_intel_updater,
         report_manager,
         bot,
@@ -44,7 +44,7 @@ class AnalysisEngine:
         self.temporal = temporal
         self.external_intel = external_intel
         self.detector = detector
-        self.cluster_manager = cluster_manager
+        self.campaign_manager = campaign_manager
         self.threat_intel_updater = threat_intel_updater
         self.report_manager = report_manager
         self.bot = bot
@@ -102,7 +102,7 @@ class AnalysisEngine:
         infra_result = None
         external_result = None
         detection = None
-        cluster_result = None
+        campaign_result = None
         urlscan_result_url: str | None = None
 
         try:
@@ -448,9 +448,9 @@ class AnalysisEngine:
                         scan_reason=scan_reason,
                     )
 
-                    # Cluster analysis - link related phishing sites
-                    cluster_result = analyze_for_clustering(
-                        manager=self.cluster_manager,
+                    # Campaign analysis - link related phishing sites
+                    campaign_result = analyze_for_campaign(
+                        manager=self.campaign_manager,
                         domain=domain,
                         detection_result={
                             "score": analysis_score,
@@ -463,8 +463,10 @@ class AnalysisEngine:
                             "ip": infra_result.hosting.ip_address if infra_result and infra_result.hosting else None,
                         } if infra_result else None,
                     )
-                    if cluster_result.related_domains:
-                        logger.info(f"Clustering: {domain} linked to {len(cluster_result.related_domains)} related sites")
+                    if campaign_result.related_domains:
+                        logger.info(
+                            f"Campaign grouping: {domain} linked to {len(campaign_result.related_domains)} related sites"
+                        )
 
                     verdict = Verdict(detection.verdict)
 
@@ -559,12 +561,12 @@ class AnalysisEngine:
                             "cloaking_detected": detection.cloaking_detected,
                             "snapshots_count": temporal_analysis.snapshots_count,
                         },
-                        "cluster": {
-                            "cluster_id": cluster_result.cluster_id if cluster_result else None,
-                            "cluster_name": cluster_result.cluster_name if cluster_result else None,
-                            "is_new_cluster": cluster_result.is_new_cluster if cluster_result else None,
-                            "related_domains": cluster_result.related_domains if cluster_result else None,
-                            "confidence": cluster_result.confidence if cluster_result else None,
+                        "campaign": {
+                            "campaign_id": campaign_result.campaign_id if campaign_result else None,
+                            "campaign_name": campaign_result.campaign_name if campaign_result else None,
+                            "is_new_campaign": campaign_result.is_new_campaign if campaign_result else None,
+                            "related_domains": campaign_result.related_domains if campaign_result else None,
+                            "confidence": campaign_result.confidence if campaign_result else None,
                         },
                         "external_intel": external_result.to_dict() if external_result else None,
                         "urlscan_submission": (
@@ -740,18 +742,18 @@ class AnalysisEngine:
                 if is_rescan and len(snapshots) >= 2:
                     temporal_info.previous_score = snapshots[-2].score
 
-                cluster_info = None
-                if cluster_result:
-                    cluster_info = ClusterInfo(
-                        cluster_id=cluster_result.cluster_id,
-                        cluster_name=cluster_result.cluster_name,
-                        is_new_cluster=cluster_result.is_new_cluster,
-                        related_domains=cluster_result.related_domains,
-                        confidence=cluster_result.confidence,
+                campaign_info = None
+                if campaign_result:
+                    campaign_info = CampaignInfo(
+                        campaign_id=campaign_result.campaign_id,
+                        campaign_name=campaign_result.campaign_name,
+                        is_new_campaign=campaign_result.is_new_campaign,
+                        related_domains=campaign_result.related_domains,
+                        confidence=campaign_result.confidence,
                     )
 
                 learning_info = None
-                if detection and cluster_result:
+                if detection and campaign_result:
                     matched_backends = self.threat_intel_updater.extract_matched_backends(
                         detection.suspicious_endpoints
                     )
@@ -760,16 +762,16 @@ class AnalysisEngine:
                     if self.threat_intel_updater.should_learn(
                         domain=domain,
                         analysis_score=analysis_score,
-                        cluster_confidence=cluster_result.confidence,
-                        cluster_name=cluster_result.cluster_name,
+                        campaign_confidence=campaign_result.confidence,
+                        campaign_name=campaign_result.campaign_name,
                         matched_backends=matched_backends,
                         matched_api_keys=matched_api_keys,
                     ):
                         learning_result = self.threat_intel_updater.learn(
                             domain=domain,
                             analysis_score=analysis_score,
-                            cluster_confidence=cluster_result.confidence,
-                            cluster_name=cluster_result.cluster_name,
+                            campaign_confidence=campaign_result.confidence,
+                            campaign_name=campaign_result.campaign_name,
                             matched_backends=matched_backends,
                             matched_api_keys=matched_api_keys,
                         )
@@ -794,7 +796,7 @@ class AnalysisEngine:
                     evidence_path=evidence_path,
                     urlscan_result_url=urlscan_result_url,
                     temporal=temporal_info,
-                    cluster=cluster_info,
+                    campaign=campaign_info,
                     seed_form_found=detection.seed_form_detected if detection else False,
                     learning=learning_info,
                     is_watchlist_update=is_watchlist_update,

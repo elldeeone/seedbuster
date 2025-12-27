@@ -47,9 +47,9 @@ def evidence_dir(tmp_path):
 
 
 @pytest.fixture
-def clusters_dir(tmp_path):
-    """Create a temporary clusters directory."""
-    path = tmp_path / "clusters"
+def campaigns_dir(tmp_path):
+    """Create a temporary campaigns directory."""
+    path = tmp_path / "campaigns"
     path.mkdir()
     return path
 
@@ -79,13 +79,13 @@ def dashboard_config_no_auth():
 
 
 @pytest.fixture
-async def dashboard_server(database, evidence_dir, clusters_dir, dashboard_config):
+async def dashboard_server(database, evidence_dir, campaigns_dir, dashboard_config):
     """Create a dashboard server instance."""
     server = DashboardServer(
         config=dashboard_config,
         database=database,
         evidence_dir=evidence_dir,
-        clusters_dir=clusters_dir,
+        campaigns_dir=campaigns_dir,
     )
     return server
 
@@ -333,12 +333,12 @@ async def test_public_domain_detail(dashboard_server, database):
 
 
 @pytest.mark.asyncio
-async def test_public_clusters_page(dashboard_server):
-    """Test public clusters page returns HTML."""
+async def test_public_campaigns_page(dashboard_server):
+    """Test public campaigns page returns HTML."""
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get("/api/clusters")
+        resp = await client.get("/api/campaigns")
         assert resp.status == 200
 
 
@@ -398,7 +398,7 @@ async def test_admin_invalid_auth_header(dashboard_server):
 
 
 @pytest.mark.asyncio
-async def test_admin_no_password_configured(database, evidence_dir, clusters_dir, dashboard_config_no_auth):
+async def test_admin_no_password_configured(database, evidence_dir, campaigns_dir, dashboard_config_no_auth):
     """Test admin returns 403 when no password is configured."""
     from aiohttp.test_utils import TestClient, TestServer
 
@@ -406,7 +406,7 @@ async def test_admin_no_password_configured(database, evidence_dir, clusters_dir
         config=dashboard_config_no_auth,
         database=database,
         evidence_dir=evidence_dir,
-        clusters_dir=clusters_dir,
+        campaigns_dir=campaigns_dir,
     )
 
     async with TestClient(TestServer(server._app)) as client:
@@ -494,18 +494,18 @@ async def test_admin_api_domain_not_found(dashboard_server):
 
 
 @pytest.mark.asyncio
-async def test_admin_api_clusters(dashboard_server):
-    """Admin API clusters returns JSON."""
+async def test_admin_api_campaigns(dashboard_server):
+    """Admin API campaigns returns JSON."""
     from aiohttp.test_utils import TestClient, TestServer
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         resp = await client.get(
-            "/admin/api/clusters",
+            "/admin/api/campaigns",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
         assert resp.status == 200
         data = await resp.json()
-        assert "clusters" in data
+        assert "campaigns" in data
 
 
 @pytest.mark.asyncio
@@ -750,22 +750,22 @@ async def test_admin_api_handles_invalid_json(dashboard_server):
 
 
 # =============================================================================
-# Cluster Tests
+# Campaign Tests
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_admin_clusters_with_data(dashboard_server, clusters_dir):
-    """Test admin clusters page with cluster data."""
+async def test_admin_campaigns_with_data(dashboard_server, campaigns_dir):
+    """Test admin campaigns page with campaign data."""
     from aiohttp.test_utils import TestClient, TestServer
 
-    # Create cluster data
-    clusters_file = clusters_dir / "clusters.json"
-    clusters_file.write_text(json.dumps({
-        "clusters": [
+    # Create campaign data
+    campaigns_file = campaigns_dir / "campaigns.json"
+    campaigns_file.write_text(json.dumps({
+        "campaigns": [
             {
-                "id": "cluster_001",
-                "name": "Test Cluster",
+                "campaign_id": "campaign_001",
+                "name": "Test Campaign",
                 "members": [
                     {"domain": "member1.test.com"},
                     {"domain": "member2.test.com"},
@@ -776,27 +776,27 @@ async def test_admin_clusters_with_data(dashboard_server, clusters_dir):
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         resp = await client.get(
-            "/admin/clusters",
+            "/admin/campaigns",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
         assert resp.status == 200
         text = await resp.text()
-        # Clusters page should load even if clusters are shown differently
+        # Campaigns page should load even if campaigns are shown differently
         assert "<!doctype html>" in text.lower()
 
 
 @pytest.mark.asyncio
-async def test_admin_cluster_detail(dashboard_server, clusters_dir):
-    """Test admin cluster detail page."""
+async def test_admin_campaign_detail(dashboard_server, campaigns_dir):
+    """Test admin campaign detail page."""
     from aiohttp.test_utils import TestClient, TestServer
 
-    # Create cluster data
-    clusters_file = clusters_dir / "clusters.json"
-    clusters_file.write_text(json.dumps({
-        "clusters": [
+    # Create campaign data
+    campaigns_file = campaigns_dir / "campaigns.json"
+    campaigns_file.write_text(json.dumps({
+        "campaigns": [
             {
-                "id": "cluster_test",
-                "name": "Detail Test Cluster",
+                "campaign_id": "campaign_test",
+                "name": "Detail Test Campaign",
                 "members": [
                     {"domain": "detail1.test.com"},
                 ],
@@ -806,10 +806,10 @@ async def test_admin_cluster_detail(dashboard_server, clusters_dir):
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         resp = await client.get(
-            "/admin/clusters/cluster_test",
+            "/admin/campaigns/campaign_test",
             headers={"Authorization": _make_basic_auth("admin", "testpassword")},
         )
-        # Should return 200 if cluster exists, 404 if not found
+        # Should return 200 if campaign exists, 404 if not found
         assert resp.status in (200, 404)
 
 

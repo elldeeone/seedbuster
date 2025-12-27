@@ -27,11 +27,11 @@ class TemporalInfo:
 
 
 @dataclass
-class ClusterInfo:
-    """Threat cluster information for alerts."""
-    cluster_id: Optional[str] = None
-    cluster_name: Optional[str] = None
-    is_new_cluster: bool = True
+class CampaignInfo:
+    """Threat campaign information for alerts."""
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    is_new_campaign: bool = True
     related_domains: list[str] = None
     confidence: float = 0.0
 
@@ -69,7 +69,7 @@ class AlertData:
     evidence_path: Optional[str] = None
     urlscan_result_url: Optional[str] = None
     temporal: Optional[TemporalInfo] = None  # Temporal analysis info
-    cluster: Optional[ClusterInfo] = None  # Threat cluster info
+    campaign: Optional[CampaignInfo] = None  # Threat campaign info
     seed_form_found: bool = False  # True if seed phrase entry form was discovered
     learning: Optional[LearningInfo] = None  # Auto-learning info
     is_watchlist_update: bool = False  # True for deferred domain rescans with significant changes
@@ -153,14 +153,14 @@ class AlertFormatter:
             lines.append(f"\U0001F6A8 CLOAKING CONFIRMED ({temporal.cloaking_confidence:.0%} confidence)")
             lines.append("Site showed different content to rescan - evidence of intentional evasion")
 
-        # Add threat cluster info if linked to other domains
-        cluster = data.cluster
-        if cluster and cluster.related_domains:
+        # Add threat campaign info if linked to other domains
+        campaign = data.campaign
+        if campaign and campaign.related_domains:
             lines.append("")
-            lines.append(f"\U0001F517 LINKED CAMPAIGN: {cluster.cluster_name}")
-            related_list = ", ".join(cluster.related_domains[:3])
-            if len(cluster.related_domains) > 3:
-                related_list += f" (+{len(cluster.related_domains) - 3} more)"
+            lines.append(f"\U0001F517 LINKED CAMPAIGN: {campaign.campaign_name}")
+            related_list = ", ".join(campaign.related_domains[:3])
+            if len(campaign.related_domains) > 3:
+                related_list += f" (+{len(campaign.related_domains) - 3} more)"
             lines.append(f"Related: {related_list}")
 
         # De-duplicate reasons (keep first occurrence, normalize for comparison)
@@ -380,7 +380,7 @@ class AlertFormatter:
 `/platforms` - Show enabled/available reporting platforms
 
 *Campaigns:*
-`/campaign list` - Show all campaigns/clusters
+`/campaign list` - Show all campaigns
 `/campaign <id> summary` - Show campaign details
 `/campaign <id> report` - Generate PDF report
 `/campaign <id> package` - Generate evidence archive

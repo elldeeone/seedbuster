@@ -15,7 +15,7 @@ from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
-from ..analyzer.clustering import ThreatClusterManager
+from ..analyzer.campaigns import ThreatCampaignManager
 from ..config import load_config
 from ..reporter import ReportManager
 from ..reporter.evidence_packager import EvidencePackager
@@ -71,12 +71,12 @@ async def run_dashboard() -> None:
         enabled_platforms=config.report_platforms,
     )
 
-    # Initialize cluster manager and evidence packager
-    cluster_manager = ThreatClusterManager(config.data_dir / "clusters")
+    # Initialize campaign manager and evidence packager
+    campaign_manager = ThreatCampaignManager(config.data_dir / "campaigns")
     evidence_packager = EvidencePackager(
         database=db,
         evidence_store=evidence_store,
-        cluster_manager=cluster_manager,
+        campaign_manager=campaign_manager,
         output_dir=config.data_dir / "packages",
     )
 
@@ -144,31 +144,31 @@ async def run_dashboard() -> None:
             dry_run_email=dry_run_email or "",
         )
 
-    async def generate_campaign_pdf_callback(cluster_id: str) -> Path | None:
+    async def generate_campaign_pdf_callback(campaign_id: str) -> Path | None:
         """Generate PDF report for a campaign."""
-        attachments = await evidence_packager.prepare_campaign_submission(cluster_id)
+        attachments = await evidence_packager.prepare_campaign_submission(campaign_id)
         return attachments.pdf_path or attachments.html_path
 
-    async def generate_campaign_package_callback(cluster_id: str) -> Path | None:
+    async def generate_campaign_package_callback(campaign_id: str) -> Path | None:
         """Generate evidence archive for a campaign."""
-        return await evidence_packager.create_campaign_archive(cluster_id)
+        return await evidence_packager.create_campaign_archive(campaign_id)
 
-    async def preview_campaign_report_callback(cluster_id: str) -> dict:
+    async def preview_campaign_report_callback(campaign_id: str) -> dict:
         """Send dry-run campaign reports to operator's email."""
         dry_run_email = os.environ.get("DRY_RUN_EMAIL")
         save_only = os.environ.get("DRY_RUN_SAVE_ONLY", "false").lower() == "true"
         if not dry_run_email and not save_only:
             raise ValueError("DRY_RUN_EMAIL not configured")
         return await report_manager.report_campaign(
-            cluster_id=cluster_id,
-            cluster_manager=cluster_manager,
+            campaign_id=campaign_id,
+            campaign_manager=campaign_manager,
             dry_run=True,
             dry_run_email=dry_run_email or "",
         )
 
-    async def submit_campaign_report_callback(cluster_id: str) -> dict:
+    async def submit_campaign_report_callback(campaign_id: str) -> dict:
         """Submit campaign reports to all platforms."""
-        return await report_manager.report_campaign(cluster_id=cluster_id, cluster_manager=cluster_manager)
+        return await report_manager.report_campaign(campaign_id=campaign_id, campaign_manager=campaign_manager)
 
     server = DashboardServer(
         config=DashboardConfig(
@@ -186,7 +186,7 @@ async def run_dashboard() -> None:
         ),
         database=db,
         evidence_dir=config.evidence_dir,
-        clusters_dir=config.data_dir / "clusters",
+        campaigns_dir=config.data_dir / "campaigns",
         submit_callback=submit_callback,
         rescan_callback=rescan_callback,
         report_callback=report_callback,

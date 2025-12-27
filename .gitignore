@@ -50,6 +50,7 @@ htmlcov/
 *.log
 data/temporal/
 data/clusters/
+data/campaigns/
 data/intel_cache/
 data/search_discovery_state.json
 data/packages/

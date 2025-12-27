@@ -23,7 +23,7 @@ from .base import (
 from .rate_limiter import get_rate_limiter
 
 if TYPE_CHECKING:
-    from ..analyzer.clustering import ThreatCluster, ThreatClusterManager
+    from ..analyzer.campaigns import ThreatCampaign, ThreatCampaignManager
     from ..storage.database import Database
     from ..storage.evidence import EvidenceStore
 
@@ -2073,13 +2073,13 @@ To submit for real, run the command without --dry-run.
         )
 
     # -------------------------------------------------------------------------
-    # Campaign Reporting - Report entire clusters in parallel
+    # Campaign Reporting - Report entire campaigns in parallel
     # -------------------------------------------------------------------------
 
     async def report_campaign(
         self,
-        cluster_id: str,
-        cluster_manager: "ThreatClusterManager",
+        campaign_id: str,
+        campaign_manager: "ThreatCampaignManager",
         platforms: Optional[list[str]] = None,
         *,
         dry_run: bool = False,
@@ -2087,11 +2087,11 @@ To submit for real, run the command without --dry-run.
         generate_evidence_package: bool = True,
     ) -> dict[str, list[ReportResult]]:
         """
-        Report an entire campaign/cluster in parallel to all relevant targets.
+        Report an entire campaign in parallel to all relevant targets.
 
         Args:
-            cluster_id: ID of the cluster to report
-            cluster_manager: ThreatClusterManager instance
+            campaign_id: ID of the campaign to report
+            campaign_manager: ThreatCampaignManager instance
             platforms: Specific platforms to report to (None = all)
             dry_run: Send previews to dry_run_email instead of real targets
             dry_run_email: Email for dry-run previews
@@ -2109,13 +2109,13 @@ To submit for real, run the command without --dry-run.
             if dry_run_email is None:
                 dry_run_email = os.environ.get("DRY_RUN_EMAIL", "")
 
-        cluster = cluster_manager.clusters.get(cluster_id)
-        if not cluster:
+        campaign = campaign_manager.campaigns.get(campaign_id)
+        if not campaign:
             return {
                 "error": [ReportResult(
                     platform="campaign",
                     status=ReportStatus.FAILED,
-                    message=f"Cluster not found: {cluster_id}",
+                    message=f"Campaign not found: {campaign_id}",
                 )]
             }
 
@@ -2135,7 +2135,7 @@ To submit for real, run the command without --dry-run.
                 packager = EvidencePackager(
                     database=self.database,
                     evidence_store=self.evidence_store,
-                    cluster_manager=cluster_manager,
+                    campaign_manager=campaign_manager,
                 )
                 if dry_run:
                     # Just generate the reports, don't archive
@@ -2143,24 +2143,24 @@ To submit for real, run the command without --dry-run.
                     generator = ReportGenerator(
                         database=self.database,
                         evidence_store=self.evidence_store,
-                        cluster_manager=cluster_manager,
+                        campaign_manager=campaign_manager,
                     )
-                    html_path = await generator.generate_campaign_html(cluster_id)
+                    html_path = await generator.generate_campaign_html(campaign_id)
                     logger.info(f"Generated campaign report: {html_path}")
                 else:
-                    archive_path = await packager.create_campaign_archive(cluster_id)
+                    archive_path = await packager.create_campaign_archive(campaign_id)
                     logger.info(f"Generated campaign archive: {archive_path}")
             except Exception as e:
                 logger.error(f"Failed to generate evidence package: {e}")
 
         # 1. Report to backend providers (highest priority)
         backend_tasks = []
-        for backend in cluster.shared_backends:
+        for backend in campaign.shared_backends:
             if "digitalocean" in backend.lower():
                 backend_tasks.append(
                     self._report_backend(
                         backend=backend,
-                        cluster=cluster,
+                        campaign=campaign,
                         platform="digitalocean",
                         dry_run=dry_run,
                         dry_run_email=dry_run_email,
@@ -2187,7 +2187,7 @@ To submit for real, run the command without --dry-run.
         if platforms:
             blocklist_platforms = [p for p in blocklist_platforms if p in platforms]
 
-        for member in cluster.members:
+        for member in campaign.members:
             domain_data = await self.database.get_domain(member.domain)
             if not domain_data:
                 continue
@@ -2213,7 +2213,7 @@ To submit for real, run the command without --dry-run.
         frontend_platforms = [p for p in (platforms or self.get_available_platforms())
                              if p not in blocklist_platforms]
 
-        for member in cluster.members:
+        for member in campaign.members:
             domain_data = await self.database.get_domain(member.domain)
             if not domain_data:
                 continue
@@ -2237,7 +2237,7 @@ To submit for real, run the command without --dry-run.
     async def _report_backend(
         self,
         backend: str,
-        cluster: "ThreatCluster",
+        campaign: "ThreatCampaign",
         platform: str,
         dry_run: bool = False,
         dry_run_email: str = "",
@@ -2252,15 +2252,15 @@ To submit for real, run the command without --dry-run.
             )
 
         # Build evidence for the backend report
-        # Use the first domain in the cluster as the primary evidence
-        if not cluster.members:
+        # Use the first domain in the campaign as the primary evidence
+        if not campaign.members:
             return ReportResult(
                 platform=platform,
                 status=ReportStatus.FAILED,
-                message="No domains in cluster",
+                message="No domains in campaign",
             )
 
-        primary_domain = cluster.members[0].domain
+        primary_domain = campaign.members[0].domain
         domain_data = await self.database.get_domain(primary_domain)
         if not domain_data:
             return ReportResult(
@@ -2281,16 +2281,16 @@ To submit for real, run the command without --dry-run.
             )
 
         # Enhance evidence with campaign context
-        evidence.backend_domains = list(cluster.shared_backends)
+        evidence.backend_domains = list(campaign.shared_backends)
 
         if dry_run:
             report_content = self._build_platform_report_preview(platform, evidence)
             report_content = f"""
 CAMPAIGN CONTEXT
 ================
-This backend is part of campaign: {cluster.name}
-Total domains using this backend: {len(cluster.members)}
-Domains: {', '.join(m.domain for m in cluster.members[:10])}{'...' if len(cluster.members) > 10 else ''}
+This backend is part of campaign: {campaign.name}
+Total domains using this backend: {len(campaign.members)}
+Domains: {', '.join(m.domain for m in campaign.members[:10])}{'...' if len(campaign.members) > 10 else ''}
 
 {report_content}
 """

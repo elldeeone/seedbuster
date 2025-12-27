@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..reporter.manager import ReportManager
-    from ..analyzer.clustering import ThreatClusterManager
+    from ..analyzer.campaigns import ThreatCampaignManager
     from ..reporter.evidence_packager import EvidencePackager
 
 
@@ -46,7 +46,7 @@ class SeedBusterBot:
         report_manager: Optional["ReportManager"] = None,
         report_require_approval: bool = True,
         report_min_score: int = 70,
-        cluster_manager: Optional["ThreatClusterManager"] = None,
+        campaign_manager: Optional["ThreatCampaignManager"] = None,
         evidence_packager: Optional["EvidencePackager"] = None,
     ):
         self.token = token
@@ -58,7 +58,7 @@ class SeedBusterBot:
         self.report_manager = report_manager
         self.report_require_approval = report_require_approval
         self.report_min_score = report_min_score
-        self.cluster_manager = cluster_manager
+        self.campaign_manager = campaign_manager
         self.evidence_packager = evidence_packager
 
         self._app: Optional[Application] = None
@@ -357,7 +357,6 @@ class SeedBusterBot:
         self._app.add_handler(CommandHandler("allowlist", self._cmd_allowlist))
         self._app.add_handler(CommandHandler("reload", self._cmd_reload))
         self._app.add_handler(CommandHandler("campaign", self._cmd_campaign))
-        self._app.add_handler(CommandHandler("clusters", self._cmd_campaign))  # Alias
 
         # Callback handlers for inline buttons
         self._app.add_handler(CallbackQueryHandler(self._callback_approve, pattern="^approve_"))
@@ -1020,9 +1019,9 @@ class SeedBusterBot:
                             parse_mode=ParseMode.MARKDOWN,
                         )
 
-                if attachments.cluster_context:
+                if attachments.campaign_context:
                     await update.message.reply_text(
-                        f"Note: {attachments.cluster_context}",
+                        f"Note: {attachments.campaign_context}",
                         parse_mode=ParseMode.MARKDOWN,
                     )
             except Exception as e:
@@ -1090,19 +1089,19 @@ class SeedBusterBot:
             await self._send_manual_report_instructions(update.message, domain, results)
 
     async def _cmd_campaign(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /campaign command for cluster/campaign operations."""
+        """Handle /campaign command for campaign operations."""
         if not self._is_authorized(update):
             return
 
-        if not self.cluster_manager:
+        if not self.campaign_manager:
             await update.message.reply_text(
-                "Cluster manager not configured."
+                "Campaign manager not configured."
             )
             return
 
         if not context.args:
             await update.message.reply_text(
-                "*Campaign/Cluster Commands*\n\n"
+                "*Campaign Commands*\n\n"
                 "`/campaign list` - Show all campaigns\n"
                 "`/campaign <id> summary` - Show campaign details\n"
                 "`/campaign <id> report` - Generate PDF report\n"
@@ -1116,18 +1115,18 @@ class SeedBusterBot:
         action = context.args[0].lower()
 
         if action == "list":
-            # List all clusters
-            clusters = self.cluster_manager.get_all_clusters()
-            if not clusters:
+            # List all campaigns
+            campaigns = self.campaign_manager.get_all_campaigns()
+            if not campaigns:
                 await update.message.reply_text(
-                    "No campaigns/clusters found yet.\n"
-                    "Clusters are created automatically when related phishing sites are detected."
+                    "No campaigns found yet.\n"
+                    "Campaigns are created automatically when related phishing sites are detected."
                 )
                 return
 
-            lines = ["*Active Campaigns/Clusters*\n"]
-            for c in sorted(clusters, key=lambda x: x["member_count"], reverse=True):
-                cid_short = c["id"][:12]
+            lines = ["*Active Campaigns*\n"]
+            for c in sorted(campaigns, key=lambda x: x["member_count"], reverse=True):
+                cid_short = c["campaign_id"][:12]
                 lines.append(
                     f"`{cid_short}` *{c['name']}*\n"
                     f"  Domains: {c['member_count']} | Confidence: {c['confidence']:.0f}%"
@@ -1143,62 +1142,62 @@ class SeedBusterBot:
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
             return
 
-        # All other actions require a cluster ID
-        cluster_id_prefix = action
+        # All other actions require a campaign ID
+        campaign_id_prefix = action
         sub_action = context.args[1].lower() if len(context.args) > 1 else "summary"
 
-        # Find cluster by prefix
-        cluster = None
-        for cid, c in self.cluster_manager.clusters.items():
-            if cid.startswith(cluster_id_prefix) or cid == cluster_id_prefix:
-                cluster = c
+        # Find campaign by prefix
+        campaign = None
+        for cid, c in self.campaign_manager.campaigns.items():
+            if cid.startswith(campaign_id_prefix) or cid == campaign_id_prefix:
+                campaign = c
                 break
 
-        if not cluster:
+        if not campaign:
             await update.message.reply_text(
-                f"Campaign not found: `{cluster_id_prefix}`\n"
+                f"Campaign not found: `{campaign_id_prefix}`\n"
                 "Use `/campaign list` to see available campaigns.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
         if sub_action == "summary":
-            # Show detailed cluster info
+            # Show detailed campaign info
             lines = [
-                f"*Campaign: {cluster.name}*\n",
-                f"ID: `{cluster.cluster_id}`",
-                f"Confidence: {cluster.confidence:.0f}%",
-                f"Created: {cluster.created_at.strftime('%Y-%m-%d')}",
-                f"Updated: {cluster.updated_at.strftime('%Y-%m-%d')}",
+                f"*Campaign: {campaign.name}*\n",
+                f"ID: `{campaign.campaign_id}`",
+                f"Confidence: {campaign.confidence:.0f}%",
+                f"Created: {campaign.created_at.strftime('%Y-%m-%d')}",
+                f"Updated: {campaign.updated_at.strftime('%Y-%m-%d')}",
                 "",
-                f"*Domains ({len(cluster.members)}):*",
+                f"*Domains ({len(campaign.members)}):*",
             ]
-            for m in cluster.members[:10]:
+            for m in campaign.members[:10]:
                 lines.append(f"  `{m.domain}` (score: {m.score})")
-            if len(cluster.members) > 10:
-                lines.append(f"  ... and {len(cluster.members) - 10} more")
+            if len(campaign.members) > 10:
+                lines.append(f"  ... and {len(campaign.members) - 10} more")
 
-            if cluster.shared_backends:
+            if campaign.shared_backends:
                 lines.extend(["", "*Shared Backends:*"])
-                for b in list(cluster.shared_backends)[:5]:
+                for b in list(campaign.shared_backends)[:5]:
                     lines.append(f"  `{b}`")
 
-            if cluster.shared_kits:
+            if campaign.shared_kits:
                 lines.extend(["", "*Kit Signatures:*"])
-                for k in cluster.shared_kits:
+                for k in campaign.shared_kits:
                     lines.append(f"  `{k}`")
 
-            if cluster.shared_nameservers:
+            if campaign.shared_nameservers:
                 lines.extend(["", "*Shared Nameservers:*"])
-                for ns in list(cluster.shared_nameservers)[:3]:
+                for ns in list(campaign.shared_nameservers)[:3]:
                     lines.append(f"  `{ns}`")
 
             lines.extend([
                 "",
                 "*Actions:*",
-                f"`/campaign {cluster_id_prefix} report` - Generate report",
-                f"`/campaign {cluster_id_prefix} preview` - Dry-run submission",
-                f"`/campaign {cluster_id_prefix} submit` - Submit reports",
+                f"`/campaign {campaign_id_prefix} report` - Generate report",
+                f"`/campaign {campaign_id_prefix} preview` - Dry-run submission",
+                f"`/campaign {campaign_id_prefix} submit` - Submit reports",
             ])
 
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
@@ -1210,25 +1209,25 @@ class SeedBusterBot:
                 return
 
             await update.message.reply_text(
-                f"Generating campaign report for *{cluster.name}*...",
+                f"Generating campaign report for *{campaign.name}*...",
                 parse_mode=ParseMode.MARKDOWN,
             )
 
             try:
-                attachments = await self.evidence_packager.prepare_campaign_submission(cluster.cluster_id)
+                attachments = await self.evidence_packager.prepare_campaign_submission(campaign.campaign_id)
 
                 if attachments.pdf_path and attachments.pdf_path.exists():
                     with open(attachments.pdf_path, "rb") as f:
                         await update.message.reply_document(
-                            document=InputFile(f, filename=f"campaign_{cluster.name.replace(' ', '_')}.pdf"),
-                            caption=f"Campaign Report: *{cluster.name}* ({attachments.domain_count} domains)",
+                            document=InputFile(f, filename=f"campaign_{campaign.name.replace(' ', '_')}.pdf"),
+                            caption=f"Campaign Report: *{campaign.name}* ({attachments.domain_count} domains)",
                             parse_mode=ParseMode.MARKDOWN,
                         )
                 else:
                     with open(attachments.html_path, "rb") as f:
                         await update.message.reply_document(
-                            document=InputFile(f, filename=f"campaign_{cluster.name.replace(' ', '_')}.html"),
-                            caption=f"Campaign Report: *{cluster.name}* (PDF unavailable)",
+                            document=InputFile(f, filename=f"campaign_{campaign.name.replace(' ', '_')}.html"),
+                            caption=f"Campaign Report: *{campaign.name}* (PDF unavailable)",
                             parse_mode=ParseMode.MARKDOWN,
                         )
             except Exception as e:
@@ -1242,13 +1241,13 @@ class SeedBusterBot:
                 return
 
             await update.message.reply_text(
-                f"Creating evidence archive for *{cluster.name}* ({len(cluster.members)} domains)...\n"
+                f"Creating evidence archive for *{campaign.name}* ({len(campaign.members)} domains)...\n"
                 "This may take a moment.",
                 parse_mode=ParseMode.MARKDOWN,
             )
 
             try:
-                archive_path = await self.evidence_packager.create_campaign_archive(cluster.cluster_id)
+                archive_path = await self.evidence_packager.create_campaign_archive(campaign.campaign_id)
 
                 size_mb = archive_path.stat().st_size / (1024 * 1024)
                 if size_mb > 50:
@@ -1261,7 +1260,7 @@ class SeedBusterBot:
                     with open(archive_path, "rb") as f:
                         await update.message.reply_document(
                             document=InputFile(f, filename=archive_path.name),
-                            caption=f"Evidence archive for *{cluster.name}*",
+                            caption=f"Evidence archive for *{campaign.name}*",
                             parse_mode=ParseMode.MARKDOWN,
                         )
             except Exception as e:
@@ -1284,16 +1283,16 @@ class SeedBusterBot:
                 return
 
             await update.message.reply_text(
-                f"Generating preview reports for *{cluster.name}*...\n"
+                f"Generating preview reports for *{campaign.name}*...\n"
                 f"Reports will be sent to `{dry_run_email}`\n"
-                f"This includes {len(cluster.members)} domains.",
+                f"This includes {len(campaign.members)} domains.",
                 parse_mode=ParseMode.MARKDOWN,
             )
 
             try:
                 results = await self.report_manager.report_campaign(
-                    cluster_id=cluster.cluster_id,
-                    cluster_manager=self.cluster_manager,
+                    campaign_id=campaign.campaign_id,
+                    campaign_manager=self.campaign_manager,
                     dry_run=True,
                     dry_run_email=dry_run_email,
                 )
@@ -1301,7 +1300,7 @@ class SeedBusterBot:
                 # Count successes
                 total_reports = sum(len(r) for r in results.values())
                 await update.message.reply_text(
-                    f"Preview complete for *{cluster.name}*\n\n"
+                    f"Preview complete for *{campaign.name}*\n\n"
                     f"Generated {total_reports} report previews.\n"
                     f"Check `{dry_run_email}` to review before submitting.",
                     parse_mode=ParseMode.MARKDOWN,
@@ -1317,20 +1316,20 @@ class SeedBusterBot:
                 return
 
             await update.message.reply_text(
-                f"Submitting reports for *{cluster.name}*...\n"
-                f"This will report {len(cluster.members)} domains to all platforms.\n"
+                f"Submitting reports for *{campaign.name}*...\n"
+                f"This will report {len(campaign.members)} domains to all platforms.\n"
                 "This may take a few minutes.",
                 parse_mode=ParseMode.MARKDOWN,
             )
 
             try:
                 results = await self.report_manager.report_campaign(
-                    cluster_id=cluster.cluster_id,
-                    cluster_manager=self.cluster_manager,
+                    campaign_id=campaign.campaign_id,
+                    campaign_manager=self.campaign_manager,
                 )
 
                 # Summarize results
-                lines = [f"*Campaign Report Results: {cluster.name}*\n"]
+                lines = [f"*Campaign Report Results: {campaign.name}*\n"]
 
                 for target_type, target_results in results.items():
                     if target_results:
@@ -1340,8 +1339,8 @@ class SeedBusterBot:
                         )
                         lines.append(f"*{target_type}*: {success_count}/{len(target_results)} submitted")
 
-                lines.append(f"\nTotal domains: {len(cluster.members)}")
-                lines.append("\nUse `/campaign list` to see updated cluster status.")
+                lines.append(f"\nTotal domains: {len(campaign.members)}")
+                lines.append("\nUse `/campaign list` to see updated campaign status.")
 
                 await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
@@ -1958,13 +1957,13 @@ class SeedBusterBot:
                 lines.append(f"  * Kit matches: {', '.join(code['kit_matches'])}")
             lines.append("")
 
-        # Cluster section
-        cluster = data.get("cluster", {})
-        if cluster.get("cluster_name"):
+        # Campaign section
+        campaign = data.get("campaign", {})
+        if campaign.get("campaign_name"):
             lines.append("CAMPAIGN:")
-            lines.append(f"  * {cluster['cluster_name']}")
-            if cluster.get("related_domains"):
-                lines.append(f"  * Related: {', '.join(cluster['related_domains'])}")
+            lines.append(f"  * {campaign['campaign_name']}")
+            if campaign.get("related_domains"):
+                lines.append(f"  * Related: {', '.join(campaign['related_domains'])}")
             lines.append("")
 
         # Suspicious endpoints

@@ -50,85 +50,85 @@ malicious_domains:
   confidence: high
   first_seen: '2025-12-13'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: kaspa-wallet.co
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.kaspa-wallet.co
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: kaspawallet.org
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: walletkaspanet.com
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.walletkaspanet.com
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: walletkaspanet.io
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.kaspawallet.org
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: wallet-kaspa.net
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.wallet-kaspa.net
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.wallet-kaspanet.com
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.kaspawallet.net
   type: phishing_host
   confidence: high
   first_seen: '2025-12-14'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign, backends=walrus-app,whale-app'
 - domain: www.kaspafaq.com/step-1-get-a-kaspa-wallet/
   type: phishing_host
   confidence: high
   first_seen: '2025-12-19'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign'
 - domain: aboutkaspa.com/how-to-set-up-a-kaspa-wallet-in-5-easy-steps/
   type: phishing_host
   confidence: high
   first_seen: '2025-12-19'
   source: seedbuster_auto
-  notes: 'Auto-detected: score=100, cluster=Kaspa Stealer V1 Campaign'
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign'
 - domain: kaspadrop.org
   type: crypto_doubler
   scam_type: crypto_doubler

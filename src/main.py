@@ -18,7 +18,7 @@ from .discovery import (
 from .analyzer import BrowserAnalyzer, PhishingDetector, ThreatIntelUpdater
 from .analyzer.infrastructure import InfrastructureAnalyzer
 from .analyzer.temporal import TemporalTracker, ScanReason
-from .analyzer.clustering import ThreatClusterManager
+from .analyzer.campaigns import ThreatCampaignManager
 from .analyzer.external_intel import ExternalIntelligence
 from .analyzer.takedown_checker import TakedownChecker, TakedownStatus
 from .storage import Database, EvidenceStore
@@ -76,7 +76,7 @@ class SeedBusterPipeline:
         )
         self.infrastructure = InfrastructureAnalyzer(timeout=10)
         self.temporal = TemporalTracker(config.data_dir / "temporal")
-        self.cluster_manager = ThreatClusterManager(config.data_dir / "clusters")
+        self.campaign_manager = ThreatCampaignManager(config.data_dir / "campaigns")
         self.external_intel = ExternalIntelligence(
             urlscan_api_key=config.urlscan_api_key or None,
             virustotal_api_key=config.virustotal_api_key or None,
@@ -118,7 +118,7 @@ class SeedBusterPipeline:
         self.evidence_packager = EvidencePackager(
             database=self.database,
             evidence_store=self.evidence_store,
-            cluster_manager=self.cluster_manager,
+            campaign_manager=self.campaign_manager,
             output_dir=config.data_dir / "packages",
         )
 
@@ -132,7 +132,7 @@ class SeedBusterPipeline:
             report_manager=self.report_manager,
             report_require_approval=config.report_require_approval,
             report_min_score=config.report_min_score,
-            cluster_manager=self.cluster_manager,
+            campaign_manager=self.campaign_manager,
             evidence_packager=self.evidence_packager,
         )
         self.analysis_engine = AnalysisEngine(
@@ -144,7 +144,7 @@ class SeedBusterPipeline:
             temporal=self.temporal,
             external_intel=self.external_intel,
             detector=self.detector,
-            cluster_manager=self.cluster_manager,
+            campaign_manager=self.campaign_manager,
             threat_intel_updater=self.threat_intel_updater,
             report_manager=self.report_manager,
             bot=self.bot,

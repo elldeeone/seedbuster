@@ -3,8 +3,8 @@ import type { FormEvent, MouseEvent } from "react";
 import "./index.css";
 import {
   cleanupEvidence,
-  fetchCluster,
-  fetchClusters,
+  fetchCampaign,
+  fetchCampaigns,
   fetchDomainDetail,
   fetchDomains,
   fetchPublicSubmissions,
@@ -20,14 +20,14 @@ import {
   submitTarget,
   updateDomainStatus,
   updateOperatorNotes,
-  updateClusterName,
+  updateCampaignName,
   fetchReportOptions,
   fetchAnalytics,
   updateWatchlistBaseline,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type {
-  Cluster,
+  Campaign,
   Domain,
   DomainDetailResponse,
   PendingReport,
@@ -40,8 +40,8 @@ import type {
 type Route =
   | { name: "dashboard" }
   | { name: "domain"; id: number }
-  | { name: "clusters" }
-  | { name: "cluster"; id: string };
+  | { name: "campaigns" }
+  | { name: "campaign"; id: string };
 
 const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
@@ -61,11 +61,11 @@ const parseHash = (): Route => {
     if (!Number.isNaN(id)) return { name: "domain", id };
   }
 
-  if (["clusters", "campaigns"].includes(parts[0] || "")) {
+  if (parts[0] === "campaigns") {
     if (parts[1]) {
-      return { name: "cluster", id: parts[1] };
+      return { name: "campaign", id: parts[1] };
     }
-    return { name: "clusters" };
+    return { name: "campaigns" };
   }
 
   // Default view: both modes land on dashboard (read-only for public)
@@ -544,30 +544,30 @@ const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
   );
 };
 
-const ClusterCard = ({ cluster, related }: { cluster: Cluster | null | undefined; related: Domain[] }) => {
-  if (!cluster) return null;
+const CampaignCard = ({ campaign, related }: { campaign: Campaign | null | undefined; related: Domain[] }) => {
+  if (!campaign) return null;
   const indicators = [
-    { label: "Backends", values: cluster.shared_backends || [] },
-    { label: "Kits", values: cluster.shared_kits || [] },
-    { label: "Nameservers", values: cluster.shared_nameservers || [] },
+    { label: "Backends", values: campaign.shared_backends || [] },
+    { label: "Kits", values: campaign.shared_kits || [] },
+    { label: "Nameservers", values: campaign.shared_nameservers || [] },
   ];
   return (
     <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)" }}>
       <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
         <div>
           <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
-          <span className="sb-muted" style={{ marginLeft: 8 }}>Campaign ID: {cluster.cluster_id}</span>
+          <span className="sb-muted" style={{ marginLeft: 8 }}>Campaign ID: {campaign.campaign_id}</span>
         </div>
         <a className="sb-btn" href="#/campaigns">View all</a>
       </div>
       <div className="sb-grid">
         <div className="col-6">
           <div className="sb-label">Campaign Name</div>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>{cluster.name || cluster.cluster_id}</div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{campaign.name || campaign.campaign_id}</div>
         </div>
         <div className="col-6">
           <div className="sb-label">Members</div>
-          <div className="sb-muted">{cluster.members?.length ?? 0}</div>
+          <div className="sb-muted">{campaign.members?.length ?? 0}</div>
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
@@ -620,11 +620,11 @@ export default function App() {
   const [domainDetail, setDomainDetail] = useState<DomainDetailResponse | null>(null);
   const [domainDetailLoading, setDomainDetailLoading] = useState(false);
 
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [clusterDetail, setClusterDetail] = useState<{ cluster: Cluster; domains: Domain[] } | null>(null);
-  const [clusterLoading, setClusterLoading] = useState(false);
-  const [clusterBulkWorking, setClusterBulkWorking] = useState<"rescan" | "report" | null>(null);
-  const [clusterSearch, setClusterSearch] = useState("");
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [campaignDetail, setCampaignDetail] = useState<{ campaign: Campaign; domains: Domain[] } | null>(null);
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignBulkWorking, setCampaignBulkWorking] = useState<"rescan" | "report" | null>(null);
+  const [campaignSearch, setCampaignSearch] = useState("");
 
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
   const [submitValue, setSubmitValue] = useState("");
@@ -659,10 +659,10 @@ export default function App() {
   const [noteInput, setNoteInput] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
 
-  // Cluster Name Editing
-  const [clusterNameEditing, setClusterNameEditing] = useState(false);
-  const [clusterNameInput, setClusterNameInput] = useState("");
-  const [clusterNameSaving, setClusterNameSaving] = useState(false);
+  // Campaign Name Editing
+  const [campaignNameEditing, setCampaignNameEditing] = useState(false);
+  const [campaignNameInput, setCampaignNameInput] = useState("");
+  const [campaignNameSaving, setCampaignNameSaving] = useState(false);
 
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -689,7 +689,10 @@ export default function App() {
   const canEdit = isAdmin;
 
   useEffect(() => {
-    const onHash = () => setRoute(parseHash());
+    const onHash = () => {
+      setRoute(parseHash());
+    };
+    onHash();
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -755,28 +758,28 @@ export default function App() {
     }
   }, []);
 
-  const loadClusters = useCallback(async () => {
-    setClusterLoading(true);
+  const loadCampaigns = useCallback(async () => {
+    setCampaignLoading(true);
     try {
-      const res = await fetchClusters();
-      setClusters(res.clusters || []);
+      const res = await fetchCampaigns();
+      setCampaigns(res.campaigns || []);
     } catch (err) {
       showToast((err as Error).message || "Failed to load campaigns", "error");
     } finally {
-      setClusterLoading(false);
+      setCampaignLoading(false);
     }
   }, []);
 
-  const loadClusterDetail = useCallback(async (id: string) => {
-    setClusterLoading(true);
+  const loadCampaignDetail = useCallback(async (id: string) => {
+    setCampaignLoading(true);
     try {
-      const res = await fetchCluster(id);
-      setClusterDetail(res);
+      const res = await fetchCampaign(id);
+      setCampaignDetail(res);
     } catch (err) {
       showToast((err as Error).message || "Failed to load campaign", "error");
-      setClusterDetail(null);
+      setCampaignDetail(null);
     } finally {
-      setClusterLoading(false);
+      setCampaignLoading(false);
     }
   }, []);
 
@@ -847,13 +850,13 @@ export default function App() {
     } else {
       setDomainDetail(null);
     }
-    if (route.name === "clusters") {
-      loadClusters();
+    if (route.name === "campaigns") {
+      loadCampaigns();
     }
-    if (route.name === "cluster") {
-      loadClusterDetail(route.id);
+    if (route.name === "campaign") {
+      loadCampaignDetail(route.id);
     }
-  }, [route, loadDomainDetail, loadClusters, loadClusterDetail]);
+  }, [route, loadDomainDetail, loadCampaigns, loadCampaignDetail]);
 
   useEffect(() => {
     if (!canEdit && domainDetail?.domain.id) {
@@ -1135,27 +1138,27 @@ export default function App() {
     }
   };
 
-  const bulkTriggerCluster = async (type: "rescan" | "report") => {
+  const bulkTriggerCampaign = async (type: "rescan" | "report") => {
     if (!canEdit) {
       showToast("Read-only mode: actions are disabled.", "info");
       return;
     }
-    if (!clusterDetail) return;
-    const domains = (clusterDetail.domains || []).filter((d) => d.id) as Domain[];
+    if (!campaignDetail) return;
+    const domains = (campaignDetail.domains || []).filter((d) => d.id) as Domain[];
     if (!domains.length) {
       showToast("No domains with IDs to process in this campaign", "error");
       return;
     }
     const ok = window.confirm(`Queue ${type} for ${domains.length} domains in this campaign?`);
     if (!ok) return;
-    setClusterBulkWorking(type);
+    setCampaignBulkWorking(type);
     try {
       for (const d of domains) {
         await triggerAction(d, type);
       }
       showToast(`Queued ${type} for ${domains.length} domains`, "success");
     } finally {
-      setClusterBulkWorking(null);
+      setCampaignBulkWorking(null);
     }
   };
 
@@ -1183,14 +1186,14 @@ export default function App() {
     });
   }, [pendingReports, reportFilters]);
 
-  const filteredClusters = useMemo(() => {
-    const term = clusterSearch.trim().toLowerCase();
-    if (!term) return clusters;
-    return clusters.filter((c) => {
-      const haystack = `${c.name || ""} ${c.cluster_id || ""} ${(c.members || []).map((m) => m.domain).join(" ")}`.toLowerCase();
+  const filteredCampaigns = useMemo(() => {
+    const term = campaignSearch.trim().toLowerCase();
+    if (!term) return campaigns;
+    return campaigns.filter((c) => {
+      const haystack = `${c.name || ""} ${c.campaign_id || ""} ${(c.members || []).map((m) => m.domain).join(" ")}`.toLowerCase();
       return haystack.includes(term);
     });
-  }, [clusters, clusterSearch]);
+  }, [campaigns, campaignSearch]);
 
   const nextReportAttempt = useMemo(() => {
     if (!domainDetail?.reports) return null;
@@ -1202,7 +1205,7 @@ export default function App() {
   }, [domainDetail]);
 
   const domainDownloadBase = canEdit ? "/admin/domains" : "/domains";
-  const clusterDownloadBase = canEdit ? "/admin/clusters" : "/clusters";
+  const campaignDownloadBase = canEdit ? "/admin/campaigns" : "/campaigns";
 
   const statsBlocks = useMemo(() => {
     if (!stats) return null;
@@ -1511,7 +1514,7 @@ export default function App() {
     </>
   );
 
-  const clustersView = (
+  const campaignsView = (
     <div className="sb-panel">
       <div className="sb-panel-header">
         <span className="sb-panel-title">Threat Campaigns</span>
@@ -1519,32 +1522,32 @@ export default function App() {
           <input
             className="sb-input"
             placeholder="Search campaigns"
-            value={clusterSearch}
-            onChange={(e) => setClusterSearch(e.target.value)}
+            value={campaignSearch}
+            onChange={(e) => setCampaignSearch(e.target.value)}
             style={{ width: 280 }}
           />
-          <span className="sb-muted">{filteredClusters.length} campaigns</span>
+          <span className="sb-muted">{filteredCampaigns.length} campaigns</span>
         </div>
       </div>
-      {clusterLoading && <div className="sb-muted">Loading campaigns…</div>}
-      {!clusterLoading && filteredClusters.length === 0 && <div className="sb-muted">No campaigns yet.</div>}
-      {!clusterLoading && filteredClusters.length > 0 && (
+      {campaignLoading && <div className="sb-muted">Loading campaigns…</div>}
+      {!campaignLoading && filteredCampaigns.length === 0 && <div className="sb-muted">No campaigns yet.</div>}
+      {!campaignLoading && filteredCampaigns.length > 0 && (
         <div className="sb-grid" style={{ gap: 16 }}>
-          {filteredClusters.map((c) => {
+          {filteredCampaigns.map((c) => {
             const indicators = [
               ...(c.shared_backends || []),
               ...(c.shared_nameservers || []),
               ...(c.shared_kits || []),
             ].slice(0, 3);
             return (
-              <div key={c.cluster_id} className="col-6">
+              <div key={c.campaign_id} className="col-6">
                 <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", margin: 0 }}>
                   <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
                     <div>
-                      <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.cluster_id}</div>
+                      <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.campaign_id}</div>
                       <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
                     </div>
-                    <a className="sb-btn" href={`#/campaigns/${c.cluster_id}`}>View</a>
+                    <a className="sb-btn" href={`#/campaigns/${c.campaign_id}`}>View</a>
                   </div>
                   <div className="sb-breakdown">
                     {(c.members || []).slice(0, 3).map((m) => (
@@ -1568,11 +1571,11 @@ export default function App() {
     </div>
   );
 
-  const clusterDetailView = (() => {
-    const cluster = clusterDetail?.cluster;
-    const related = clusterDetail?.domains || [];
+  const campaignDetailView = (() => {
+    const campaign = campaignDetail?.campaign;
+    const related = campaignDetail?.domains || [];
 
-    if (clusterLoading) {
+    if (campaignLoading) {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="sb-row"><a className="sb-btn" href="#/campaigns">&larr; Back to Campaigns</a></div>
@@ -1581,7 +1584,7 @@ export default function App() {
       );
     }
 
-    if (!cluster) {
+    if (!campaign) {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="sb-row"><a className="sb-btn" href="#/campaigns">&larr; Back to Campaigns</a></div>
@@ -1591,9 +1594,9 @@ export default function App() {
     }
 
     const indicators = [
-      { label: "Backends", values: cluster.shared_backends || [] },
-      { label: "Kits", values: cluster.shared_kits || [] },
-      { label: "Nameservers", values: cluster.shared_nameservers || [] },
+      { label: "Backends", values: campaign.shared_backends || [] },
+      { label: "Kits", values: campaign.shared_kits || [] },
+      { label: "Nameservers", values: campaign.shared_nameservers || [] },
     ];
 
     return (
@@ -1605,11 +1608,11 @@ export default function App() {
           <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
             <div>
               <span className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>Threat Campaign</span>
-              <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {cluster.cluster_id}</span>
+              <span className="sb-muted" style={{ marginLeft: 8 }}>ID: {campaign.campaign_id}</span>
             </div>
             <div className="sb-row" style={{ gap: 8 }}>
-              <a className="sb-btn" href={`${clusterDownloadBase}/${cluster.cluster_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
-              <a className="sb-btn" href={`${clusterDownloadBase}/${cluster.cluster_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
+              <a className="sb-btn" href={`${campaignDownloadBase}/${campaign.campaign_id}/pdf`} target="_blank" rel="noreferrer">Campaign PDF</a>
+              <a className="sb-btn" href={`${campaignDownloadBase}/${campaign.campaign_id}/package`} target="_blank" rel="noreferrer">Campaign Package</a>
             </div>
           </div>
 
@@ -1617,49 +1620,49 @@ export default function App() {
           <div className="sb-grid" style={{ marginBottom: 16 }}>
             <div className="col-8">
               <div className="sb-label">Campaign Name</div>
-              {isAdmin && clusterNameEditing ? (
+              {isAdmin && campaignNameEditing ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
                   <input
                     className="sb-input"
-                    value={clusterNameInput}
-                    onChange={(e) => setClusterNameInput(e.target.value)}
+                    value={campaignNameInput}
+                    onChange={(e) => setCampaignNameInput(e.target.value)}
                     style={{ flex: 1, maxWidth: 400 }}
                   />
                   <button
                     className="sb-btn sb-btn-primary"
-                    disabled={clusterNameSaving || !clusterNameInput.trim()}
+                    disabled={campaignNameSaving || !campaignNameInput.trim()}
                     onClick={async () => {
-                      if (!cluster.cluster_id) return;
-                      setClusterNameSaving(true);
+                      if (!campaign.campaign_id) return;
+                      setCampaignNameSaving(true);
                       try {
-                        await updateClusterName(cluster.cluster_id, clusterNameInput.trim());
+                        await updateCampaignName(campaign.campaign_id, campaignNameInput.trim());
                         showToast("Campaign name updated", "success");
-                        setClusterNameEditing(false);
-                        const res = await fetchCluster(cluster.cluster_id);
-                        setClusterDetail(res);
+                        setCampaignNameEditing(false);
+                        const res = await fetchCampaign(campaign.campaign_id);
+                        setCampaignDetail(res);
                       } catch (err) {
                         showToast((err as Error).message || "Failed to update name", "error");
                       } finally {
-                        setClusterNameSaving(false);
+                        setCampaignNameSaving(false);
                       }
                     }}
                   >
-                    {clusterNameSaving ? "Saving..." : "Save"}
+                    {campaignNameSaving ? "Saving..." : "Save"}
                   </button>
-                  <button className="sb-btn" onClick={() => setClusterNameEditing(false)}>Cancel</button>
+                  <button className="sb-btn" onClick={() => setCampaignNameEditing(false)}>Cancel</button>
                 </div>
               ) : (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
                   <div style={{ fontSize: 20, fontWeight: 600 }}>
-                    {cluster.name || cluster.cluster_id}
+                    {campaign.name || campaign.campaign_id}
                   </div>
                   {isAdmin && (
                     <button
                       className="sb-btn"
                       style={{ padding: "4px 10px", fontSize: 12 }}
                       onClick={() => {
-                        setClusterNameInput(cluster.name || "");
-                        setClusterNameEditing(true);
+                        setCampaignNameInput(campaign.name || "");
+                        setCampaignNameEditing(true);
                       }}
                     >
                       ✏️ Edit
@@ -1670,18 +1673,18 @@ export default function App() {
             </div>
             <div className="col-4">
               <div className="sb-label">Members</div>
-              <div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{cluster.members?.length ?? 0}</div>
+              <div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{campaign.members?.length ?? 0}</div>
             </div>
           </div>
 
           {/* Bulk Actions (admin only) */}
           {isAdmin && (
             <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-              <button className="sb-btn" disabled={clusterBulkWorking === "rescan"} onClick={() => bulkTriggerCluster("rescan")}>
-                {clusterBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
+              <button className="sb-btn" disabled={campaignBulkWorking === "rescan"} onClick={() => bulkTriggerCampaign("rescan")}>
+                {campaignBulkWorking === "rescan" ? "Queuing…" : "Bulk Rescan"}
               </button>
-              <button className="sb-btn" disabled={clusterBulkWorking === "report"} onClick={() => bulkTriggerCluster("report")}>
-                {clusterBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
+              <button className="sb-btn" disabled={campaignBulkWorking === "report"} onClick={() => bulkTriggerCampaign("report")}>
+                {campaignBulkWorking === "report" ? "Queuing…" : "Bulk Report"}
               </button>
             </div>
           )}
@@ -2082,7 +2085,7 @@ export default function App() {
             </div>
           </div>
 
-          <ClusterCard cluster={domainDetail.cluster} related={domainDetail.related_domains || []} />
+          <CampaignCard campaign={domainDetail.campaign} related={domainDetail.related_domains || []} />
         </>
       )}
     </div>
@@ -2091,8 +2094,8 @@ export default function App() {
 
   const content = (() => {
     if (route.name === "domain") return domainDetailView;
-    if (route.name === "clusters") return clustersView;
-    if (route.name === "cluster") return clusterDetailView;
+    if (route.name === "campaigns") return campaignsView;
+    if (route.name === "campaign") return campaignDetailView;
     return dashboardView;
   })();
 
@@ -2112,7 +2115,7 @@ export default function App() {
         </div>
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
-          <a className="sb-btn" href="#/clusters">Threat Campaigns</a>
+          <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
 
           {/* Settings Cog */}
           {canEdit && (

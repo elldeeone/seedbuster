@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, List, Optional
 from .base import ReportEvidence
 
 if TYPE_CHECKING:
-    from ..analyzer.clustering import ThreatCluster
+    from ..analyzer.campaigns import ThreatCampaign
 
 
 class ReportTemplates:
@@ -573,23 +573,23 @@ Source: https://github.com/elldeeone/seedbuster
     @classmethod
     def campaign_digitalocean(
         cls,
-        cluster: "ThreatCluster",
+        campaign: "ThreatCampaign",
         reporter_email: str,
     ) -> dict:
         """
         Generate a DigitalOcean abuse report for an entire campaign.
         Lists ALL backend apps and ALL frontends using them.
         """
-        # Extract all DO apps from cluster backends
+        # Extract all DO apps from campaign backends
         do_apps = [
-            backend for backend in cluster.shared_backends
+            backend for backend in campaign.shared_backends
             if "ondigitalocean.app" in backend.lower()
         ]
 
         if not do_apps:
-            return {"subject": "", "body": "No DigitalOcean apps found in cluster"}
+            return {"subject": "", "body": "No DigitalOcean apps found in campaign"}
 
-        subject = f"URGENT: {len(do_apps)} App Platform Apps Used in Coordinated Phishing Campaign - {cluster.name}"
+        subject = f"URGENT: {len(do_apps)} App Platform Apps Used in Coordinated Phishing Campaign - {campaign.name}"
 
         body = f"""
 ================================================================================
@@ -600,7 +600,7 @@ Source: https://github.com/elldeeone/seedbuster
 ACTION REQUESTED
 ----------------
 Please IMMEDIATELY suspend ALL of the following App Platform applications.
-This is a coordinated campaign with {len(cluster.members)} phishing domains
+This is a coordinated campaign with {len(campaign.members)} phishing domains
 all using these backends to receive stolen cryptocurrency seed phrases.
 
 """
@@ -610,7 +610,7 @@ all using these backends to receive stolen cryptocurrency seed phrases.
 """
         for i, app in enumerate(do_apps, 1):
             # Count how many frontends use this backend
-            using_count = sum(1 for m in cluster.members if app in m.backends)
+            using_count = sum(1 for m in campaign.members if app in m.backends)
             body += f"  {i}. {app}\n"
             body += f"     Used by {using_count} phishing domain(s)\n\n"
 
@@ -619,18 +619,18 @@ all using these backends to receive stolen cryptocurrency seed phrases.
                          CAMPAIGN OVERVIEW
 ================================================================================
 
-Campaign Name:   {cluster.name}
-Campaign ID:     {cluster.cluster_id}
-Total Domains:   {len(cluster.members)}
+Campaign Name:   {campaign.name}
+Campaign ID:     {campaign.campaign_id}
+Total Domains:   {len(campaign.members)}
 Shared Backends: {len(do_apps)} DigitalOcean apps
-Confidence:      {cluster.confidence:.0f}%
-First Detected:  {cluster.created_at.strftime('%Y-%m-%d')}
-Last Updated:    {cluster.updated_at.strftime('%Y-%m-%d')}
+Confidence:      {campaign.confidence:.0f}%
+First Detected:  {campaign.created_at.strftime('%Y-%m-%d')}
+Last Updated:    {campaign.updated_at.strftime('%Y-%m-%d')}
 
 PHISHING DOMAINS IN THIS CAMPAIGN
 ----------------------------------
 """
-        for i, member in enumerate(cluster.members, 1):
+        for i, member in enumerate(campaign.members, 1):
             body += f"  {i}. {member.domain} (score: {member.score}%)\n"
 
         body += f"""
@@ -638,7 +638,7 @@ PHISHING DOMAINS IN THIS CAMPAIGN
                          HOW THE ATTACK WORKS
 ================================================================================
 
-  1. Victim visits one of {len(cluster.members)} fake wallet sites (listed above)
+  1. Victim visits one of {len(campaign.members)} fake wallet sites (listed above)
   2. Site displays fake "restore wallet" form requesting 12-word seed phrase
   3. Victim enters their seed phrase thinking it's legitimate
   4. Data is POST'd to DigitalOcean App Platform backends (listed above)
@@ -647,16 +647,16 @@ PHISHING DOMAINS IN THIS CAMPAIGN
 WHY THIS IS HIGH PRIORITY
 -------------------------
 - The backend apps are the CHOKEPOINT for the entire campaign
-- Suspending {len(do_apps)} apps immediately disables {len(cluster.members)} phishing sites
+- Suspending {len(do_apps)} apps immediately disables {len(campaign.members)} phishing sites
 - This is more efficient than reporting each phishing domain individually
 - The attacker is actively stealing cryptocurrency through these backends
 
 """
 
-        if cluster.shared_kits:
+        if campaign.shared_kits:
             body += f"""PHISHING KIT SIGNATURES DETECTED
 ---------------------------------
-{cls._format_list(list(cluster.shared_kits))}
+{cls._format_list(list(campaign.shared_kits))}
 
 """
 
@@ -691,7 +691,7 @@ analysis data) upon request.
     @classmethod
     def campaign_registrar(
         cls,
-        cluster: "ThreatCluster",
+        campaign: "ThreatCampaign",
         registrar_name: str,
         domains: List[str],
         reporter_email: str,
@@ -699,7 +699,7 @@ analysis data) upon request.
         """
         Generate a bulk registrar abuse report for all domains at one registrar.
         """
-        subject = f"Bulk Abuse Report: {len(domains)} Phishing Domains - {cluster.name}"
+        subject = f"Bulk Abuse Report: {len(domains)} Phishing Domains - {campaign.name}"
 
         body = f"""
 ================================================================================
@@ -723,29 +723,29 @@ DOMAINS REGISTERED WITH {registrar_name.upper()}
 ================================================================================
 
 This is not an isolated incident. These domains are part of the
-"{cluster.name}" phishing campaign with {len(cluster.members)} total domains.
+"{campaign.name}" phishing campaign with {len(campaign.members)} total domains.
 
-Campaign ID:     {cluster.cluster_id}
-Total Domains:   {len(cluster.members)} (across all registrars)
+Campaign ID:     {campaign.campaign_id}
+Total Domains:   {len(campaign.members)} (across all registrars)
 Your Domains:    {len(domains)}
-Confidence:      {cluster.confidence:.0f}%
-First Detected:  {cluster.created_at.strftime('%Y-%m-%d')}
+Confidence:      {campaign.confidence:.0f}%
+First Detected:  {campaign.created_at.strftime('%Y-%m-%d')}
 
 SHARED INFRASTRUCTURE (proves coordination)
 -------------------------------------------
 All domains in this campaign share:
 """
 
-        if cluster.shared_backends:
+        if campaign.shared_backends:
             body += f"""
 Backend Servers:
-{cls._format_list(list(cluster.shared_backends)[:5])}
+{cls._format_list(list(campaign.shared_backends)[:5])}
 """
 
-        if cluster.shared_nameservers:
+        if campaign.shared_nameservers:
             body += f"""
 Nameservers:
-{cls._format_list(list(cluster.shared_nameservers))}
+{cls._format_list(list(campaign.shared_nameservers))}
 """
 
         body += f"""
@@ -770,7 +770,7 @@ Source:   https://github.com/elldeeone/seedbuster
     @classmethod
     def campaign_dns_provider(
         cls,
-        cluster: "ThreatCluster",
+        campaign: "ThreatCampaign",
         provider_name: str,
         reporter_email: str,
     ) -> dict:
@@ -780,7 +780,7 @@ Source:   https://github.com/elldeeone/seedbuster
         # Find domains using this provider's nameservers
         provider_lower = provider_name.lower()
         affected_domains = []
-        for member in cluster.members:
+        for member in campaign.members:
             for ns in member.nameservers:
                 if provider_lower in ns.lower():
                     affected_domains.append(member.domain)
@@ -809,18 +809,18 @@ AFFECTED DOMAINS
                          CAMPAIGN CONTEXT
 ================================================================================
 
-Campaign Name:   {cluster.name}
-Total Domains:   {len(cluster.members)}
+Campaign Name:   {campaign.name}
+Total Domains:   {len(campaign.members)}
 Using Your DNS:  {len(affected_domains)}
-Confidence:      {cluster.confidence:.0f}%
+Confidence:      {campaign.confidence:.0f}%
 
 EVIDENCE OF COORDINATION
 ------------------------
 """
 
-        if cluster.shared_backends:
+        if campaign.shared_backends:
             body += f"""Shared Backend Servers:
-{cls._format_list(list(cluster.shared_backends)[:3])}
+{cls._format_list(list(campaign.shared_backends)[:3])}
 
 """
 

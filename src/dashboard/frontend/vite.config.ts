@@ -20,7 +20,11 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
-      "/admin/clusters": {
+      "/admin/campaigns": {
+        target: backend,
+        changeOrigin: true,
+      },
+      "/campaigns": {
         target: backend,
         changeOrigin: true,
       },

@@ -41,15 +41,15 @@ def evidence_dir(tmp_path) -> Path:
 
 
 @pytest.fixture
-def clusters_dir(tmp_path) -> Path:
-    """Create clusters directory."""
-    path = tmp_path / "clusters"
+def campaigns_dir(tmp_path) -> Path:
+    """Create campaigns directory."""
+    path = tmp_path / "campaigns"
     path.mkdir()
     return path
 
 
 @pytest.fixture
-async def dashboard_with_data(database, evidence_dir, clusters_dir):
+async def dashboard_with_data(database, evidence_dir, campaigns_dir):
     """Create dashboard server with test data."""
     # Track callbacks
     submitted_domains = []
@@ -78,7 +78,7 @@ async def dashboard_with_data(database, evidence_dir, clusters_dir):
         config=config,
         database=database,
         evidence_dir=evidence_dir,
-        clusters_dir=clusters_dir,
+        campaigns_dir=campaigns_dir,
         submit_callback=on_submit,
         rescan_callback=on_rescan,
         report_callback=on_report,
@@ -235,15 +235,15 @@ async def test_public_domain_link_navigation(public_page, running_server):
 
 
 @pytest.mark.asyncio
-async def test_public_clusters_navigation(public_page, running_server):
-    """Test navigating to clusters page."""
+async def test_public_campaigns_navigation(public_page, running_server):
+    """Test navigating to campaigns page."""
     await public_page.goto(running_server["base_url"])
 
     # Click campaigns link in nav
     await public_page.click("text=Threat Campaigns")
 
-    # Should navigate to clusters page
-    await public_page.wait_for_url("**/clusters**")
+    # Should navigate to campaigns page
+    await public_page.wait_for_url("**/campaigns**")
 
 
 # =============================================================================
