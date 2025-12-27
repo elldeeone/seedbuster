@@ -56,3 +56,6 @@ data/packages/
 
 # Frontend
 node_modules/
+src/dashboard/frontend/data/*.db
+src/dashboard/frontend/data/*.db-wal
+src/dashboard/frontend/data/*.db-shm
