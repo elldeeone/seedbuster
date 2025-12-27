@@ -87,8 +87,10 @@ def parse_registrar_and_abuse_email(data: object) -> tuple[Optional[str], Option
     return (registrar_name, abuse_email)
 
 
-_RDAP_CACHE: dict[str, tuple[float, RdapLookupResult]] = {}
-_RDAP_CACHE_TTL_SECONDS = 3600  # 1 hour
+from ..cache import create_rdap_cache
+
+# Module-level cache instance
+_rdap_cache = create_rdap_cache(ttl_seconds=3600)
 
 
 async def _fetch_rdap(url: str, timeout: float) -> RdapLookupResult:
@@ -190,19 +192,17 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0, force
             error="No domain provided for RDAP lookup",
         )
 
-    now = __import__("time").time()
+    # Check cache unless force refresh
     if not force_refresh:
-        cached = _RDAP_CACHE.get(normalized)
-        if cached:
-            ts, result = cached
-            if now - ts < _RDAP_CACHE_TTL_SECONDS:
-                return result
+        cached = _rdap_cache.get(normalized)
+        if cached is not None:
+            return cached
 
     endpoints = _rdap_endpoints_for(normalized)
     for url in endpoints:
         result = await _fetch_rdap(url, timeout)
         if result.ok:
-            _RDAP_CACHE[normalized] = (now, result)
+            _rdap_cache.set(normalized, result)
             return result
         # Retry next endpoint on 429/503/timeout; keep last error otherwise.
         if result.status_code not in (429, 503) and "timed out" not in (result.error or ""):
@@ -217,5 +217,5 @@ async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0, force
         status_values=None,
         error="RDAP lookup failed (all endpoints)",
     )
-    _RDAP_CACHE[normalized] = (now, final)
+    _rdap_cache.set(normalized, final)
     return final

@@ -18,6 +18,7 @@ import aiohttp
 import tldextract
 
 from ..reporter.rdap import lookup_registrar_via_rdap
+from ..cache import create_asn_cache
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +243,7 @@ class InfrastructureAnalyzer:
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
         self._session: Optional[aiohttp.ClientSession] = None
-        self._asn_cache: dict[str, tuple[float, HostingInfo]] = {}
-        self._asn_cache_ttl = 3600  # seconds
+        self._asn_cache = create_asn_cache(ttl_seconds=3600)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -421,10 +421,8 @@ class InfrastructureAnalyzer:
             except socket.herror:
                 pass
 
-            cached = self._asn_cache.get(ip_address)
-            now = time.time()
-            if cached and now - cached[0] < self._asn_cache_ttl:
-                cached_info = cached[1]
+            cached_info = self._asn_cache.get(ip_address)
+            if cached_info:
                 result.asn = cached_info.asn
                 result.asn_name = cached_info.asn_name
                 result.asn_country = cached_info.asn_country
@@ -436,7 +434,7 @@ class InfrastructureAnalyzer:
                     result.asn_name = lookup.asn_name
                     result.asn_country = lookup.asn_country
                     result.datacenter = lookup.datacenter
-                    self._asn_cache[ip_address] = (now, lookup)
+                    self._asn_cache.set(ip_address, lookup)
 
             # Identify hosting provider
             self._identify_hosting_provider(result)

@@ -1,11 +1,17 @@
 """Base classes for abuse reporting in SeedBuster."""
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ReportStatus(str, Enum):
@@ -103,6 +109,103 @@ class ReportEvidence:
         ])
 
         return "\n".join(lines)
+
+    # -------------------------------------------------------------------------
+    # Utility Methods for Template Generation (reduce duplication in reporters)
+    # -------------------------------------------------------------------------
+
+    def extract_seed_phrase_indicator(self) -> Optional[str]:
+        """Extract seed phrase field name from detection reasons (e.g., 'mnemonic')."""
+        for reason in self.detection_reasons or []:
+            text = (reason or "").strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if "seed phrase" not in lower and "mnemonic" not in lower:
+                continue
+            match = re.search(r"'([^']+)'", text)
+            if match:
+                return match.group(1).strip() or None
+        return None
+
+    def get_filtered_reasons(self, max_items: int = 5) -> list[str]:
+        """Get detection reasons with low-signal items filtered out."""
+        skip_terms = (
+            "suspicion score",
+            "domain suspicion",
+            "keyword",
+            "tld",
+            "kaspa-related title",
+            "wallet-related title",
+        )
+
+        keep_terms = (
+            "seed phrase",
+            "mnemonic",
+            "recovery phrase",
+            "private key",
+            "cloaking detected",
+            "ondigitalocean.app",
+            "workers.dev",
+        )
+
+        high_signal = []
+        other = []
+
+        for reason in self.detection_reasons or []:
+            text = (reason or "").strip()
+            if not text:
+                continue
+            lower = text.lower()
+
+            # Skip temporal noise except cloaking
+            if lower.startswith("temporal:") and "cloaking" not in lower:
+                continue
+
+            # Skip low-signal
+            if any(s in lower for s in skip_terms):
+                continue
+
+            # Classify
+            if any(s in lower for s in keep_terms):
+                high_signal.append(text)
+            else:
+                other.append(text)
+
+        # Return high-signal first, then fill with others
+        result = high_signal[:max_items]
+        if len(result) < max_items:
+            result.extend(other[: max_items - len(result)])
+
+        return result or self.detection_reasons[:max_items]
+
+    def get_seed_observation(self) -> str:
+        """Get a human-readable observation about seed phrase detection."""
+        seed_hint = self.extract_seed_phrase_indicator()
+        if seed_hint:
+            return f"Observed seed phrase field: '{seed_hint}'"
+        return "Observed seed phrase theft flow"
+
+    def get_backend_hosts(self) -> list[str]:
+        """Get unique backend domain hosts from suspicious endpoints."""
+        from urllib.parse import urlparse
+
+        hosts = set()
+        for domain in self.backend_domains or []:
+            hosts.add(domain.lower().strip())
+
+        for endpoint in self.suspicious_endpoints or []:
+            if not isinstance(endpoint, str):
+                continue
+            try:
+                parsed = urlparse(endpoint if "://" in endpoint else f"https://{endpoint}")
+                host = (parsed.hostname or "").lower().strip()
+                if host:
+                    hosts.add(host)
+            except Exception:
+                pass
+
+        return sorted(hosts)
 
     def _crypto_doubler_summary(self) -> str:
         """Generate summary for crypto doubler / fake giveaway scams."""
@@ -335,3 +438,214 @@ class ConfigurationError(ReporterError):
     """Reporter not properly configured."""
 
     pass
+
+
+class BaseHTTPReporter(BaseReporter):
+    """
+    Base class for reporters that use HTTP APIs.
+
+    Provides:
+    - Shared httpx client with sensible defaults
+    - Standard error handling (rate limits, timeouts, API errors)
+    - Retry logic for transient failures
+
+    Subclasses implement `_do_submit()` instead of `submit()`.
+    """
+
+    # HTTP client defaults
+    timeout_seconds: float = 30.0
+    user_agent: str = "SeedBuster/1.0 (https://github.com/elldeeone/seedbuster)"
+    max_retries: int = 2
+
+    def __init__(self):
+        super().__init__()
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds),
+                headers={"User-Agent": self.user_agent},
+                follow_redirects=True,
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """Close HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        """
+        Submit with automatic error handling.
+
+        Subclasses should override `_do_submit()` instead.
+        """
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        try:
+            return await self._do_submit(evidence)
+
+        except httpx.TimeoutException:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message="Request timed out",
+            )
+
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+
+            # Rate limiting
+            if status_code == 429:
+                retry_after = int(e.response.headers.get("Retry-After", 60))
+                return ReportResult(
+                    platform=self.platform_name,
+                    status=ReportStatus.RATE_LIMITED,
+                    message=f"Rate limited (retry after {retry_after}s)",
+                    retry_after=retry_after,
+                )
+
+            # Client errors
+            if 400 <= status_code < 500:
+                return ReportResult(
+                    platform=self.platform_name,
+                    status=ReportStatus.FAILED,
+                    message=f"API error: {status_code}",
+                    response_data={"status_code": status_code},
+                )
+
+            # Server errors (may retry)
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=f"Server error: {status_code}",
+                response_data={"status_code": status_code},
+            )
+
+        except Exception as e:
+            logger.exception(f"Unexpected error in {self.platform_name}: {e}")
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=f"Unexpected error: {str(e)}",
+            )
+
+    async def _do_submit(self, evidence: ReportEvidence) -> ReportResult:
+        """
+        Perform the actual submission.
+
+        Subclasses must implement this method. The base `submit()` wraps this
+        with standard error handling.
+        """
+        raise NotImplementedError("Subclasses must implement _do_submit()")
+
+    async def _post_json(
+        self,
+        url: str,
+        data: dict[str, Any],
+        headers: Optional[dict[str, str]] = None,
+    ) -> httpx.Response:
+        """Helper for JSON POST requests."""
+        client = await self._get_client()
+        return await client.post(url, json=data, headers=headers)
+
+    async def _post_form(
+        self,
+        url: str,
+        data: dict[str, Any],
+        headers: Optional[dict[str, str]] = None,
+    ) -> httpx.Response:
+        """Helper for form POST requests."""
+        client = await self._get_client()
+        return await client.post(url, data=data, headers=headers)
+
+    async def _get(
+        self,
+        url: str,
+        params: Optional[dict[str, Any]] = None,
+        headers: Optional[dict[str, str]] = None,
+    ) -> httpx.Response:
+        """Helper for GET requests."""
+        client = await self._get_client()
+        return await client.get(url, params=params, headers=headers)
+
+
+def build_manual_submission(
+    form_url: str,
+    reason: str,
+    evidence: ReportEvidence,
+    *,
+    include_wallets: bool = False,
+    extra_fields: Optional[list[ManualSubmissionField]] = None,
+    notes: Optional[list[str]] = None,
+) -> ManualSubmissionData:
+    """
+    Factory function to build ManualSubmissionData with common patterns.
+
+    Reduces boilerplate in manual-only reporters.
+    """
+    fields = [
+        ManualSubmissionField(
+            name="url",
+            label="URL to report",
+            value=evidence.url,
+        ),
+    ]
+
+    # Build details based on scam type
+    if evidence.scam_type == "crypto_doubler":
+        details = [
+            "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)",
+            "",
+            f"Domain: {evidence.domain}",
+            f"Confidence: {evidence.confidence_score}%",
+        ]
+        if include_wallets and evidence.scammer_wallets:
+            details.append("")
+            details.append("Scammer wallet addresses:")
+            for wallet in evidence.scammer_wallets[:3]:
+                details.append(f"  - {wallet}")
+    else:
+        seed_obs = evidence.get_seed_observation()
+        details = [
+            "Cryptocurrency phishing (seed phrase theft)",
+            "",
+            f"Domain: {evidence.domain}",
+            f"Confidence: {evidence.confidence_score}%",
+            "",
+            seed_obs,
+        ]
+
+    # Add filtered reasons
+    details.append("")
+    details.append("Key evidence:")
+    for reason_text in evidence.get_filtered_reasons(max_items=4):
+        details.append(f"  - {reason_text}")
+
+    fields.append(
+        ManualSubmissionField(
+            name="details",
+            label="Evidence summary",
+            value="\n".join(details),
+            multiline=True,
+        )
+    )
+
+    if extra_fields:
+        fields.extend(extra_fields)
+
+    return ManualSubmissionData(
+        form_url=form_url,
+        reason=reason,
+        fields=fields,
+        notes=notes or [],
+    )
