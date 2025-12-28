@@ -61,11 +61,15 @@ class ReportEvidence:
 
     def to_summary(self) -> str:
         """Generate a human-readable summary for reports with context."""
+        scam_type = self.resolve_scam_type()
         # Choose summary based on scam type
-        if self.scam_type == "crypto_doubler":
+        if scam_type == "crypto_doubler":
             return self._crypto_doubler_summary()
-        # Default to seed phishing summary
-        return self._seed_phishing_summary()
+        if scam_type == "fake_airdrop":
+            return self._fake_airdrop_summary()
+        if scam_type == "seed_phishing":
+            return self._seed_phishing_summary()
+        return self._generic_summary()
 
     def _seed_phishing_summary(self) -> str:
         """Generate summary for seed phrase phishing scams."""
@@ -110,6 +114,91 @@ class ReportEvidence:
 
         return "\n".join(lines)
 
+    def _fake_airdrop_summary(self) -> str:
+        """Generate summary for fake airdrop / claim scams."""
+        lines = [
+            "FRAUD REPORT - Cryptocurrency Fake Airdrop/Claim",
+            "",
+            "This site impersonates a cryptocurrency project and promotes a",
+            "fake airdrop/claim flow. It is designed to trick users into unsafe",
+            "actions that can result in loss of funds or account compromise.",
+            "",
+            "SITE DETAILS:",
+            f"  Domain: {self.domain}",
+            f"  URL: {self.url}",
+            f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
+            f"  Confidence: {self.confidence_score}%",
+            "",
+            "KEY EVIDENCE:",
+        ]
+
+        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+        for reason in self.detection_reasons[:5]:
+            if not any(s in (reason or "").lower() for s in skip_terms):
+                lines.append(f"  - {reason}")
+
+        if self.backend_domains:
+            lines.append("")
+            lines.append("DATA SENT TO:")
+            for backend in self.backend_domains[:3]:
+                lines.append(f"  - {backend}")
+
+        if self.suspicious_endpoints and not self.backend_domains:
+            lines.append("")
+            lines.append("SUSPICIOUS ENDPOINTS:")
+            for endpoint in self.suspicious_endpoints[:3]:
+                lines.append(f"  - {endpoint}")
+
+        lines.extend([
+            "",
+            "Reported by: SeedBuster (automated phishing detection)",
+            "Source: https://github.com/elldeeone/seedbuster",
+        ])
+
+        return "\n".join(lines)
+
+    def _generic_summary(self) -> str:
+        """Generate a generic summary for crypto fraud/phishing."""
+        lines = [
+            "FRAUD REPORT - Cryptocurrency Phishing/Fraud",
+            "",
+            "This site hosts cryptocurrency-related fraud/phishing content intended",
+            "to trick users into unsafe actions.",
+            "",
+            "SITE DETAILS:",
+            f"  Domain: {self.domain}",
+            f"  URL: {self.url}",
+            f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
+            f"  Confidence: {self.confidence_score}%",
+            "",
+            "KEY EVIDENCE:",
+        ]
+
+        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+        for reason in self.detection_reasons[:5]:
+            if not any(s in (reason or "").lower() for s in skip_terms):
+                lines.append(f"  - {reason}")
+
+        if self.backend_domains:
+            lines.append("")
+            lines.append("DATA SENT TO:")
+            for backend in self.backend_domains[:3]:
+                lines.append(f"  - {backend}")
+
+        if self.suspicious_endpoints and not self.backend_domains:
+            lines.append("")
+            lines.append("SUSPICIOUS ENDPOINTS:")
+            for endpoint in self.suspicious_endpoints[:3]:
+                lines.append(f"  - {endpoint}")
+
+        lines.extend([
+            "",
+            "Reported by: SeedBuster (automated phishing detection)",
+            "Source: https://github.com/elldeeone/seedbuster",
+        ])
+
+        return "\n".join(lines)
+
     # -------------------------------------------------------------------------
     # Utility Methods for Template Generation (reduce duplication in reporters)
     # -------------------------------------------------------------------------
@@ -127,6 +216,37 @@ class ReportEvidence:
             if match:
                 return match.group(1).strip() or None
         return None
+
+    def _reasons_contain(self, needles: tuple[str, ...]) -> bool:
+        for reason in self.detection_reasons or []:
+            text = (reason or "").lower()
+            if not text:
+                continue
+            if any(needle in text for needle in needles):
+                return True
+        return False
+
+    def resolve_scam_type(self) -> str:
+        scam_type = (self.scam_type or "").strip().lower()
+        seed_form = False
+        if isinstance(self.analysis_json, dict):
+            seed_form = bool(self.analysis_json.get("seed_form"))
+        has_seed_evidence = seed_form or self._reasons_contain(("seed phrase", "mnemonic", "recovery phrase"))
+        looks_like_airdrop = self._reasons_contain(("airdrop", "claim"))
+
+        if scam_type == "seed_phishing" and not has_seed_evidence:
+            if looks_like_airdrop:
+                return "fake_airdrop"
+            return "unknown"
+
+        if not scam_type or scam_type == "unknown":
+            if has_seed_evidence:
+                return "seed_phishing"
+            if looks_like_airdrop:
+                return "fake_airdrop"
+            return "unknown"
+
+        return scam_type
 
     def get_filtered_reasons(self, max_items: int = 5) -> list[str]:
         """Get detection reasons with low-signal items filtered out."""
@@ -602,7 +722,9 @@ def build_manual_submission(
     ]
 
     # Build details based on scam type
-    if evidence.scam_type == "crypto_doubler":
+    scam_type = evidence.resolve_scam_type()
+    seed_hint = evidence.extract_seed_phrase_indicator()
+    if scam_type == "crypto_doubler":
         details = [
             "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)",
             "",
@@ -614,7 +736,16 @@ def build_manual_submission(
             details.append("Scammer wallet addresses:")
             for wallet in evidence.scammer_wallets[:3]:
                 details.append(f"  - {wallet}")
-    else:
+    elif scam_type == "fake_airdrop":
+        details = [
+            "Cryptocurrency fraud (fake airdrop/claim)",
+            "",
+            f"Domain: {evidence.domain}",
+            f"Confidence: {evidence.confidence_score}%",
+            "",
+            "Observed fake airdrop/claim flow",
+        ]
+    elif scam_type == "seed_phishing" or seed_hint:
         seed_obs = evidence.get_seed_observation()
         details = [
             "Cryptocurrency phishing (seed phrase theft)",
@@ -623,6 +754,15 @@ def build_manual_submission(
             f"Confidence: {evidence.confidence_score}%",
             "",
             seed_obs,
+        ]
+    else:
+        details = [
+            "Cryptocurrency fraud / phishing",
+            "",
+            f"Domain: {evidence.domain}",
+            f"Confidence: {evidence.confidence_score}%",
+            "",
+            "Observed cryptocurrency fraud/phishing content",
         ]
 
     # Add filtered reasons

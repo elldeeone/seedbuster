@@ -70,17 +70,16 @@ class DigitalOceanReporter(BaseReporter):
         """Build structured description for DO abuse form."""
         do_apps = self._extract_do_apps(evidence)
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = ReportTemplates._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
             scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
-            observed_line = "Observed crypto giveaway / doubler fraud"
-        else:
+        elif scam_type == "fake_airdrop":
+            scam_header = "CRYPTOCURRENCY FRAUD (FAKE AIRDROP) - Apps to suspend:"
+        elif scam_type == "seed_phishing":
             scam_header = "CRYPTOCURRENCY PHISHING - Apps to suspend:"
-            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-            observed_line = (
-                f"Requests seed phrase ('{seed_hint}')"
-                if seed_hint
-                else "Requests cryptocurrency seed phrase"
-            )
+        else:
+            scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
+        observed_line = ReportTemplates._observed_summary_line(evidence)
 
         return f"""{scam_header}
 {chr(10).join(f'- {app}' for app in do_apps)}

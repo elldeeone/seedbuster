@@ -45,7 +45,8 @@ class NetcraftReporter(BaseReporter):
     def _build_reason_string(self, evidence: ReportEvidence) -> str:
         """Summarize why the URL is malicious for Netcraft submissions."""
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = ReportTemplates._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
             reason_lines = [
                 "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
                 f"Confidence: {evidence.confidence_score}%",
@@ -59,7 +60,20 @@ class NetcraftReporter(BaseReporter):
             ]
             if evidence.scammer_wallets:
                 reason_lines.insert(3, f"Scammer wallet: {evidence.scammer_wallets[0]}")
-        else:
+        elif scam_type == "fake_airdrop":
+            reason_lines = [
+                "Cryptocurrency fraud (fake airdrop/claim).",
+                "Observed fake airdrop/claim flow.",
+                f"Confidence: {evidence.confidence_score}%",
+                "",
+                "Key evidence (automated capture):",
+                *[f"- {r}" for r in highlights],
+                "",
+                "Captured evidence (screenshot + HTML) available on request.",
+                "",
+                "Detected by SeedBuster.",
+            ]
+        elif scam_type == "seed_phishing":
             seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
             seed_line = (
                 f"Requests seed phrase ('{seed_hint}')."
@@ -69,6 +83,19 @@ class NetcraftReporter(BaseReporter):
             reason_lines = [
                 "Cryptocurrency phishing (seed phrase theft).",
                 seed_line,
+                f"Confidence: {evidence.confidence_score}%",
+                "",
+                "Key evidence (automated capture):",
+                *[f"- {r}" for r in highlights],
+                "",
+                "Captured evidence (screenshot + HTML) available on request.",
+                "",
+                "Detected by SeedBuster.",
+            ]
+        else:
+            reason_lines = [
+                "Cryptocurrency fraud / phishing.",
+                "Observed cryptocurrency fraud/phishing content.",
                 f"Confidence: {evidence.confidence_score}%",
                 "",
                 "Key evidence (automated capture):",

@@ -37,14 +37,73 @@ def _humanize_reason(text: str) -> str:
     return out
 
 
+def _finalize_description(
+    lines: list[str],
+    evidence: ReportEvidence,
+    *,
+    extra: str | None = None,
+) -> str:
+    """Append shared evidence sections to a description."""
+    reasons = evidence.detection_reasons or []
+    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+    cleaned_reasons = [
+        _humanize_reason(r) for r in reasons[:5]
+        if not any(s in (r or "").lower() for s in skip_terms)
+    ]
+    if cleaned_reasons:
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in cleaned_reasons[:4]:
+            lines.append(f"  - {reason}")
+
+    backends = evidence.backend_domains or []
+    if backends:
+        lines.append("")
+        lines.append("DATA SENT TO (backend servers):")
+        for backend in backends[:3]:
+            lines.append(f"  - {backend}")
+
+    endpoints = evidence.suspicious_endpoints or []
+    if endpoints and not backends:
+        lines.append("")
+        lines.append("SUSPICIOUS ENDPOINTS:")
+        for endpoint in endpoints[:3]:
+            lines.append(f"  - {endpoint}")
+
+    if extra:
+        lines.extend(["", extra])
+
+    lines.extend([
+        "",
+        "Reported by: SeedBuster (automated phishing detection)",
+        "Source: https://github.com/elldeeone/seedbuster",
+    ])
+
+    return "\n".join(lines).strip()
+
+
 def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) -> str:
     """Build a human-readable abuse report description with context."""
-    if evidence.scam_type == "crypto_doubler":
-        return _basic_description_crypto_doubler(evidence, extra=extra)
-
-    # Extract seed phrase indicator if available
+    scam_type = evidence.resolve_scam_type()
     seed_field = _extract_seed_field_name(evidence.detection_reasons)
 
+    if scam_type == "crypto_doubler":
+        return _basic_description_crypto_doubler(evidence, extra=extra)
+    if scam_type == "fake_airdrop":
+        return _basic_description_fake_airdrop(evidence, extra=extra)
+    if scam_type == "seed_phishing" or seed_field:
+        return _basic_description_seed_phishing(evidence, seed_field=seed_field, extra=extra)
+    return _basic_description_generic(evidence, extra=extra)
+
+
+def _basic_description_seed_phishing(
+    evidence: ReportEvidence,
+    *,
+    seed_field: str | None = None,
+    extra: str | None = None,
+) -> str:
+    """Build a human-readable report description for seed phrase phishing."""
+    seed_field = seed_field or _extract_seed_field_name(evidence.detection_reasons)
     lines: list[str] = [
         "ACTION REQUESTED: Please suspend this phishing site.",
         "",
@@ -64,46 +123,54 @@ def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) ->
     if seed_field:
         lines.append(f"  Seed phrase field name: '{seed_field}'")
 
-    # Add cleaned-up detection reasons
-    reasons = evidence.detection_reasons or []
-    # Filter out low-signal reasons
-    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-    cleaned_reasons = [
-        _humanize_reason(r) for r in reasons[:5]
-        if not any(s in (r or "").lower() for s in skip_terms)
-    ]
-    if cleaned_reasons:
-        lines.append("")
-        lines.append("KEY EVIDENCE:")
-        for reason in cleaned_reasons[:4]:
-            lines.append(f"  - {reason}")
+    return _finalize_description(lines, evidence, extra=extra)
 
-    # Add backend infrastructure if present
-    backends = evidence.backend_domains or []
-    if backends:
-        lines.append("")
-        lines.append("DATA SENT TO (backend servers):")
-        for backend in backends[:3]:
-            lines.append(f"  - {backend}")
 
-    # Add suspicious endpoints if present
-    endpoints = evidence.suspicious_endpoints or []
-    if endpoints and not backends:
-        lines.append("")
-        lines.append("SUSPICIOUS ENDPOINTS:")
-        for endpoint in endpoints[:3]:
-            lines.append(f"  - {endpoint}")
-
-    if extra:
-        lines.extend(["", extra])
-
-    lines.extend([
+def _basic_description_fake_airdrop(
+    evidence: ReportEvidence,
+    *,
+    extra: str | None = None,
+) -> str:
+    """Build a human-readable report description for fake airdrop scams."""
+    lines: list[str] = [
+        "ACTION REQUESTED: Please suspend this fraudulent airdrop site.",
         "",
-        "Reported by: SeedBuster (automated phishing detection)",
-        "Source: https://github.com/elldeeone/seedbuster",
-    ])
+        "WHAT THIS SITE DOES:",
+        "This site impersonates a cryptocurrency project and promotes a fake",
+        "airdrop/claim flow. It is designed to mislead users into unsafe actions",
+        "that can result in loss of funds or account compromise.",
+        "",
+        "FRAUD SITE DETAILS:",
+        f"  URL: {evidence.url}",
+        f"  Domain: {evidence.domain}",
+        f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
+        f"  Confidence: {evidence.confidence_score}%",
+    ]
 
-    return "\n".join(lines).strip()
+    return _finalize_description(lines, evidence, extra=extra)
+
+
+def _basic_description_generic(
+    evidence: ReportEvidence,
+    *,
+    extra: str | None = None,
+) -> str:
+    """Build a generic report description for crypto fraud/phishing."""
+    lines: list[str] = [
+        "ACTION REQUESTED: Please suspend this fraudulent site.",
+        "",
+        "WHAT THIS SITE DOES:",
+        "This site hosts cryptocurrency-related fraud/phishing content intended",
+        "to trick users into unsafe actions.",
+        "",
+        "SITE DETAILS:",
+        f"  URL: {evidence.url}",
+        f"  Domain: {evidence.domain}",
+        f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
+        f"  Confidence: {evidence.confidence_score}%",
+    ]
+
+    return _finalize_description(lines, evidence, extra=extra)
 
 
 def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | None = None) -> str:
@@ -241,12 +308,19 @@ class _SimpleEmailReporter(BaseReporter):
         description = _basic_description(evidence)
         # Use more descriptive subject that conveys urgency
         prefix = self._subject_prefix
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = evidence.resolve_scam_type()
+        if scam_type == "crypto_doubler":
             if "phishing" in prefix.lower():
                 prefix = prefix.replace("Phishing", "Fraud").replace("phishing", "fraud")
             subject_suffix = "Crypto Doubler / Fake Giveaway Fraud"
-        else:
+        elif scam_type == "fake_airdrop":
+            if "phishing" in prefix.lower():
+                prefix = prefix.replace("Phishing", "Fraud").replace("phishing", "fraud")
+            subject_suffix = "Fake Airdrop / Claim Fraud"
+        elif scam_type == "seed_phishing" or _extract_seed_field_name(evidence.detection_reasons):
             subject_suffix = "Cryptocurrency Seed Phrase Theft"
+        else:
+            subject_suffix = "Cryptocurrency Fraud"
         subject = f"{prefix} {evidence.domain} - {subject_suffix}"
         return ManualSubmissionData(
             form_url=self.platform_url,

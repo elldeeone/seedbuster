@@ -10,6 +10,7 @@ from .base import (
     ReportResult,
     ReportStatus,
 )
+from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -42,40 +43,8 @@ class GoogleSafeBrowsingReporter(BaseReporter):
 
     def get_report_text(self, evidence: ReportEvidence) -> str:
         """Generate the additional details text for copy-paste."""
-        # Filter and humanize detection reasons
-        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-        cleaned_reasons = []
-        for reason in evidence.detection_reasons[:4]:
-            if any(s in (reason or "").lower() for s in skip_terms):
-                continue
-            # Humanize the reason
-            humanized = (reason or "").strip()
-            humanized = humanized.replace("Seed phrase form found via exploration:", "Requests seed phrase:")
-            humanized = humanized.replace("Seed phrase form found:", "Requests seed phrase:")
-            humanized = humanized.replace(" via exploration", "")
-            cleaned_reasons.append(humanized)
-
-        details_parts = [
-            "Cryptocurrency seed phrase phishing - steals wallet recovery phrases.",
-            "Victims lose all funds immediately and irreversibly.",
-            "",
-            f"Confidence: {evidence.confidence_score}%",
-            "",
-            "Key evidence:",
-        ]
-        for reason in cleaned_reasons[:3]:
-            details_parts.append(f"- {reason}")
-
-        if evidence.backend_domains:
-            details_parts.append("")
-            details_parts.append("Stolen data sent to:")
-            for backend in evidence.backend_domains[:2]:
-                details_parts.append(f"- {backend}")
-
-        details_parts.append("")
-        details_parts.append("Detected by SeedBuster (github.com/elldeeone/seedbuster)")
-
-        return "\n".join(details_parts)[:790]
+        details = ReportTemplates.google_safebrowsing_comment(evidence)
+        return details[:790]
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """

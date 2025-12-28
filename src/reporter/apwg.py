@@ -35,10 +35,15 @@ class APWGReporter(BaseReporter):
         self._configured = True
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = evidence.resolve_scam_type()
+        if scam_type == "crypto_doubler":
             subject = f"Fraud Report: {evidence.domain} - Crypto Doubler / Fake Giveaway"
-        else:
+        elif scam_type == "fake_airdrop":
+            subject = f"Fraud Report: {evidence.domain} - Fake Airdrop / Claim"
+        elif scam_type == "seed_phishing" or evidence.extract_seed_phrase_indicator():
             subject = f"Phishing Report: {evidence.domain} - Cryptocurrency Seed Phrase Theft"
+        else:
+            subject = f"Phishing/Fraud Report: {evidence.domain} - Cryptocurrency Scam"
         email_body = evidence.to_summary().strip()
         mailto_url = f"mailto:{self.DESTINATION_EMAIL}?subject={subject}"
         return ManualSubmissionData(

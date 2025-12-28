@@ -1857,19 +1857,23 @@ class ReportManager:
                     do_apps.append(d)
             do_apps = sorted(set(do_apps))
 
-            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-            seed_line = (
-                f"Requests seed phrase ('{seed_hint}')"
-                if seed_hint
-                else "Requests cryptocurrency seed phrase"
-            )
+            scam_type = ReportTemplates._resolve_scam_type(evidence)
+            if scam_type == "crypto_doubler":
+                scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
+            elif scam_type == "fake_airdrop":
+                scam_header = "CRYPTOCURRENCY FRAUD (FAKE AIRDROP) - Apps to suspend:"
+            elif scam_type == "seed_phishing":
+                scam_header = "CRYPTOCURRENCY PHISHING - Apps to suspend:"
+            else:
+                scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
+            observed_line = ReportTemplates._observed_summary_line(evidence)
             highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
 
-            description = f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
+            description = f"""{scam_header}
 {chr(10).join(f'- {app}' for app in do_apps)}
 
-Phishing URL: {evidence.url}
-Observed: {seed_line}
+Reported URL: {evidence.url}
+Observed: {observed_line}
 Confidence: {evidence.confidence_score}%
 
 Key evidence (automated capture):
@@ -1998,26 +2002,66 @@ Value:
 Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers them at submit time.
 """
         elif platform == "netcraft":
-            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-            seed_line = (
-                f"Requests seed phrase ('{seed_hint}')."
-                if seed_hint
-                else "Requests cryptocurrency seed phrase."
-            )
+            scam_type = ReportTemplates._resolve_scam_type(evidence)
             highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
 
-            reason_lines = [
-                "Cryptocurrency phishing (seed phrase theft).",
-                seed_line,
-                f"Confidence: {evidence.confidence_score}%",
-                "",
-                "Key evidence (automated capture):",
-                *[f"- {r}" for r in highlights],
-                "",
-                "Captured evidence (screenshot + HTML) available on request.",
-                "",
-                "Detected by SeedBuster.",
-            ]
+            if scam_type == "crypto_doubler":
+                reason_lines = [
+                    "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
+                    f"Confidence: {evidence.confidence_score}%",
+                    "",
+                    "Key evidence (automated capture):",
+                    *[f"- {r}" for r in highlights],
+                    "",
+                    "Captured evidence (screenshot + HTML) available on request.",
+                    "",
+                    "Detected by SeedBuster.",
+                ]
+            elif scam_type == "fake_airdrop":
+                reason_lines = [
+                    "Cryptocurrency fraud (fake airdrop/claim).",
+                    "Observed fake airdrop/claim flow.",
+                    f"Confidence: {evidence.confidence_score}%",
+                    "",
+                    "Key evidence (automated capture):",
+                    *[f"- {r}" for r in highlights],
+                    "",
+                    "Captured evidence (screenshot + HTML) available on request.",
+                    "",
+                    "Detected by SeedBuster.",
+                ]
+            elif scam_type == "seed_phishing":
+                seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+                seed_line = (
+                    f"Requests seed phrase ('{seed_hint}')."
+                    if seed_hint
+                    else "Requests cryptocurrency seed phrase."
+                )
+                reason_lines = [
+                    "Cryptocurrency phishing (seed phrase theft).",
+                    seed_line,
+                    f"Confidence: {evidence.confidence_score}%",
+                    "",
+                    "Key evidence (automated capture):",
+                    *[f"- {r}" for r in highlights],
+                    "",
+                    "Captured evidence (screenshot + HTML) available on request.",
+                    "",
+                    "Detected by SeedBuster.",
+                ]
+            else:
+                reason_lines = [
+                    "Cryptocurrency fraud / phishing.",
+                    "Observed cryptocurrency fraud/phishing content.",
+                    f"Confidence: {evidence.confidence_score}%",
+                    "",
+                    "Key evidence (automated capture):",
+                    *[f"- {r}" for r in highlights],
+                    "",
+                    "Captured evidence (screenshot + HTML) available on request.",
+                    "",
+                    "Detected by SeedBuster.",
+                ]
             reason = "\n".join(reason_lines).strip()
 
             payload: dict[str, object] = {

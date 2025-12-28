@@ -28,6 +28,35 @@ class ReportTemplates:
         return None
 
     @classmethod
+    def _resolve_scam_type(cls, evidence: ReportEvidence) -> str:
+        return evidence.resolve_scam_type()
+
+    @classmethod
+    def _scam_headline(cls, evidence: ReportEvidence) -> str:
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
+            return "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)"
+        if scam_type == "fake_airdrop":
+            return "Cryptocurrency fraud (fake airdrop/claim)"
+        if scam_type == "seed_phishing":
+            return "Cryptocurrency phishing (seed phrase theft)"
+        return "Cryptocurrency fraud / phishing"
+
+    @classmethod
+    def _observed_summary_line(cls, evidence: ReportEvidence) -> str:
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
+            return "Observed crypto giveaway / doubler fraud"
+        if scam_type == "fake_airdrop":
+            return "Observed fake airdrop / claim flow"
+        if scam_type == "seed_phishing":
+            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+            if seed_hint:
+                return f"Requests seed phrase ('{seed_hint}')"
+            return "Requests cryptocurrency seed phrase"
+        return "Observed cryptocurrency fraud / phishing content"
+
+    @classmethod
     def _summarize_reasons(cls, reasons: list[str], *, max_items: int = 5) -> list[str]:
         cleaned: list[str] = []
         for r in reasons or []:
@@ -100,25 +129,49 @@ class ReportTemplates:
         Action-first format optimized for busy abuse teams.
         Routes to appropriate template based on scam_type.
         """
+        scam_type = cls._resolve_scam_type(evidence)
         # Route to crypto doubler template if applicable
-        if evidence.scam_type == "crypto_doubler":
+        if scam_type == "crypto_doubler":
             return cls.crypto_doubler_generic(evidence, reporter_email)
 
-        subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
-
-        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = f"Observed seed phrase field: '{seed_hint}'" if seed_hint else "Observed seed phrase theft flow"
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
-        if seed_hint:
-            seed_lower = seed_hint.lower()
-            highlights = [
-                h
-                for h in highlights
-                if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
+        if scam_type == "seed_phishing":
+            subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
+            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+            seed_line = (
+                f"Observed seed phrase field: '{seed_hint}'"
+                if seed_hint
+                else "Observed seed phrase theft flow"
+            )
+            observations = [seed_line]
+            impact_lines = [
+                "- A seed phrase is the master key for a crypto wallet; theft enables immediate, irreversible loss of funds.",
             ]
-        observations = [seed_line, *highlights]
+        elif scam_type == "fake_airdrop":
+            subject = f"Fraudulent Airdrop Takedown Request: {evidence.domain}"
+            observations = ["Observed fake airdrop/claim flow"]
+            impact_lines = [
+                "- Victims can be tricked into authorizing wallet actions or sending funds under false pretenses.",
+            ]
+        else:
+            subject = f"Fraud/Phishing Takedown Request: {evidence.domain}"
+            observations = ["Observed cryptocurrency fraud/phishing content"]
+            impact_lines = [
+                "- Victims can be misled into unsafe actions resulting in loss of funds.",
+            ]
 
-        body = f"""Cryptocurrency phishing / seed phrase theft
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+        if scam_type == "seed_phishing":
+            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+            if seed_hint:
+                seed_lower = seed_hint.lower()
+                highlights = [
+                    h
+                    for h in highlights
+                    if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
+                ]
+        observations = [*observations, *highlights]
+
+        body = f"""{cls._scam_headline(evidence)}
 
 Action requested:
 - Please suspend/disable the phishing content for the URL below.
@@ -129,7 +182,7 @@ What we observed:
 {cls._format_list(observations, prefix='- ')}
 
 Impact:
-- A seed phrase is the master key for a crypto wallet; theft enables immediate, irreversible loss of funds.
+{cls._format_list(impact_lines, prefix='')}
 
 """
         body += cls._build_backend_section(evidence)
@@ -146,21 +199,54 @@ Impact:
         Generate a DigitalOcean-specific abuse report.
         Optimized for their abuse team with clear action items.
         """
-        subject = f"URGENT: Phishing Backend on App Platform - {evidence.domain}"
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "seed_phishing":
+            subject = f"URGENT: Phishing Backend on App Platform - {evidence.domain}"
+            header_label = "CRYPTOCURRENCY PHISHING INFRASTRUCTURE"
+            action_detail = "They are actively receiving stolen cryptocurrency seed phrases."
+            attack_steps = [
+                f"  1. Victim visits {evidence.domain} (fake cryptocurrency wallet)",
+                "  2. Site displays fake \"restore wallet\" form requesting 12-word seed phrase",
+                "  3. Victim enters their seed phrase thinking it's legitimate",
+                "  4. Data is POST'd to DigitalOcean App Platform backends (listed above)",
+                "  5. Attacker uses seed phrase to steal all cryptocurrency from victim's wallet",
+            ]
+        elif scam_type == "fake_airdrop":
+            subject = f"URGENT: Fraudulent Airdrop Backend on App Platform - {evidence.domain}"
+            header_label = "CRYPTOCURRENCY FRAUD INFRASTRUCTURE"
+            action_detail = "They are supporting a fraudulent airdrop/claim flow."
+            attack_steps = [
+                f"  1. Victim visits {evidence.domain} (fake airdrop/claim page)",
+                "  2. Site presents a fake airdrop/claim flow",
+                "  3. User is prompted to proceed with claim steps",
+                "  4. Any submitted data/actions are sent to DigitalOcean App Platform backends",
+                "  5. Victims may lose funds or expose sensitive details",
+            ]
+        else:
+            subject = f"URGENT: Fraudulent Crypto Backend on App Platform - {evidence.domain}"
+            header_label = "CRYPTOCURRENCY FRAUD INFRASTRUCTURE"
+            action_detail = "They are supporting a cryptocurrency fraud/phishing flow."
+            attack_steps = [
+                f"  1. Victim visits {evidence.domain} (fraudulent crypto-themed site)",
+                "  2. Site presents malicious or misleading content",
+                "  3. User is prompted to proceed with unsafe actions",
+                "  4. Any submitted data/actions are sent to DigitalOcean App Platform backends",
+                "  5. Victims may lose funds or expose sensitive details",
+            ]
 
         # Extract DO apps
         do_apps = [d for d in (evidence.backend_domains or []) if "ondigitalocean.app" in d]
 
-        body = """
+        body = f"""
 ================================================================================
-              URGENT: CRYPTOCURRENCY PHISHING INFRASTRUCTURE
+              URGENT: {header_label}
                     DigitalOcean App Platform Abuse Report
 ================================================================================
 
 ACTION REQUESTED
 ----------------
 Please IMMEDIATELY suspend the following App Platform applications.
-They are actively receiving stolen cryptocurrency seed phrases.
+{action_detail}
 
 """
 
@@ -185,11 +271,7 @@ PHISHING SITE (FRONTEND)
 
 HOW THE ATTACK WORKS
 --------------------
-  1. Victim visits {evidence.domain} (fake cryptocurrency wallet)
-  2. Site displays fake "restore wallet" form requesting 12-word seed phrase
-  3. Victim enters their seed phrase thinking it's legitimate
-  4. Data is POST'd to DigitalOcean App Platform backends (listed above)
-  5. Attacker uses seed phrase to steal all cryptocurrency from victim's wallet
+{chr(10).join(attack_steps)}
 
 """
 
@@ -249,28 +331,46 @@ network logs) upon request.
     def cloudflare(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
         """Generate a Cloudflare abuse report."""
         # Route to crypto doubler template if applicable
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
             return cls.crypto_doubler_cloudflare(evidence, reporter_email)
 
         subject = f"Phishing report: {evidence.domain}"
 
-        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = f"Requests seed phrase ('{seed_hint}')" if seed_hint else "Requests cryptocurrency seed phrase"
+        headline = cls._scam_headline(evidence)
+        observed_line = cls._observed_summary_line(evidence)
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
 
-        body = f"""Cryptocurrency phishing (seed phrase theft)
+        if scam_type == "seed_phishing":
+            steps = [
+                "1) Open the evidence URL above.",
+                "2) The page presents a wallet/recovery flow.",
+                "3) It prompts the user to enter their seed phrase/mnemonic.",
+            ]
+        elif scam_type == "fake_airdrop":
+            steps = [
+                "1) Open the evidence URL above.",
+                "2) The page presents a fake airdrop/claim flow.",
+                "3) The user is prompted to proceed with claim steps.",
+            ]
+        else:
+            steps = [
+                "1) Open the evidence URL above.",
+                "2) The page presents fraudulent content.",
+                "3) The user is prompted to proceed with unsafe actions.",
+            ]
+
+        body = f"""{headline}
 
 Evidence URL: {evidence.url}
-Observed: {seed_line}
+Observed: {observed_line}
 Confidence: {evidence.confidence_score}%
 
 Key evidence (automated capture):
 {cls._format_list(highlights, prefix='- ')}
 
 Steps to reproduce:
-1) Open the evidence URL above.
-2) The page presents a wallet/recovery flow.
-3) It prompts the user to enter their seed phrase/mnemonic.
+{cls._format_list(steps, prefix='')}
 
 Captured evidence (screenshot + HTML) available on request.
 """
@@ -291,23 +391,30 @@ Captured evidence (screenshot + HTML) available on request.
     ) -> dict:
         """Generate a domain registrar abuse report."""
         # Route to crypto doubler template if applicable
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
             return cls.crypto_doubler_registrar(evidence, reporter_email, registrar_name)
 
         registrar_str = f" - {registrar_name}" if registrar_name else ""
-        subject = f"Domain Abuse Report (phishing / seed phrase theft): {evidence.domain}"
+        if scam_type == "seed_phishing":
+            subject = f"Domain Abuse Report (phishing / seed phrase theft): {evidence.domain}"
+        elif scam_type == "fake_airdrop":
+            subject = f"Domain Abuse Report (fake airdrop/fraud): {evidence.domain}"
+        else:
+            subject = f"Domain Abuse Report (cryptocurrency fraud): {evidence.domain}"
 
-        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = f"Observed seed phrase field: '{seed_hint}'" if seed_hint else "Observed seed phrase theft flow"
+        observed_line = cls._observed_summary_line(evidence)
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
-        if seed_hint:
-            seed_lower = seed_hint.lower()
-            highlights = [
-                h
-                for h in highlights
-                if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
-            ]
-        observations = [seed_line, *highlights]
+        if scam_type == "seed_phishing":
+            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+            if seed_hint:
+                seed_lower = seed_hint.lower()
+                highlights = [
+                    h
+                    for h in highlights
+                    if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
+                ]
+        observations = [observed_line, *highlights]
 
         body = f"""Registrar abuse report{registrar_str}
 
@@ -331,9 +438,36 @@ What we observed:
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
         # Use appropriate comment based on scam type
-        if evidence.scam_type == "crypto_doubler":
+        scam_type = cls._resolve_scam_type(evidence)
+        if scam_type == "crypto_doubler":
             return cls._google_safebrowsing_doubler_comment(evidence)
-        # Default to seed phishing
+
+        if scam_type == "fake_airdrop":
+            highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+            lines = [
+                "Cryptocurrency fraud (fake airdrop/claim).",
+                "Promotes a fake airdrop/claim flow under a trusted brand.",
+                "",
+                "Key evidence (automated capture):",
+            ]
+            for reason in highlights:
+                lines.append(f"- {reason}")
+            lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
+            return "\n".join(lines)
+
+        if scam_type != "seed_phishing":
+            highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+            lines = [
+                "Cryptocurrency fraud / phishing.",
+                "Malicious content observed (details below).",
+                "",
+                "Key evidence (automated capture):",
+            ]
+            for reason in highlights:
+                lines.append(f"- {reason}")
+            lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
+            return "\n".join(lines)
+
         seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
         seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
