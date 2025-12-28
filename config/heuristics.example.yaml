@@ -288,7 +288,7 @@ scoring:
 
   # Domain score thresholds
   domain_score_high_threshold: 50
-  domain_score_high_points: 15
+  domain_score_high_points: 20
   domain_score_medium_threshold: 30
   domain_score_medium_points: 10
 
