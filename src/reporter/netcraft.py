@@ -46,18 +46,27 @@ class NetcraftReporter(BaseReporter):
         """Summarize why the URL is malicious for Netcraft submissions."""
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
         scam_type = ReportTemplates._resolve_scam_type(evidence)
+        impersonation = evidence.get_impersonation_lines()
         if scam_type == "crypto_doubler":
             reason_lines = [
                 "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
                 f"Confidence: {evidence.confidence_score}%",
                 "",
-                "Key evidence (automated capture):",
+            ]
+            if impersonation:
+                reason_lines.extend([
+                    "Impersonation indicators:",
+                    *[f"- {line}" for line in impersonation],
+                    "",
+                ])
+            reason_lines.extend([
+                "Key evidence from our review:",
                 *[f"- {r}" for r in highlights],
                 "",
                 "Captured evidence (screenshot + HTML) available on request.",
                 "",
                 "Detected by SeedBuster.",
-            ]
+            ])
             if evidence.scammer_wallets:
                 reason_lines.insert(3, f"Scammer wallet: {evidence.scammer_wallets[0]}")
         elif scam_type == "fake_airdrop":
@@ -66,13 +75,21 @@ class NetcraftReporter(BaseReporter):
                 "Observed fake airdrop/claim flow.",
                 f"Confidence: {evidence.confidence_score}%",
                 "",
-                "Key evidence (automated capture):",
+            ]
+            if impersonation:
+                reason_lines.extend([
+                    "Impersonation indicators:",
+                    *[f"- {line}" for line in impersonation],
+                    "",
+                ])
+            reason_lines.extend([
+                "Key evidence from our review:",
                 *[f"- {r}" for r in highlights],
                 "",
                 "Captured evidence (screenshot + HTML) available on request.",
                 "",
                 "Detected by SeedBuster.",
-            ]
+            ])
         elif scam_type == "seed_phishing":
             seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
             seed_line = (
@@ -85,26 +102,42 @@ class NetcraftReporter(BaseReporter):
                 seed_line,
                 f"Confidence: {evidence.confidence_score}%",
                 "",
-                "Key evidence (automated capture):",
+            ]
+            if impersonation:
+                reason_lines.extend([
+                    "Impersonation indicators:",
+                    *[f"- {line}" for line in impersonation],
+                    "",
+                ])
+            reason_lines.extend([
+                "Key evidence from our review:",
                 *[f"- {r}" for r in highlights],
                 "",
                 "Captured evidence (screenshot + HTML) available on request.",
                 "",
                 "Detected by SeedBuster.",
-            ]
+            ])
         else:
             reason_lines = [
                 "Cryptocurrency fraud / phishing.",
                 "Observed cryptocurrency fraud/phishing content.",
                 f"Confidence: {evidence.confidence_score}%",
                 "",
-                "Key evidence (automated capture):",
+            ]
+            if impersonation:
+                reason_lines.extend([
+                    "Impersonation indicators:",
+                    *[f"- {line}" for line in impersonation],
+                    "",
+                ])
+            reason_lines.extend([
+                "Key evidence from our review:",
                 *[f"- {r}" for r in highlights],
                 "",
                 "Captured evidence (screenshot + HTML) available on request.",
                 "",
                 "Detected by SeedBuster.",
-            ]
+            ])
         return "\n".join(reason_lines).strip()
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:

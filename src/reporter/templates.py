@@ -72,8 +72,6 @@ class ReportTemplates:
             "domain suspicion",
             "keyword",
             "tld",
-            "kaspa-related title",
-            "wallet-related title",
             "known malicious domain",
         )
 
@@ -86,18 +84,13 @@ class ReportTemplates:
             "cloaking detected",
             "ondigitalocean.app",
             "workers.dev",
+            "kaspa",
+            "airdrop",
+            "giveaway",
+            "claim",
+            "support",
+            "doubler",
         )
-
-        def humanize(text: str) -> str:
-            out = (text or "").strip()
-            lower = out.lower()
-            if lower.startswith("temporal:"):
-                out = out.split(":", 1)[1].strip()
-            out = out.replace("Seed phrase form found via exploration:", "Seed phrase form detected:")
-            out = out.replace("Seed phrase form found:", "Seed phrase form detected:")
-            out = out.replace(" via exploration", "")
-            out = out.replace("Cloaking detected", "Cloaking detected (content varied across scans)")
-            return out
 
         high_signal: list[str] = []
         other: list[str] = []
@@ -109,9 +102,9 @@ class ReportTemplates:
             if any(s in lower for s in drop_substrings):
                 continue
             if any(s in lower for s in keep_substrings):
-                high_signal.append(humanize(text))
+                high_signal.append(ReportEvidence.humanize_reason(text))
             else:
-                other.append(humanize(text))
+                other.append(ReportEvidence.humanize_reason(text))
 
         out = high_signal[: max_items]
         if len(out) < max_items:
@@ -133,6 +126,8 @@ class ReportTemplates:
         # Route to crypto doubler template if applicable
         if scam_type == "crypto_doubler":
             return cls.crypto_doubler_generic(evidence, reporter_email)
+
+        impersonation = evidence.get_impersonation_lines()
 
         if scam_type == "seed_phishing":
             subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
@@ -158,6 +153,9 @@ class ReportTemplates:
             impact_lines = [
                 "- Victims can be misled into unsafe actions resulting in loss of funds.",
             ]
+
+        if impersonation:
+            observations.extend(impersonation)
 
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
         if scam_type == "seed_phishing":
@@ -340,6 +338,7 @@ network logs) upon request.
         headline = cls._scam_headline(evidence)
         observed_line = cls._observed_summary_line(evidence)
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+        impersonation = evidence.get_impersonation_lines()
 
         if scam_type == "seed_phishing":
             steps = [
@@ -366,7 +365,7 @@ Evidence URL: {evidence.url}
 Observed: {observed_line}
 Confidence: {evidence.confidence_score}%
 
-Key evidence (automated capture):
+Key evidence from our review:
 {cls._format_list(highlights, prefix='- ')}
 
 Steps to reproduce:
@@ -374,6 +373,14 @@ Steps to reproduce:
 
 Captured evidence (screenshot + HTML) available on request.
 """
+
+        if impersonation:
+            body = body.replace(
+                "Key evidence from our review:",
+                "Impersonation indicators:\n"
+                f"{cls._format_list(impersonation, prefix='- ')}\n\n"
+                "Key evidence from our review:",
+            )
 
         return {
             "subject": subject,
@@ -404,6 +411,7 @@ Captured evidence (screenshot + HTML) available on request.
             subject = f"Domain Abuse Report (cryptocurrency fraud): {evidence.domain}"
 
         observed_line = cls._observed_summary_line(evidence)
+        impersonation = evidence.get_impersonation_lines()
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
         if scam_type == "seed_phishing":
             seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
@@ -414,7 +422,7 @@ Captured evidence (screenshot + HTML) available on request.
                     for h in highlights
                     if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
                 ]
-        observations = [observed_line, *highlights]
+        observations = [observed_line, *impersonation, *highlights]
 
         body = f"""Registrar abuse report{registrar_str}
 
@@ -437,67 +445,117 @@ What we observed:
     @classmethod
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
-        # Use appropriate comment based on scam type
         scam_type = cls._resolve_scam_type(evidence)
         if scam_type == "crypto_doubler":
             return cls._google_safebrowsing_doubler_comment(evidence)
 
-        if scam_type == "fake_airdrop":
-            highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
-            lines = [
-                "Cryptocurrency fraud (fake airdrop/claim).",
-                "Promotes a fake airdrop/claim flow under a trusted brand.",
-                "",
-                "Key evidence (automated capture):",
-            ]
-            for reason in highlights:
-                lines.append(f"- {reason}")
-            lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
-            return "\n".join(lines)
+        headline = cls._scam_headline(evidence)
+        impersonation = evidence.get_impersonation_lines()
+        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
 
-        if scam_type != "seed_phishing":
-            highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
-            lines = [
-                "Cryptocurrency fraud / phishing.",
-                "Malicious content observed (details below).",
-                "",
-                "Key evidence (automated capture):",
-            ]
-            for reason in highlights:
-                lines.append(f"- {reason}")
-            lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
-            return "\n".join(lines)
+        lower_reasons = " ".join(r.lower() for r in (evidence.detection_reasons or []))
+        has_support_redirect = any(token in lower_reasons for token in ("support", "telegram", "discord", "whatsapp"))
 
-        seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = f"Requests seed phrase ('{seed_hint}')." if seed_hint else "Requests cryptocurrency seed phrase."
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
-        lines = [
-            "Cryptocurrency wallet phishing (seed phrase theft).",
-            seed_line,
-            "",
-            "Key evidence (automated capture):",
-        ]
+        if scam_type == "seed_phishing":
+            what_users_see = [
+                "A wallet restore/import page that requests a 12 or 24-word seed phrase.",
+                "The page presents itself as a legitimate wallet recovery flow.",
+            ]
+            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
+            if seed_hint:
+                what_users_see.append(f"Seed phrase field label observed: '{seed_hint}'.")
+            harm_lines = [
+                "A seed phrase grants full control of a wallet; theft leads to immediate, irreversible loss.",
+            ]
+        elif scam_type == "fake_airdrop":
+            what_users_see = [
+                "A page advertising a crypto airdrop/claim.",
+                "Prompts visitors to connect a wallet or claim tokens.",
+            ]
+            if has_support_redirect:
+                what_users_see.append("Redirects users to social media \"support\" channels for persuasion.")
+            harm_lines = [
+                "Users can be tricked into approving malicious transactions or sending funds.",
+                "Wallet connections can expose additional data to attackers.",
+            ]
+        else:
+            what_users_see = [
+                "A crypto-themed page with misleading claims and calls-to-action.",
+                "Prompts users to proceed with unsafe actions (connect wallet, submit info, or send funds).",
+            ]
+            harm_lines = [
+                "Victims may lose funds or expose sensitive wallet data.",
+            ]
+
+        lines = [f"{headline}."]
+
+        if impersonation:
+            lines.append("")
+            lines.append("Impersonation indicators:")
+            lines.extend(f"- {line}" for line in impersonation)
+
+        lines.append("")
+        lines.append("What a visitor sees:")
+        lines.extend(f"- {line}" for line in what_users_see)
+
+        lines.append("")
+        lines.append("Why this is harmful:")
+        lines.extend(f"- {line}" for line in harm_lines)
+
+        if evidence.backend_domains:
+            lines.append("")
+            lines.append("Observed data collection hosts:")
+            for backend in evidence.backend_domains[:3]:
+                lines.append(f"- {backend}")
+        elif evidence.suspicious_endpoints:
+            lines.append("")
+            lines.append("Observed suspicious endpoints:")
+            for endpoint in evidence.suspicious_endpoints[:3]:
+                lines.append(f"- {endpoint}")
+
+        lines.append("")
+        lines.append("Key evidence from our review:")
         for reason in highlights:
             lines.append(f"- {reason}")
-        lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
+
+        lines.append("")
+        lines.append("We captured a screenshot and HTML during the scan and can provide them on request.")
+
         return "\n".join(lines)
 
     @classmethod
     def _google_safebrowsing_doubler_comment(cls, evidence: ReportEvidence) -> str:
         """Generate Google Safe Browsing comment for crypto doubler scams."""
-        lines = [
-            "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
-            "Impersonates official project to steal cryptocurrency.",
-            "",
-        ]
-        if evidence.scammer_wallets:
-            lines.append(f"Scammer wallet: {evidence.scammer_wallets[0]}")
+        headline = cls._scam_headline(evidence)
+        impersonation = evidence.get_impersonation_lines()
+        lines = [f"{headline}."]
+        if impersonation:
             lines.append("")
+            lines.append("Impersonation indicators:")
+            lines.extend(f"- {line}" for line in impersonation)
+        lines.append("")
+        lines.append("What a visitor sees:")
+        lines.extend([
+            "- A giveaway page promising 2X/3X returns.",
+            "- Instructions to send cryptocurrency to a displayed address.",
+            "- Urgency cues such as countdowns or fake confirmations.",
+        ])
+        lines.append("")
+        lines.append("Why this is harmful:")
+        lines.extend([
+            "- Victims send funds to the attacker and receive nothing back.",
+        ])
+        if evidence.scammer_wallets:
+            lines.append("")
+            lines.append("Scammer wallet addresses observed:")
+            for wallet in evidence.scammer_wallets[:3]:
+                lines.append(f"- {wallet}")
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
-        lines.append("Key evidence (automated capture):")
+        lines.append("")
+        lines.append("Key evidence from our review:")
         for reason in highlights:
             lines.append(f"- {reason}")
-        lines.extend(["", "Captured evidence (screenshot + HTML) available on request."])
+        lines.extend(["", "We captured a screenshot and HTML during the scan and can provide them on request."])
         return "\n".join(lines)
 
     # -------------------------------------------------------------------------
@@ -510,6 +568,8 @@ What we observed:
         subject = f"Fraud Report (Crypto Doubler/Giveaway Scam): {evidence.domain}"
 
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+        impersonation = evidence.get_impersonation_lines()
+        observations = [*impersonation, *highlights] if impersonation else highlights
 
         body = f"""Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)
 
@@ -519,15 +579,14 @@ Action requested:
 {cls._build_target_section(evidence, include_scam_type=True, scam_type_label="Crypto Doubler / Fake Giveaway")}
 
 What we observed:
-{cls._format_list(highlights, prefix='- ')}
+{cls._format_list(observations, prefix='- ')}
 
 """
         body += cls._build_scammer_wallets_section(evidence)
         body += """How this scam works:
-- Site impersonates official Kaspa project (kaspa.org)
-- Claims users will receive 3X back if they send cryptocurrency
-- Shows fake transaction history and countdown timers
-- Victim sends crypto to scammer's wallet; receives nothing back
+- Site advertises a fake giveaway promising 2X/3X returns
+- Displays a deposit address and urgency cues to push action
+- Victim sends crypto to the scammer's wallet; receives nothing back
 
 Impact:
 - This is advance-fee fraud. Victims lose all cryptocurrency sent.
@@ -550,6 +609,8 @@ Impact:
         subject = f"Domain Abuse Report (crypto fraud): {evidence.domain}"
 
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
+        impersonation = evidence.get_impersonation_lines()
+        observations = [*impersonation, *highlights] if impersonation else highlights
 
         body = f"""Registrar abuse report{registrar_str}
 
@@ -559,7 +620,7 @@ Action requested:
 {cls._build_target_section(evidence, include_scam_type=True, scam_type_label="Crypto Doubler / Fake Giveaway")}
 
 What we observed:
-{cls._format_list(highlights, prefix='- ')}
+{cls._format_list(observations, prefix='- ')}
 
 """
         # Custom scammer wallet section with different label
@@ -567,10 +628,9 @@ What we observed:
             body += f"Scammer wallet addresses (crypto sent here is stolen):\n{cls._format_list(evidence.scammer_wallets, prefix='- ')}\n\n"
 
         body += """How this scam works:
-- Site clones official cryptocurrency project branding (kaspa.org)
-- Promotes fake "airdrop" or "giveaway event"
-- Claims users will receive 3X returns if they send cryptocurrency
-- Shows fabricated transaction history to build false trust
+- Site advertises a fake giveaway or "event"
+- Claims users will receive 2X/3X returns if they send cryptocurrency
+- Displays fabricated transaction history or countdown timers to build false trust
 - Victim sends crypto to scammer's wallet address
 - Scammer keeps the funds; victim receives nothing
 
@@ -588,11 +648,12 @@ This is advance-fee fraud targeting cryptocurrency users.
         subject = f"Fraud report: {evidence.domain}"
 
         highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=4)
+        impersonation = evidence.get_impersonation_lines()
 
         body = f"""Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)
 
 Evidence URL: {evidence.url}
-Scam type: Fake crypto giveaway promising 3X returns
+Scam type: Fake crypto giveaway promising 2X/3X returns
 Confidence: {evidence.confidence_score}%
 
 """
@@ -602,14 +663,20 @@ Confidence: {evidence.confidence_score}%
 
 """
 
-        body += f"""Key evidence (automated capture):
+        if impersonation:
+            body += f"""Impersonation indicators:
+{cls._format_list(impersonation, prefix='- ')}
+
+"""
+
+        body += f"""Key evidence from our review:
 {cls._format_list(highlights, prefix='- ')}
 
 Steps to reproduce:
 1) Open the evidence URL above.
-2) The page impersonates kaspa.org with a "Join Event" button.
-3) Clicking leads to a page promising 3X returns on sent crypto.
-4) A wallet address is displayed for victims to send funds.
+2) The page presents a giveaway claiming 2X/3X returns.
+3) A wallet address is displayed for victims to send funds.
+4) Urgency cues (countdowns/limited time) are used to pressure action.
 
 Captured evidence (screenshot + HTML) available on request.
 """

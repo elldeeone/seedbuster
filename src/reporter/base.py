@@ -85,14 +85,25 @@ class ReportEvidence:
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
             f"  Confidence: {self.confidence_score}%",
-            "",
-            "KEY EVIDENCE:",
         ]
-        # Filter out low-signal reasons
-        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-        for reason in self.detection_reasons[:5]:
-            if not any(s in (reason or "").lower() for s in skip_terms):
-                lines.append(f"  - {reason}")
+
+        impersonation = self.get_impersonation_lines()
+        if impersonation:
+            lines.append("")
+            lines.append("IMPERSONATION INDICATORS:")
+            lines.extend(f"  - {line}" for line in impersonation)
+
+        lines.append("")
+        lines.append("WHAT A VISITOR SEES:")
+        lines.extend([
+            "  - A wallet restore/import form requesting a 12 or 24-word seed phrase.",
+            "  - A page designed to look like a legitimate wallet recovery flow.",
+        ])
+
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in self.get_filtered_reasons(max_items=5):
+            lines.append(f"  - {reason}")
 
         if self.backend_domains:
             lines.append("")
@@ -128,14 +139,24 @@ class ReportEvidence:
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
             f"  Confidence: {self.confidence_score}%",
-            "",
-            "KEY EVIDENCE:",
         ]
+        impersonation = self.get_impersonation_lines()
+        if impersonation:
+            lines.append("")
+            lines.append("IMPERSONATION INDICATORS:")
+            lines.extend(f"  - {line}" for line in impersonation)
 
-        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-        for reason in self.detection_reasons[:5]:
-            if not any(s in (reason or "").lower() for s in skip_terms):
-                lines.append(f"  - {reason}")
+        lines.append("")
+        lines.append("WHAT A VISITOR SEES:")
+        lines.extend([
+            "  - A page advertising a crypto airdrop/claim.",
+            "  - Prompts to connect a wallet or claim tokens.",
+        ])
+
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in self.get_filtered_reasons(max_items=5):
+            lines.append(f"  - {reason}")
 
         if self.backend_domains:
             lines.append("")
@@ -170,14 +191,24 @@ class ReportEvidence:
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
             f"  Confidence: {self.confidence_score}%",
-            "",
-            "KEY EVIDENCE:",
         ]
+        impersonation = self.get_impersonation_lines()
+        if impersonation:
+            lines.append("")
+            lines.append("IMPERSONATION INDICATORS:")
+            lines.extend(f"  - {line}" for line in impersonation)
 
-        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-        for reason in self.detection_reasons[:5]:
-            if not any(s in (reason or "").lower() for s in skip_terms):
-                lines.append(f"  - {reason}")
+        lines.append("")
+        lines.append("WHAT A VISITOR SEES:")
+        lines.extend([
+            "  - A crypto-themed page with misleading claims and calls-to-action.",
+            "  - Prompts users to proceed with unsafe actions (connect wallet, submit info, or send funds).",
+        ])
+
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in self.get_filtered_reasons(max_items=5):
+            lines.append(f"  - {reason}")
 
         if self.backend_domains:
             lines.append("")
@@ -217,6 +248,53 @@ class ReportEvidence:
                 return match.group(1).strip() or None
         return None
 
+    @staticmethod
+    def humanize_reason(text: str) -> str:
+        """Convert detection reasons into plain-language statements."""
+        out = (text or "").strip()
+        if not out:
+            return out
+
+        lower = out.lower()
+        if lower.startswith("temporal:"):
+            out = out.split(":", 1)[1].strip()
+
+        out = out.replace("Seed phrase form found via exploration:", "Seed phrase form detected:")
+        out = out.replace("Seed phrase form found:", "Seed phrase form detected:")
+        out = out.replace(" via exploration", "")
+        out = out.replace("Cloaking detected", "Cloaking detected (content varied across scans)")
+
+        if lower == "kaspa-related title":
+            return "Page title references Kaspa branding."
+        if lower == "airdrop-related title":
+            return "Page title references an airdrop/claim."
+        if lower == "wallet-related title":
+            return "Page title references a cryptocurrency wallet."
+        if "stolen kaspa branding asset" in lower:
+            return "Uses Kaspa branding assets (logo/styles)."
+
+        match = re.search(r"visual match to ([^:]+):\s*(\d+)%", out, re.I)
+        if match:
+            target = match.group(1).strip()
+            score = match.group(2).strip()
+            return f"Visual similarity to {target} (~{score}% match), indicating a clone."
+
+        prefix_match = re.match(r"([A-Z_]+):\s*(.+)", out)
+        if prefix_match:
+            label = prefix_match.group(1).strip().upper()
+            reason = prefix_match.group(2).strip()
+            prefix_map = {
+                "AIRDROP": "Fake airdrop/claim flow detected",
+                "DOUBLER": "Giveaway/doubler scam behavior detected",
+                "SUPPORT": "Fake support/social engineering detected",
+                "SEED": "Seed phrase theft indicator detected",
+                "MALWARE": "Malware/download lure detected",
+            }
+            if label in prefix_map:
+                return f"{prefix_map[label]} — {reason}"
+
+        return out
+
     def _reasons_contain(self, needles: tuple[str, ...]) -> bool:
         for reason in self.detection_reasons or []:
             text = (reason or "").lower()
@@ -255,8 +333,6 @@ class ReportEvidence:
             "domain suspicion",
             "keyword",
             "tld",
-            "kaspa-related title",
-            "wallet-related title",
         )
 
         keep_terms = (
@@ -267,6 +343,12 @@ class ReportEvidence:
             "cloaking detected",
             "ondigitalocean.app",
             "workers.dev",
+            "kaspa",
+            "airdrop",
+            "giveaway",
+            "claim",
+            "support",
+            "doubler",
         )
 
         high_signal = []
@@ -288,16 +370,85 @@ class ReportEvidence:
 
             # Classify
             if any(s in lower for s in keep_terms):
-                high_signal.append(text)
+                high_signal.append(self.humanize_reason(text))
             else:
-                other.append(text)
+                other.append(self.humanize_reason(text))
 
         # Return high-signal first, then fill with others
         result = high_signal[:max_items]
         if len(result) < max_items:
             result.extend(other[: max_items - len(result)])
 
-        return result or self.detection_reasons[:max_items]
+        if result:
+            return result
+        return [
+            self.humanize_reason(r)
+            for r in (self.detection_reasons or [])[:max_items]
+            if r
+        ]
+
+    def get_impersonation_lines(self) -> list[str]:
+        """Return plain-language impersonation indicators."""
+        reasons = self.detection_reasons or []
+        lines: list[str] = []
+        brand = None
+        official_site = None
+        has_brand_reason = False
+
+        for reason in reasons:
+            text = (reason or "").strip()
+            if not text:
+                continue
+            lower = text.lower()
+            match = re.search(r"visual match to ([^:]+):\s*(\d+)%", text, re.I)
+            if match:
+                target = match.group(1).strip()
+                score = match.group(2).strip()
+                lines.append(f"Visual similarity to {target} (~{score}% match).")
+                has_brand_reason = True
+                if "." in target:
+                    official_site = target
+                    brand = target.split(".", 1)[0].title()
+                else:
+                    brand = target.title()
+            if "stolen kaspa branding asset" in lower:
+                lines.append("Uses Kaspa branding assets (logo/styles).")
+                brand = brand or "Kaspa"
+                has_brand_reason = True
+            if "kaspa-related title" in lower:
+                lines.append("Page title references Kaspa branding.")
+                brand = brand or "Kaspa"
+                has_brand_reason = True
+            if "fake kaspa support" in lower:
+                lines.append("Claims to be Kaspa support.")
+                brand = brand or "Kaspa"
+                has_brand_reason = True
+
+        domain_lower = (self.domain or "").lower()
+        if "kaspa" in domain_lower and domain_lower not in ("kaspa.org", "www.kaspa.org"):
+            if not has_brand_reason:
+                lines.append("Domain name includes 'kaspa'.")
+            brand = brand or "Kaspa"
+
+        if brand:
+            if brand.lower() == "kaspa":
+                official_site = official_site or "kaspa.org"
+            if official_site:
+                official_url = official_site
+                if not official_url.startswith("http"):
+                    official_url = f"https://{official_url}"
+                lines.insert(0, f"Appears to impersonate {brand} (official site: {official_url}).")
+            else:
+                lines.insert(0, f"Appears to impersonate {brand}.")
+
+        deduped = []
+        seen = set()
+        for line in lines:
+            if line in seen:
+                continue
+            deduped.append(line)
+            seen.add(line)
+        return deduped
 
     def get_seed_observation(self) -> str:
         """Get a human-readable observation about seed phrase detection."""
@@ -332,9 +483,8 @@ class ReportEvidence:
         lines = [
             "FRAUD REPORT - Cryptocurrency Doubler/Giveaway Scam",
             "",
-            "This site impersonates the official Kaspa project to run an advance-fee",
-            "fraud scheme. It promises to multiply (e.g., 3X) any cryptocurrency sent",
-            "to their address, but victims receive nothing back.",
+            "This site runs an advance-fee fraud scheme (\"crypto doubler\"/giveaway).",
+            "It promises to multiply deposits (e.g., 2X/3X), but victims receive nothing back.",
             "",
             "SITE DETAILS:",
             f"  Domain: {self.domain}",
@@ -344,6 +494,12 @@ class ReportEvidence:
             "",
         ]
 
+        impersonation = self.get_impersonation_lines()
+        if impersonation:
+            lines.append("IMPERSONATION INDICATORS:")
+            lines.extend(f"  - {line}" for line in impersonation)
+            lines.append("")
+
         if self.scammer_wallets:
             lines.append("SCAMMER WALLET ADDRESSES:")
             for wallet in self.scammer_wallets[:5]:
@@ -351,19 +507,16 @@ class ReportEvidence:
             lines.append("")
 
         lines.append("KEY EVIDENCE:")
-        skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-        for reason in self.detection_reasons[:5]:
-            if not any(s in (reason or "").lower() for s in skip_terms):
-                lines.append(f"  - {reason}")
+        for reason in self.get_filtered_reasons(max_items=5):
+            lines.append(f"  - {reason}")
 
         lines.extend([
             "",
             "HOW THE SCAM WORKS:",
-            "  1. Site clones official project branding (kaspa.org)",
-            "  2. Claims users will receive 3X back if they send crypto",
-            "  3. Shows fake transaction history and countdown timers",
-            "  4. Victim sends crypto to scammer's wallet address",
-            "  5. Scammer keeps funds; victim receives nothing",
+            "  1. Site advertises a fake giveaway promising 2X/3X returns",
+            "  2. Displays a deposit address and urgency cues (e.g., countdown)",
+            "  3. Victim sends cryptocurrency to the scammer's address",
+            "  4. Scammer keeps funds; victim receives nothing",
             "",
             "Reported by: SeedBuster (automated phishing detection)",
             "Source: https://github.com/elldeeone/seedbuster",

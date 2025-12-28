@@ -1868,6 +1868,7 @@ class ReportManager:
                 scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
             observed_line = ReportTemplates._observed_summary_line(evidence)
             highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+            impersonation = evidence.get_impersonation_lines()
 
             description = f"""{scam_header}
 {chr(10).join(f'- {app}' for app in do_apps)}
@@ -1876,7 +1877,15 @@ Reported URL: {evidence.url}
 Observed: {observed_line}
 Confidence: {evidence.confidence_score}%
 
-Key evidence (automated capture):
+"""
+
+            if impersonation:
+                description += f"""Impersonation indicators:
+{chr(10).join(f'- {r}' for r in impersonation)}
+
+"""
+
+            description += f"""Key evidence from our review:
 {chr(10).join(f'- {r}' for r in highlights)}
 
 Captured evidence (screenshot + HTML) available on request.
@@ -2003,6 +2012,7 @@ Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers th
 """
         elif platform == "netcraft":
             scam_type = ReportTemplates._resolve_scam_type(evidence)
+            impersonation = evidence.get_impersonation_lines()
             highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
 
             if scam_type == "crypto_doubler":
@@ -2010,26 +2020,42 @@ Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers th
                     "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
                     f"Confidence: {evidence.confidence_score}%",
                     "",
-                    "Key evidence (automated capture):",
+                ]
+                if impersonation:
+                    reason_lines.extend([
+                        "Impersonation indicators:",
+                        *[f"- {line}" for line in impersonation],
+                        "",
+                    ])
+                reason_lines.extend([
+                    "Key evidence from our review:",
                     *[f"- {r}" for r in highlights],
                     "",
                     "Captured evidence (screenshot + HTML) available on request.",
                     "",
                     "Detected by SeedBuster.",
-                ]
+                ])
             elif scam_type == "fake_airdrop":
                 reason_lines = [
                     "Cryptocurrency fraud (fake airdrop/claim).",
                     "Observed fake airdrop/claim flow.",
                     f"Confidence: {evidence.confidence_score}%",
                     "",
-                    "Key evidence (automated capture):",
+                ]
+                if impersonation:
+                    reason_lines.extend([
+                        "Impersonation indicators:",
+                        *[f"- {line}" for line in impersonation],
+                        "",
+                    ])
+                reason_lines.extend([
+                    "Key evidence from our review:",
                     *[f"- {r}" for r in highlights],
                     "",
                     "Captured evidence (screenshot + HTML) available on request.",
                     "",
                     "Detected by SeedBuster.",
-                ]
+                ])
             elif scam_type == "seed_phishing":
                 seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
                 seed_line = (
@@ -2042,26 +2068,42 @@ Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers th
                     seed_line,
                     f"Confidence: {evidence.confidence_score}%",
                     "",
-                    "Key evidence (automated capture):",
+                ]
+                if impersonation:
+                    reason_lines.extend([
+                        "Impersonation indicators:",
+                        *[f"- {line}" for line in impersonation],
+                        "",
+                    ])
+                reason_lines.extend([
+                    "Key evidence from our review:",
                     *[f"- {r}" for r in highlights],
                     "",
                     "Captured evidence (screenshot + HTML) available on request.",
                     "",
                     "Detected by SeedBuster.",
-                ]
+                ])
             else:
                 reason_lines = [
                     "Cryptocurrency fraud / phishing.",
                     "Observed cryptocurrency fraud/phishing content.",
                     f"Confidence: {evidence.confidence_score}%",
                     "",
-                    "Key evidence (automated capture):",
+                ]
+                if impersonation:
+                    reason_lines.extend([
+                        "Impersonation indicators:",
+                        *[f"- {line}" for line in impersonation],
+                        "",
+                    ])
+                reason_lines.extend([
+                    "Key evidence from our review:",
                     *[f"- {r}" for r in highlights],
                     "",
                     "Captured evidence (screenshot + HTML) available on request.",
                     "",
                     "Detected by SeedBuster.",
-                ]
+                ])
             reason = "\n".join(reason_lines).strip()
 
             payload: dict[str, object] = {

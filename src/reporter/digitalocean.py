@@ -70,6 +70,7 @@ class DigitalOceanReporter(BaseReporter):
         """Build structured description for DO abuse form."""
         do_apps = self._extract_do_apps(evidence)
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+        impersonation = evidence.get_impersonation_lines()
         scam_type = ReportTemplates._resolve_scam_type(evidence)
         if scam_type == "crypto_doubler":
             scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
@@ -81,7 +82,7 @@ class DigitalOceanReporter(BaseReporter):
             scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
         observed_line = ReportTemplates._observed_summary_line(evidence)
 
-        return f"""{scam_header}
+        description = f"""{scam_header}
 {chr(10).join(f'- {app}' for app in do_apps)}
 
 Reported URL: {evidence.url}
@@ -91,13 +92,21 @@ Confidence: {evidence.confidence_score}%
 This site runs a cryptocurrency scam against end users.
 Victims lose funds immediately and irreversibly.
 
-Key evidence (automated capture):
+"""
+
+        if impersonation:
+            description += f"""Impersonation indicators:
+{chr(10).join(f'- {r}' for r in impersonation)}
+
+"""
+
+        description += f"""Key evidence from our review:
 {chr(10).join(f'- {r}' for r in highlights)}
 
 Captured evidence (screenshot + HTML) available on request.
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
-
+        return description
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         """Generate structured manual submission data for public dashboard."""
         do_apps = self._extract_do_apps(evidence)

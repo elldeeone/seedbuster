@@ -25,18 +25,6 @@ def _extract_seed_field_name(reasons: list[str]) -> str | None:
     return None
 
 
-def _humanize_reason(text: str) -> str:
-    """Clean up technical jargon in detection reasons."""
-    out = (text or "").strip()
-    out = out.replace("Seed phrase form found via exploration:", "Requests seed phrase in field:")
-    out = out.replace("Seed phrase form found:", "Requests seed phrase in field:")
-    out = out.replace(" via exploration", "")
-    out = out.replace("Cloaking detected", "Shows different content to scanners vs real users")
-    if out.lower().startswith("temporal:"):
-        out = out.split(":", 1)[1].strip()
-    return out
-
-
 def _finalize_description(
     lines: list[str],
     evidence: ReportEvidence,
@@ -44,16 +32,18 @@ def _finalize_description(
     extra: str | None = None,
 ) -> str:
     """Append shared evidence sections to a description."""
-    reasons = evidence.detection_reasons or []
-    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-    cleaned_reasons = [
-        _humanize_reason(r) for r in reasons[:5]
-        if not any(s in (r or "").lower() for s in skip_terms)
-    ]
+    impersonation = evidence.get_impersonation_lines()
+    if impersonation:
+        lines.append("")
+        lines.append("IMPERSONATION INDICATORS:")
+        for line in impersonation:
+            lines.append(f"  - {line}")
+
+    cleaned_reasons = evidence.get_filtered_reasons(max_items=4)
     if cleaned_reasons:
         lines.append("")
         lines.append("KEY EVIDENCE:")
-        for reason in cleaned_reasons[:4]:
+        for reason in cleaned_reasons:
             lines.append(f"  - {reason}")
 
     backends = evidence.backend_domains or []
@@ -198,16 +188,18 @@ def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | 
         for wallet in wallets[:5]:
             lines.append(f"  - {wallet}")
 
-    reasons = evidence.detection_reasons or []
-    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
-    cleaned_reasons = [
-        _humanize_reason(r) for r in reasons[:5]
-        if not any(s in (r or "").lower() for s in skip_terms)
-    ]
+    impersonation = evidence.get_impersonation_lines()
+    if impersonation:
+        lines.append("")
+        lines.append("IMPERSONATION INDICATORS:")
+        for line in impersonation:
+            lines.append(f"  - {line}")
+
+    cleaned_reasons = evidence.get_filtered_reasons(max_items=4)
     if cleaned_reasons:
         lines.append("")
         lines.append("KEY EVIDENCE:")
-        for reason in cleaned_reasons[:4]:
+        for reason in cleaned_reasons:
             lines.append(f"  - {reason}")
 
     backends = evidence.backend_domains or []
