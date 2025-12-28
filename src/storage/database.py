@@ -133,6 +133,8 @@ class Database:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         kind TEXT NOT NULL,
                         payload TEXT NOT NULL,
+                        target TEXT,
+                        bulk_id TEXT,
                         status TEXT DEFAULT 'pending',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         claimed_at TIMESTAMP,
@@ -209,6 +211,7 @@ class Database:
         await self._migrate_domains_table()
         await self._migrate_reports_table()
         await self._migrate_report_engagement_table()
+        await self._migrate_dashboard_actions_table()
         await self._migrate_deferred_to_watchlist()
         await self._backfill_canonical_domains(lock_held=True)
         await self._merge_canonical_duplicates()
@@ -224,6 +227,8 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_reports_domain_platform ON reports(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_next_attempt ON reports(status, next_attempt_at)",
             "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_status ON dashboard_actions(status, id)",
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_bulk_status ON dashboard_actions(bulk_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_dashboard_actions_kind_target_status ON dashboard_actions(kind, target, status)",
             "CREATE INDEX IF NOT EXISTS idx_public_submissions_status ON public_submissions(status, first_submitted_at)",
             "CREATE INDEX IF NOT EXISTS idx_report_engagement_domain_platform ON report_engagement(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_report_engagement_last_engaged ON report_engagement(last_engaged_at)",
@@ -495,6 +500,26 @@ class Database:
             except Exception:
                 pass
 
+    async def _migrate_dashboard_actions_table(self) -> None:
+        """Add columns to dashboard_actions table (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(dashboard_actions)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+
+        migrations: list[str] = []
+        if "target" not in existing:
+            migrations.append("ALTER TABLE dashboard_actions ADD COLUMN target TEXT")
+        if "bulk_id" not in existing:
+            migrations.append("ALTER TABLE dashboard_actions ADD COLUMN bulk_id TEXT")
+
+        for stmt in migrations:
+            try:
+                await self._connection.execute(stmt)
+            except Exception:
+                continue
+        if migrations:
+            await self._connection.commit()
+
     async def _migrate_deferred_to_watchlist(self) -> None:
         """Migrate existing deferred domains to watchlist status."""
         # Note: Called from _create_tables which already holds the lock
@@ -641,6 +666,19 @@ class Database:
             )
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def get_domains_by_ids(self, domain_ids: list[int]) -> list[dict]:
+        """Fetch multiple domains by ID."""
+        ids = [int(d) for d in domain_ids if isinstance(d, int) or str(d).isdigit()]
+        if not ids:
+            return []
+
+        placeholders = ",".join("?" for _ in ids)
+        query = f"SELECT * FROM domains WHERE id IN ({placeholders})"
+        async with self._lock:
+            cursor = await self._connection.execute(query, ids)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def get_pending_domains(self, limit: int | None = 10) -> list[dict]:
         """Get domains pending analysis (optionally limited)."""
@@ -1007,7 +1045,15 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def enqueue_dashboard_action(self, kind: str, payload: dict) -> int:
+    async def enqueue_dashboard_action(
+        self,
+        kind: str,
+        payload: dict,
+        *,
+        target: str | None = None,
+        bulk_id: str | None = None,
+        dedupe: bool = False,
+    ) -> int:
         """Add an admin action requested by the dashboard (processed by the pipeline)."""
         record = {
             "kind": str(kind or "").strip().lower(),
@@ -1016,16 +1062,81 @@ class Database:
         if not record["kind"]:
             raise ValueError("Action kind is required")
 
+        resolved_target = (target or record["payload"].get("domain") or "").strip().lower() or None
+        resolved_bulk = (bulk_id or "").strip() or None
+
         async with self._lock:
+            if dedupe and resolved_target:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT 1
+                    FROM dashboard_actions
+                    WHERE kind = ?
+                      AND target = ?
+                      AND status IN ('pending', 'processing')
+                    LIMIT 1
+                    """,
+                    (record["kind"], resolved_target),
+                )
+                exists = await cursor.fetchone()
+                if exists:
+                    return 0
+
             cursor = await self._connection.execute(
                 """
-                INSERT INTO dashboard_actions (kind, payload, status)
-                VALUES (?, ?, 'pending')
+                INSERT INTO dashboard_actions (kind, payload, target, bulk_id, status)
+                VALUES (?, ?, ?, ?, 'pending')
                 """,
-                (record["kind"], json.dumps(record["payload"])),
+                (
+                    record["kind"],
+                    json.dumps(record["payload"]),
+                    resolved_target,
+                    resolved_bulk,
+                ),
             )
             await self._connection.commit()
             return int(cursor.lastrowid)
+
+    async def has_pending_dashboard_action(self, kind: str, target: str) -> bool:
+        """Check if a pending/processing dashboard action already exists for target."""
+        action = str(kind or "").strip().lower()
+        target_value = str(target or "").strip().lower()
+        if not action or not target_value:
+            return False
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT 1
+                FROM dashboard_actions
+                WHERE kind = ?
+                  AND target = ?
+                  AND status IN ('pending', 'processing')
+                LIMIT 1
+                """,
+                (action, target_value),
+            )
+            row = await cursor.fetchone()
+            return row is not None
+
+    async def get_bulk_action_stats(self, bulk_id: str) -> dict[str, int]:
+        """Return status counts for a bulk dashboard action batch."""
+        bulk_value = str(bulk_id or "").strip()
+        if not bulk_value:
+            return {"total": 0}
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM dashboard_actions
+                WHERE bulk_id = ?
+                GROUP BY status
+                """,
+                (bulk_value,),
+            )
+            rows = await cursor.fetchall()
+        counts = {str(r["status"]): int(r["count"]) for r in rows}
+        counts["total"] = sum(counts.values())
+        return counts
 
     async def claim_dashboard_actions(self, limit: int = 20) -> list[dict]:
         """Claim pending dashboard actions for processing (multi-process safe, best-effort)."""

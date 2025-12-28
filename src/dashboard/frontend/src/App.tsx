@@ -3,8 +3,10 @@ import type { FormEvent, MouseEvent } from "react";
 import "./index.css";
 import {
   cleanupEvidence,
+  bulkRescanDomains,
   fetchCampaign,
   fetchCampaigns,
+  fetchBulkRescanStatus,
   fetchDomainDetail,
   fetchDomains,
   fetchPublicSubmissions,
@@ -29,6 +31,8 @@ import {
 import type { PlatformInfo } from "./api";
 import type {
   Campaign,
+  BulkRescanResponse,
+  BulkRescanStatus,
   Domain,
   DomainDetailResponse,
   ManualSubmissionData,
@@ -304,7 +308,11 @@ const DomainTable = ({
   onRescan,
   onReport,
   onFalsePositive,
+  onBulkRescan,
   actionBusy,
+  bulkRescanJob,
+  bulkRescanLoading,
+  bulkRescanError,
   canEdit,
 }: {
   domains: Domain[];
@@ -318,13 +326,21 @@ const DomainTable = ({
   onRescan: (d: Domain) => void;
   onReport: (d: Domain) => void;
   onFalsePositive: (d: Domain) => void;
+  onBulkRescan: (targets: Domain[]) => void;
   actionBusy: Record<number, string | null>;
+  bulkRescanJob: BulkRescanResponse | null;
+  bulkRescanLoading: boolean;
+  bulkRescanError: string | null;
   canEdit: boolean;
 }) => {
   const totalPages = Math.max(1, Math.ceil((total || 0) / (filters.limit || 1)));
   const pageDisplay = Math.min(filters.page, totalPages);
   const canNext = pageDisplay < totalPages;
   const canPrev = pageDisplay > 1;
+  const bulkStatus = bulkRescanJob?.status || null;
+  const bulkTotal = bulkStatus?.total || bulkRescanJob?.queued || 0;
+  const bulkDone = (bulkStatus?.done || 0) + (bulkStatus?.failed || 0);
+  const bulkPercent = bulkTotal ? Math.min(100, Math.round((bulkDone / bulkTotal) * 100)) : 0;
   const handlePageInput = (value: string) => {
     const parsed = Number(value) || 1;
     onPage(parsed);
@@ -332,10 +348,21 @@ const DomainTable = ({
   return (
     <div className="sb-panel">
       <div className="sb-panel-header">
-        <span className="sb-panel-title">Tracked Domains</span>
-        <span className="sb-muted">
-          Showing {domains.length} / {total || domains.length} (page {pageDisplay} of {totalPages})
-        </span>
+        <div>
+          <span className="sb-panel-title">Tracked Domains</span>
+          <span className="sb-muted" style={{ marginLeft: 8 }}>
+            Showing {domains.length} / {total || domains.length} (page {pageDisplay} of {totalPages})
+          </span>
+        </div>
+        {canEdit && (
+          <button
+            className="sb-btn"
+            disabled={bulkRescanLoading || domains.length === 0}
+            onClick={() => onBulkRescan(domains)}
+          >
+            {bulkRescanLoading ? "Queuing…" : "Bulk Rescan (page)"}
+          </button>
+        )}
       </div>
 
       <div className="sb-grid" style={{ marginBottom: 12 }}>
@@ -398,6 +425,41 @@ const DomainTable = ({
           </div>
         </div>
       </div>
+
+      {canEdit && bulkRescanJob && (
+        <div className="sb-panel" style={{ marginBottom: 12, background: "var(--bg-elevated)" }}>
+          <div className="sb-row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div className="sb-label">Bulk rescan progress</div>
+              <div className="sb-muted">
+                Queued {bulkRescanJob.queued} · Skipped {bulkRescanJob.skipped}
+                {bulkRescanJob.missing ? ` · Missing ${bulkRescanJob.missing}` : ""}
+              </div>
+            </div>
+            <div className="sb-muted">
+              {bulkDone}/{bulkTotal || 0} processed
+            </div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ height: 8, background: "var(--border-subtle)", borderRadius: 999 }}>
+              <div
+                style={{
+                  width: `${bulkPercent}%`,
+                  height: 8,
+                  borderRadius: 999,
+                  background: "var(--accent-green)",
+                  transition: "width 0.3s ease",
+                }}
+              />
+            </div>
+          </div>
+          {bulkRescanError && (
+            <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>
+              {bulkRescanError}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="sb-table-wrap">
         <table className="sb-table">
@@ -652,6 +714,10 @@ export default function App() {
   const [campaignLoading, setCampaignLoading] = useState(false);
   const [campaignBulkWorking, setCampaignBulkWorking] = useState<"rescan" | "report" | null>(null);
   const [campaignSearch, setCampaignSearch] = useState("");
+
+  const [bulkRescanJob, setBulkRescanJob] = useState<BulkRescanResponse | null>(null);
+  const [bulkRescanLoading, setBulkRescanLoading] = useState(false);
+  const [bulkRescanError, setBulkRescanError] = useState<string | null>(null);
 
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
   const [submitValue, setSubmitValue] = useState("");
@@ -930,6 +996,42 @@ export default function App() {
   }, [domainDetail?.rescan_request]);
 
   useEffect(() => {
+    if (!bulkRescanJob?.bulk_id) return;
+    if ((bulkRescanJob.status?.total || 0) <= 0) return;
+    let active = true;
+    let intervalId: number | null = null;
+
+    const poll = async () => {
+      try {
+        const res = await fetchBulkRescanStatus(bulkRescanJob.bulk_id);
+        if (!active) return;
+        setBulkRescanJob((prev) => (prev ? { ...prev, status: res.status as BulkRescanStatus } : prev));
+        const done = (res.status.done || 0) + (res.status.failed || 0);
+        const total = res.status.total || 0;
+        if (intervalId && total > 0 && done >= total) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      } catch (err) {
+        if (!active) return;
+        const message = (err as Error).message || "Failed to load bulk rescan status";
+        setBulkRescanError(message);
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+    };
+
+    poll();
+    intervalId = window.setInterval(poll, 2000);
+    return () => {
+      active = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [bulkRescanJob?.bulk_id]);
+
+  useEffect(() => {
     if (!domainDetail) {
       setSnapshotSelection(null);
       return;
@@ -964,8 +1066,10 @@ export default function App() {
         const message =
           res.status === "rescan_queued"
             ? `Rescan queued for ${res.domain}`
-            : `Submitted ${res.domain}`;
-        showToast(message, "success");
+            : res.status === "already_queued"
+              ? `Rescan already queued for ${res.domain}`
+              : `Submitted ${res.domain}`;
+        showToast(message, res.status === "already_queued" ? "info" : "success");
         setSubmitResult(res);
         if (mode === "submit") {
           setSubmitValue("");
@@ -1197,8 +1301,13 @@ export default function App() {
     setActionBusy((prev) => ({ ...prev, [id]: type }));
     try {
       if (type === "rescan") {
-        await rescanDomain(id, domain.domain);
-        showToast(`Rescan queued for ${domain.domain}`, "success");
+        const res = await rescanDomain(id, domain.domain);
+        const tone = res.status === "already_queued" ? "info" : "success";
+        const message =
+          res.status === "already_queued"
+            ? `Rescan already queued for ${domain.domain}`
+            : `Rescan queued for ${domain.domain}`;
+        showToast(message, tone);
       } else {
         await markFalsePositive(id);
         showToast(`Marked ${domain.domain} as false positive`, "success");
@@ -1265,6 +1374,35 @@ export default function App() {
       showToast(`Queued ${type} for ${domains.length} domains`, "success");
     } finally {
       setCampaignBulkWorking(null);
+    }
+  };
+
+  const startBulkRescan = async (targets: Domain[]) => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
+    const ids = (targets || []).map((d) => d.id).filter((id): id is number => Boolean(id));
+    if (!ids.length) {
+      showToast("No domains to rescan on this page.", "info");
+      return;
+    }
+    const ok = window.confirm(`Queue rescan for ${ids.length} domains on this page?`);
+    if (!ok) return;
+
+    setBulkRescanLoading(true);
+    setBulkRescanError(null);
+    try {
+      const res = await bulkRescanDomains(ids);
+      setBulkRescanJob(res);
+      const skippedMsg = res.skipped ? ` (${res.skipped} skipped)` : "";
+      showToast(`Queued ${res.queued} rescans${skippedMsg}`, "success");
+    } catch (err) {
+      const message = (err as Error).message || "Failed to queue bulk rescan";
+      setBulkRescanError(message);
+      showToast(message, "error");
+    } finally {
+      setBulkRescanLoading(false);
     }
   };
 
@@ -1411,7 +1549,15 @@ export default function App() {
           {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
           {submitResult && (
             <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
-              {(submitResult.message || (submitResult.status === "rescan_queued" ? "Rescan queued" : submitResult.duplicate ? "Already submitted" : "Submitted"))}
+              {(submitResult.message || (
+                submitResult.status === "rescan_queued"
+                  ? "Rescan queued"
+                  : submitResult.status === "already_queued"
+                    ? "Rescan already queued"
+                    : submitResult.duplicate
+                      ? "Already submitted"
+                      : "Submitted"
+              ))}
               {" for "}
               <b>{submitResult.domain}</b>
             </div>
@@ -1621,7 +1767,11 @@ export default function App() {
         onRescan={(d) => triggerAction(d, "rescan")}
         onReport={(d) => triggerAction(d, "report")}
         onFalsePositive={(d) => triggerAction(d, "false_positive")}
+        onBulkRescan={startBulkRescan}
         actionBusy={actionBusy}
+        bulkRescanJob={bulkRescanJob}
+        bulkRescanLoading={bulkRescanLoading}
+        bulkRescanError={bulkRescanError}
         canEdit={isAdmin}
       />
     </>

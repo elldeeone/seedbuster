@@ -130,12 +130,30 @@ export async function submitPublicTarget(
   return res.json();
 }
 
-export async function rescanDomain(domainId: number, domain?: string): Promise<void> {
-  await request(`/domains/${domainId}/rescan`, {
+export async function rescanDomain(domainId: number, domain?: string): Promise<{ status: string; domain: string }> {
+  return request(`/domains/${domainId}/rescan`, {
     method: "POST",
     body: JSON.stringify({ domain }),
-    skipJson: true,
   });
+}
+
+export async function bulkRescanDomains(domainIds: number[]): Promise<{
+  bulk_id: string;
+  requested: number;
+  found: number;
+  missing: number;
+  queued: number;
+  skipped: number;
+  status: Record<string, number>;
+}> {
+  return request("/domains/bulk-rescan", {
+    method: "POST",
+    body: JSON.stringify({ domain_ids: domainIds }),
+  });
+}
+
+export async function fetchBulkRescanStatus(bulkId: string): Promise<{ bulk_id: string; status: Record<string, number> }> {
+  return request(`/domains/bulk-rescan/${encodeURIComponent(bulkId)}`);
 }
 
 export async function reportDomain(

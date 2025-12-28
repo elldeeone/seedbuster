@@ -57,6 +57,7 @@ class SeedBusterPipeline:
         # { "domain": "...", "source": "...", "force": bool }
         self._discovery_queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1000)
         self._analysis_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=100)
+        self._rescan_pending: set[str] = set()
 
         # Components
         self.database = Database(config.data_dir / "seedbuster.db")
@@ -175,6 +176,11 @@ class SeedBusterPipeline:
         """Handle scheduled rescan - re-analyze domain and send update if changed."""
         logger.info(f"Rescan triggered for {domain} (reason: {reason.value})")
 
+        rescan_key = (domain or "").strip().lower()
+        if rescan_key in self._rescan_pending:
+            logger.info("Rescan already queued for %s; skipping duplicate.", domain)
+            return
+
         domain_record = await self.database.get_domain(domain)
         if domain_record:
             status = str(domain_record.get("status") or "").strip().lower()
@@ -190,10 +196,18 @@ class SeedBusterPipeline:
                 )
                 return
             domain = str(domain_record.get("domain") or domain)
+            rescan_key = (domain or "").strip().lower() or rescan_key
 
         # Queue the domain for re-analysis with rescan flag
         # We store the reason in a dict to track rescan context
-        await self._analysis_queue.put((domain, reason))
+        if rescan_key:
+            self._rescan_pending.add(rescan_key)
+        try:
+            await self._analysis_queue.put((domain, reason))
+        except Exception:
+            if rescan_key:
+                self._rescan_pending.discard(rescan_key)
+            raise
 
     def _manual_rescan(self, domain: str):
         """Handle manual rescan request from Telegram."""
@@ -639,10 +653,15 @@ class SeedBusterPipeline:
                     # Get domain record from database
                     domain_record = await self.database.get_domain(domain)
 
-                    if domain_record:
-                        await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
-                    else:
-                        logger.warning(f"Rescan: domain not found in DB: {domain}")
+                    try:
+                        if domain_record:
+                            await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
+                        else:
+                            logger.warning(f"Rescan: domain not found in DB: {domain}")
+                    finally:
+                        key = (domain or "").strip().lower()
+                        if key:
+                            self._rescan_pending.discard(key)
                 else:
                     # Regular task from discovery
                     await self.analysis_engine.analyze(task)

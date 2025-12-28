@@ -4616,6 +4616,8 @@ class DashboardServer:
         self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
         self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
+        self._app.router.add_post("/admin/api/domains/bulk-rescan", self._admin_api_bulk_rescan)
+        self._app.router.add_get("/admin/api/domains/bulk-rescan/{bulk_id}", self._admin_api_bulk_rescan_status)
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
         self._app.router.add_post("/admin/api/domains/{domain_id}/false_positive", self._admin_api_false_positive)
         self._app.router.add_patch("/admin/api/domains/{domain_id}/status", self._admin_api_update_domain_status)
@@ -5491,6 +5493,11 @@ class DashboardServer:
 
         domain_name = str(domain.get("domain") or "")
         if self.rescan_callback:
+            already = await self.database.has_pending_dashboard_action("rescan_domain", domain_name)
+            if already:
+                raise web.HTTPSeeOther(
+                    location=_build_query_link(f"/admin/domains/{did}", msg="Rescan already queued")
+                )
             self.rescan_callback(domain_name)
             raise web.HTTPSeeOther(location=_build_query_link(f"/admin/domains/{did}", msg="Rescan queued"))
         raise web.HTTPSeeOther(
@@ -5963,8 +5970,12 @@ class DashboardServer:
         existing = await self.database.get_domain(domain)
         if existing:
             if self.rescan_callback:
+                already = await self.database.has_pending_dashboard_action("rescan_domain", domain)
+                if already:
+                    return web.json_response({"status": "already_queued", "domain": domain})
                 self.rescan_callback(domain)
-            return web.json_response({"status": "rescan_queued", "domain": domain})
+                return web.json_response({"status": "rescan_queued", "domain": domain})
+            return web.json_response({"status": "already_queued", "domain": domain})
 
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit not configured")
@@ -5984,8 +5995,82 @@ class DashboardServer:
 
         if not self.rescan_callback:
             raise web.HTTPServiceUnavailable(text="Rescan not configured")
+        already = await self.database.has_pending_dashboard_action("rescan_domain", domain)
+        if already:
+            return web.json_response({"status": "already_queued", "domain": domain})
         self.rescan_callback(domain)
         return web.json_response({"status": "rescan_queued", "domain": domain})
+
+    async def _admin_api_bulk_rescan(self, request: web.Request) -> web.Response:
+        """Queue rescan actions for multiple domains (admin-only)."""
+        import uuid
+
+        self._require_csrf_header(request)
+        if not self.rescan_callback:
+            raise web.HTTPServiceUnavailable(text="Rescan not configured")
+        data = await self._read_json(request)
+        domain_ids = data.get("domain_ids") or []
+        if not isinstance(domain_ids, list) or not domain_ids:
+            return web.json_response({"error": "domain_ids list required"}, status=400)
+
+        ids: list[int] = []
+        for value in domain_ids:
+            try:
+                ids.append(int(value))
+            except Exception:
+                continue
+        ids = sorted(set(ids))
+        if not ids:
+            return web.json_response({"error": "No valid domain ids provided"}, status=400)
+
+        rows = await self.database.get_domains_by_ids(ids)
+        if not rows:
+            return web.json_response({"error": "No domains found for provided ids"}, status=404)
+
+        bulk_id = uuid.uuid4().hex
+        queued = 0
+        skipped = 0
+        found_ids = set()
+        for row in rows:
+            domain_name = str(row.get("domain") or "").strip()
+            if not domain_name:
+                continue
+            found_ids.add(int(row.get("id") or 0))
+            action_id = await self.database.enqueue_dashboard_action(
+                "rescan_domain",
+                {"domain": domain_name},
+                target=domain_name,
+                bulk_id=bulk_id,
+                dedupe=True,
+            )
+            if action_id:
+                queued += 1
+            else:
+                skipped += 1
+
+        missing = len({i for i in ids if i not in found_ids})
+        status = await self.database.get_bulk_action_stats(bulk_id)
+        return web.json_response(
+            {
+                "bulk_id": bulk_id,
+                "requested": len(ids),
+                "found": len(rows),
+                "missing": missing,
+                "queued": queued,
+                "skipped": skipped,
+                "status": status,
+            }
+        )
+
+    async def _admin_api_bulk_rescan_status(self, request: web.Request) -> web.Response:
+        """Return status counts for a bulk rescan batch."""
+        bulk_id = (request.match_info.get("bulk_id") or "").strip()
+        if not bulk_id:
+            raise web.HTTPBadRequest(text="bulk_id required")
+        status = await self.database.get_bulk_action_stats(bulk_id)
+        if status.get("total", 0) <= 0:
+            return web.json_response({"error": "Bulk batch not found"}, status=404)
+        return web.json_response({"bulk_id": bulk_id, "status": status})
 
     async def _admin_api_report(self, request: web.Request) -> web.Response:
         self._require_csrf_header(request)

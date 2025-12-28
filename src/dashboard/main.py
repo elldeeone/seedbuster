@@ -84,7 +84,14 @@ async def run_dashboard() -> None:
         _spawn(db.enqueue_dashboard_action("submit_domain", {"domain": domain}))
 
     def rescan_callback(domain: str) -> None:
-        _spawn(db.enqueue_dashboard_action("rescan_domain", {"domain": domain}))
+        _spawn(
+            db.enqueue_dashboard_action(
+                "rescan_domain",
+                {"domain": domain},
+                target=domain,
+                dedupe=True,
+            )
+        )
 
     async def report_callback(
         domain_id: int,

@@ -143,6 +143,24 @@ export interface ReportOptionsResponse {
   total_engagements: number;
 }
 
+export interface BulkRescanStatus {
+  total: number;
+  pending?: number;
+  processing?: number;
+  done?: number;
+  failed?: number;
+}
+
+export interface BulkRescanResponse {
+  bulk_id: string;
+  requested: number;
+  found: number;
+  missing: number;
+  queued: number;
+  skipped: number;
+  status: BulkRescanStatus;
+}
+
 export interface PublicSubmission {
   id: number;
   domain: string;
