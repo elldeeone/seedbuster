@@ -41,6 +41,9 @@ data/intel_report.json
 .DS_Store
 Thumbs.db
 
+# Docs
+AGENTS.md
+
 # Testing
 .pytest_cache/
 .coverage
