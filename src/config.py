@@ -209,6 +209,9 @@ class Config:
     report_platforms: list[str] | None = field(
         default_factory=lambda: ["google", "cloudflare", "netcraft", "resend"]
     )
+    public_rescan_threshold: int = 3
+    public_rescan_window_hours: int = 24
+    public_rescan_cooldown_hours: int = 24
 
     # Operational limits
     analysis_timeout: int = 30
@@ -620,6 +623,9 @@ def load_config() -> Config:
         report_require_approval=os.getenv("REPORT_REQUIRE_APPROVAL", "true").lower() == "true",
         report_min_score=int(os.getenv("REPORT_MIN_SCORE", "80")),
         report_platforms=report_platforms,
+        public_rescan_threshold=int(os.getenv("PUBLIC_RESCAN_THRESHOLD", "3")),
+        public_rescan_window_hours=int(os.getenv("PUBLIC_RESCAN_WINDOW_HOURS", "24")),
+        public_rescan_cooldown_hours=int(os.getenv("PUBLIC_RESCAN_COOLDOWN_HOURS", "24")),
         analysis_timeout=int(os.getenv("ANALYSIS_TIMEOUT", "30")),
         max_concurrent_analyses=int(os.getenv("MAX_CONCURRENT_ANALYSES", "3")),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),

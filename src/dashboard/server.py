@@ -4196,6 +4196,9 @@ class DashboardConfig:
     health_url: str = ""
     frontend_dir: Path | None = None
     allowlist: set[str] = field(default_factory=set)
+    public_rescan_threshold: int = 3
+    public_rescan_window_hours: int = 24
+    public_rescan_cooldown_hours: int = 24
 
 
 class DashboardServer:
@@ -4595,6 +4598,7 @@ class DashboardServer:
         self._app.router.add_post("/api/public/submit", self._public_api_submit)
         self._app.router.add_get("/api/domains/{domain_id}/report-options", self._public_api_report_options)
         self._app.router.add_post("/api/domains/{domain_id}/report-engagement", self._public_api_report_engagement)
+        self._app.router.add_post("/api/domains/{domain_id}/rescan-request", self._public_api_rescan_request)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -5670,6 +5674,21 @@ class DashboardServer:
             except Exception:
                 pass
 
+        rescan_request_info = None
+        try:
+            threshold = max(1, int(getattr(self.config, "public_rescan_threshold", 3) or 3))
+            window_hours = max(1, int(getattr(self.config, "public_rescan_window_hours", 24) or 24))
+            cooldown_hours = max(1, int(getattr(self.config, "public_rescan_cooldown_hours", 24) or 24))
+            count = await self.database.get_rescan_request_count(domain_id, window_hours=window_hours)
+            rescan_request_info = {
+                "count": count,
+                "threshold": threshold,
+                "window_hours": window_hours,
+                "cooldown_hours": cooldown_hours,
+            }
+        except Exception:
+            rescan_request_info = None
+
         return web.json_response(
             {
                 "domain": row,
@@ -5679,6 +5698,7 @@ class DashboardServer:
                 "campaign": filtered_campaign,
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
+                "rescan_request": rescan_request_info,
             }
         )
 
@@ -5836,6 +5856,12 @@ class DashboardServer:
         domain = await self.database.get_domain_by_id(domain_id)
         if not domain:
             raise web.HTTPNotFound(text="Domain not found")
+        takedown_status = str(domain.get("takedown_status") or "").strip().lower()
+        if takedown_status == "confirmed_down":
+            return web.json_response(
+                {"error": "Domain marked as taken down; reporting is paused."},
+                status=409,
+            )
 
         platform_info = self.get_platform_info()
         available_platforms = self.get_available_platforms()
@@ -5900,6 +5926,12 @@ class DashboardServer:
         domain = await self.database.get_domain_by_id(domain_id)
         if not domain:
             raise web.HTTPNotFound(text="Domain not found")
+        takedown_status = str(domain.get("takedown_status") or "").strip().lower()
+        if takedown_status == "confirmed_down":
+            return web.json_response(
+                {"error": "Domain marked as taken down; reporting is paused."},
+                status=409,
+            )
 
         platform_info = self.get_platform_info()
         available_platforms = self.get_available_platforms()
@@ -5992,6 +6024,77 @@ class DashboardServer:
                 "platform": platform,
                 "new_count": count,
                 "message": "You've already reported recently." if cooldown else "Thank you for reporting!",
+            }
+        )
+
+    async def _public_api_rescan_request(self, request: web.Request) -> web.Response:
+        """Record a public rescan request for takedown-confirmed domains."""
+        domain_id = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        domain = await self.database.get_domain_by_id(domain_id)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        takedown_status = str(domain.get("takedown_status") or "").strip().lower()
+        if takedown_status != "confirmed_down":
+            return web.json_response(
+                {"error": "Rescan requests are only available once a takedown is confirmed."},
+                status=409,
+            )
+
+        if not self.rescan_callback:
+            return web.json_response({"error": "Rescan not configured"}, status=503)
+
+        session_hash = self._session_hash(request)
+        threshold = max(1, int(getattr(self.config, "public_rescan_threshold", 3) or 3))
+        window_hours = max(1, int(getattr(self.config, "public_rescan_window_hours", 24) or 24))
+        cooldown_hours = max(1, int(getattr(self.config, "public_rescan_cooldown_hours", 24) or 24))
+
+        count, cooldown = await self.database.record_rescan_request(
+            domain_id=domain_id,
+            session_hash=session_hash,
+            cooldown_hours=cooldown_hours,
+            window_hours=window_hours,
+        )
+
+        if cooldown:
+            return web.json_response(
+                {
+                    "status": "cooldown",
+                    "count": count,
+                    "threshold": threshold,
+                    "window_hours": window_hours,
+                    "cooldown_hours": cooldown_hours,
+                    "message": "You've already requested a rescan recently.",
+                }
+            )
+
+        if count >= threshold:
+            self.rescan_callback(str(domain.get("domain") or ""))
+            await self.database.clear_rescan_requests(domain_id)
+            return web.json_response(
+                {
+                    "status": "rescan_queued",
+                    "count": count,
+                    "threshold": threshold,
+                    "window_hours": window_hours,
+                    "cooldown_hours": cooldown_hours,
+                    "message": "Rescan queued. We'll recheck the site shortly.",
+                }
+            )
+
+        remaining = max(threshold - count, 0)
+        return web.json_response(
+            {
+                "status": "queued",
+                "count": count,
+                "threshold": threshold,
+                "remaining": remaining,
+                "window_hours": window_hours,
+                "cooldown_hours": cooldown_hours,
+                "message": f"Thanks. We will rescan after {remaining} more request(s).",
             }
         )
 

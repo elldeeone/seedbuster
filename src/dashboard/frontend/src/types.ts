@@ -72,6 +72,13 @@ export interface EvidenceSummary {
   screenshots?: string[];
 }
 
+export interface RescanRequestInfo {
+  count: number;
+  threshold: number;
+  window_hours?: number;
+  cooldown_hours?: number;
+}
+
 export interface DomainDetailResponse {
   domain: Domain;
   reports: Report[];
@@ -79,6 +86,7 @@ export interface DomainDetailResponse {
   related_domains?: Domain[];
   campaign?: Campaign | null;
   instruction_files?: string[];
+  rescan_request?: RescanRequestInfo | null;
   infrastructure?: {
     hosting_provider?: string | null;
     registrar?: string | null;

@@ -183,6 +183,9 @@ async def run_dashboard() -> None:
                 if getattr(config, "health_enabled", False)
                 else ""
             ),
+            public_rescan_threshold=getattr(config, "public_rescan_threshold", 3),
+            public_rescan_window_hours=getattr(config, "public_rescan_window_hours", 24),
+            public_rescan_cooldown_hours=getattr(config, "public_rescan_cooldown_hours", 24),
         ),
         database=db,
         evidence_dir=config.evidence_dir,

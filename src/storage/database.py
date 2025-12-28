@@ -171,6 +171,18 @@ class Database:
                         FOREIGN KEY (domain_id) REFERENCES domains(id)
                     );
 
+                    -- Public rescan requests (deduped by session)
+                    CREATE TABLE IF NOT EXISTS rescan_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain_id INTEGER NOT NULL,
+                        session_hash TEXT NOT NULL,
+                        click_count INTEGER DEFAULT 1,
+                        first_requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(domain_id, session_hash),
+                        FOREIGN KEY (domain_id) REFERENCES domains(id)
+                    );
+
                     -- Historical takedown checks for domains
                     CREATE TABLE IF NOT EXISTS takedown_checks (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,6 +227,8 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_public_submissions_status ON public_submissions(status, first_submitted_at)",
             "CREATE INDEX IF NOT EXISTS idx_report_engagement_domain_platform ON report_engagement(domain_id, platform)",
             "CREATE INDEX IF NOT EXISTS idx_report_engagement_last_engaged ON report_engagement(last_engaged_at)",
+            "CREATE INDEX IF NOT EXISTS idx_rescan_requests_domain ON rescan_requests(domain_id)",
+            "CREATE INDEX IF NOT EXISTS idx_rescan_requests_last_requested ON rescan_requests(last_requested_at)",
             "CREATE INDEX IF NOT EXISTS idx_takedown_checks_domain ON takedown_checks(domain_id, checked_at DESC)",
         ]
 
@@ -1669,6 +1683,113 @@ class Database:
             row = await cursor.fetchone()
             count_value = row["count"] if row and row["count"] is not None else 0
             return int(count_value)
+
+    # =========================================================================
+    # Public rescan requests
+    # =========================================================================
+
+    async def record_rescan_request(
+        self,
+        domain_id: int,
+        session_hash: str,
+        *,
+        cooldown_hours: int = 24,
+        window_hours: int = 24,
+    ) -> tuple[int, bool]:
+        """
+        Record a public rescan request.
+
+        Returns:
+            (recent_request_count, cooldown_triggered)
+        """
+        cooldown_clause = f"-{int(cooldown_hours)} hours"
+        window_clause = f"-{int(window_hours)} hours"
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT id,
+                       datetime(last_requested_at) >= datetime('now', ?) AS within_cooldown
+                FROM rescan_requests
+                WHERE domain_id = ? AND session_hash = ?
+                """,
+                (cooldown_clause, domain_id, session_hash),
+            )
+            row = await cursor.fetchone()
+
+            if row:
+                within_cooldown = bool(row["within_cooldown"])
+                if within_cooldown:
+                    count_cursor = await self._connection.execute(
+                        """
+                        SELECT SUM(click_count) AS count
+                        FROM rescan_requests
+                        WHERE domain_id = ?
+                          AND datetime(last_requested_at) >= datetime('now', ?)
+                        """,
+                        (domain_id, window_clause),
+                    )
+                    count_row = await count_cursor.fetchone()
+                    count_value = count_row["count"] if count_row and count_row["count"] is not None else 0
+                    return int(count_value), True
+
+                await self._connection.execute(
+                    """
+                    UPDATE rescan_requests
+                    SET last_requested_at = CURRENT_TIMESTAMP,
+                        click_count = click_count + 1
+                    WHERE id = ?
+                    """,
+                    (row["id"],),
+                )
+            else:
+                await self._connection.execute(
+                    """
+                    INSERT INTO rescan_requests (domain_id, session_hash, click_count)
+                    VALUES (?, ?, 1)
+                    """,
+                    (domain_id, session_hash),
+                )
+
+            await self._connection.commit()
+
+            count_cursor = await self._connection.execute(
+                """
+                SELECT SUM(click_count) AS count
+                FROM rescan_requests
+                WHERE domain_id = ?
+                  AND datetime(last_requested_at) >= datetime('now', ?)
+                """,
+                (domain_id, window_clause),
+            )
+            count_row = await count_cursor.fetchone()
+            count_value = count_row["count"] if count_row and count_row["count"] is not None else 0
+            return int(count_value), False
+
+    async def get_rescan_request_count(self, domain_id: int, *, window_hours: int = 24) -> int:
+        """Return total recent rescan requests for a domain."""
+        window_clause = f"-{int(window_hours)} hours"
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT SUM(click_count) AS count
+                FROM rescan_requests
+                WHERE domain_id = ?
+                  AND datetime(last_requested_at) >= datetime('now', ?)
+                """,
+                (domain_id, window_clause),
+            )
+            row = await cursor.fetchone()
+            count_value = row["count"] if row and row["count"] is not None else 0
+            return int(count_value)
+
+    async def clear_rescan_requests(self, domain_id: int) -> None:
+        """Clear rescan requests for a domain after triggering."""
+        async with self._lock:
+            await self._connection.execute(
+                "DELETE FROM rescan_requests WHERE domain_id = ?",
+                (domain_id,),
+            )
+            await self._connection.commit()
 
     # =========================================================================
     # Takedown tracking

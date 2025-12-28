@@ -24,6 +24,7 @@ import {
   fetchReportOptions,
   fetchAnalytics,
   updateWatchlistBaseline,
+  requestRescan,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type {
@@ -36,6 +37,7 @@ import type {
   AnalyticsResponse,
   ReportOptionsResponse,
   Stats,
+  RescanRequestInfo,
 } from "./types";
 
 type Route =
@@ -55,8 +57,10 @@ const isPublicReportEligible = (domain?: Domain | null) => {
   if (!domain) return false;
   const status = (domain.status || "").toLowerCase();
   const verdict = (domain.verdict || "").toLowerCase();
+  const takedown = (domain.takedown_status || "").toLowerCase();
   if (["allowlisted", "false_positive", "watchlist"].includes(status)) return false;
   if (verdict === "benign") return false;
+  if (takedown === "confirmed_down") return false;
   return true;
 };
 
@@ -690,6 +694,8 @@ export default function App() {
   const [reportOptionsError, setReportOptionsError] = useState<string | null>(null);
   const [reportEngagementBusy, setReportEngagementBusy] = useState<Record<string, boolean>>({});
   const [openReportPlatforms, setOpenReportPlatforms] = useState<Set<string>>(new Set());
+  const [rescanRequestInfo, setRescanRequestInfo] = useState<RescanRequestInfo | null>(null);
+  const [rescanRequestBusy, setRescanRequestBusy] = useState(false);
 
   // Analytics (admin)
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
@@ -870,13 +876,17 @@ export default function App() {
   }, [route, loadDomainDetail, loadCampaigns, loadCampaignDetail]);
 
   useEffect(() => {
-    if (!canEdit && domainDetail?.domain.id) {
+    if (!canEdit && domainDetail?.domain.id && isPublicReportEligible(domainDetail.domain)) {
       loadReportOptions(domainDetail.domain.id);
     } else {
       setReportOptions(null);
       setReportOptionsError(null);
     }
   }, [canEdit, domainDetail?.domain.id, loadReportOptions]);
+
+  useEffect(() => {
+    setRescanRequestInfo(domainDetail?.rescan_request || null);
+  }, [domainDetail?.rescan_request]);
 
   const handleSubmit = async (e: FormEvent | MouseEvent, mode: "submit" | "rescan" = "submit") => {
     e.preventDefault();
@@ -1004,6 +1014,28 @@ export default function App() {
       showToast((err as Error).message || "Failed to record engagement", "error");
     } finally {
       setReportEngagementBusy((prev) => ({ ...prev, [platformId]: false }));
+    }
+  };
+
+  const handleRescanRequest = async () => {
+    if (!domainDetail?.domain.id) return;
+    setRescanRequestBusy(true);
+    try {
+      const res = await requestRescan(domainDetail.domain.id);
+      setRescanRequestInfo((prev) => ({
+        count: res.count ?? prev?.count ?? 0,
+        threshold: res.threshold ?? prev?.threshold ?? 0,
+        window_hours: res.window_hours ?? prev?.window_hours,
+        cooldown_hours: res.cooldown_hours ?? prev?.cooldown_hours,
+      }));
+      showToast(
+        res.message || (res.status === "rescan_queued" ? "Rescan queued." : "Rescan request recorded."),
+        res.status === "cooldown" ? "info" : "success",
+      );
+    } catch (err) {
+      showToast((err as Error).message || "Failed to request rescan", "error");
+    } finally {
+      setRescanRequestBusy(false);
     }
   };
 
@@ -1934,6 +1966,40 @@ export default function App() {
               )}
             </div>
           </div>
+
+          {!canEdit && (() => {
+            const takedownStatus = (domainDetail.domain.takedown_status || "").toLowerCase();
+            if (takedownStatus !== "confirmed_down") return null;
+            const count = rescanRequestInfo?.count ?? 0;
+            const threshold = rescanRequestInfo?.threshold ?? 0;
+            const remaining = threshold ? Math.max(threshold - count, 0) : null;
+            return (
+              <div className="sb-panel" style={{ marginTop: 8 }}>
+                <div className="sb-panel-header">
+                  <span className="sb-panel-title">Site Appears Taken Down</span>
+                  <span className="sb-muted">Reporting paused</span>
+                </div>
+                <div className="sb-muted" style={{ marginBottom: 12 }}>
+                  If you believe the scam is back online, request a rescan. We will recheck once enough
+                  independent requests are received.
+                </div>
+                <div className="sb-row" style={{ justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div className="sb-muted">
+                    Requests: {count}{threshold ? ` / ${threshold}` : ""}
+                    {remaining !== null && remaining > 0 ? ` · ${remaining} more needed` : ""}
+                  </div>
+                  <button className="sb-btn sb-btn-primary" type="button" disabled={rescanRequestBusy} onClick={handleRescanRequest}>
+                    {rescanRequestBusy ? "Requesting…" : "Request Rescan"}
+                  </button>
+                </div>
+                {rescanRequestInfo?.window_hours && (
+                  <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>
+                    Counts reset after {rescanRequestInfo.window_hours}h. One request per session every {rescanRequestInfo.cooldown_hours || rescanRequestInfo.window_hours}h.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {!canEdit && isPublicReportEligible(domainDetail?.domain) && (
             <div className="sb-panel" style={{ marginTop: 8 }}>

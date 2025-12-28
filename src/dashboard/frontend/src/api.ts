@@ -184,6 +184,18 @@ export async function recordReportEngagement(domainId: number, platform: string)
   return res.json();
 }
 
+export async function requestRescan(domainId: number): Promise<{ status: string; count: number; threshold: number; remaining?: number; message?: string; window_hours?: number; cooldown_hours?: number }> {
+  const res = await fetch(`/api/domains/${domainId}/rescan-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || "Failed to request rescan");
+  }
+  return res.json();
+}
+
 export async function fetchCampaigns(): Promise<{ campaigns: Campaign[] }> {
   return request("/campaigns");
 }
