@@ -7,5 +7,7 @@ kaspa.com
 kaspa.org
 kaspahub.org
 kaspanet.io
+kasware.xyz
+tangem.com
 wallet.kaspanet.io
 www.kaspafaq.com
