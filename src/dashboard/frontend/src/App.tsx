@@ -751,7 +751,9 @@ export default function App() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const showToast = (message: string, tone?: "success" | "error" | "info") => setToast({ message, tone });
+  const showToast = useCallback((message: string, tone?: "success" | "error" | "info") => {
+    setToast({ message, tone });
+  }, []);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -796,8 +798,7 @@ export default function App() {
   const loadDomainDetail = useCallback(async (id: number, snapshotId?: string | null) => {
     setDomainDetailLoading(true);
     try {
-      const requestedSnapshot = snapshotId === undefined ? snapshotSelection : snapshotId;
-      const detail = await fetchDomainDetail(id, requestedSnapshot || undefined);
+      const detail = await fetchDomainDetail(id, snapshotId || undefined);
       setDomainDetail(detail);
     } catch (err) {
       showToast((err as Error).message || "Failed to load domain", "error");
@@ -805,7 +806,7 @@ export default function App() {
     } finally {
       setDomainDetailLoading(false);
     }
-  }, [snapshotSelection]);
+  }, [showToast]);
 
   const handleSnapshotChange = useCallback(async (snapshotId: string) => {
     if (!domainDetail?.domain.id) return;
@@ -1203,7 +1204,7 @@ export default function App() {
         showToast(`Marked ${domain.domain} as false positive`, "success");
       }
       loadDomains();
-      if (route.name === "domain") loadDomainDetail(id);
+      if (route.name === "domain") loadDomainDetail(id, snapshotSelection || null);
     } catch (err) {
       showToast((err as Error).message || `${type} failed`, "error");
     } finally {
@@ -1235,7 +1236,7 @@ export default function App() {
       await updateDomainStatus(id, newStatus);
       showToast(`Changed ${domain.domain} to ${label}`, "success");
       loadDomains();
-      if (route.name === "domain") loadDomainDetail(id);
+      if (route.name === "domain") loadDomainDetail(id, snapshotSelection || null);
     } catch (err) {
       showToast((err as Error).message || "Status change failed", "error");
     } finally {
@@ -2023,7 +2024,7 @@ export default function App() {
                             const data = await updateWatchlistBaseline(domainDetail.domain.id);
                             showToast(`Baseline updated to ${data.baseline_timestamp}`, "success");
                             // Refresh domain detail
-                            await loadDomainDetail(domainDetail.domain.id);
+                            await loadDomainDetail(domainDetail.domain.id, snapshotSelection || null);
                           } catch (err) {
                             showToast(`Error updating baseline: ${err}`, "error");
                           } finally {
@@ -2247,7 +2248,7 @@ export default function App() {
                           await updateOperatorNotes(domainDetail.domain.id, combined);
                           showToast("Note added", "success");
                           setNoteInput("");
-                          loadDomainDetail(domainDetail.domain.id);
+                          loadDomainDetail(domainDetail.domain.id, snapshotSelection || null);
                         } catch (err) {
                           showToast((err as Error).message || "Failed to add note", "error");
                         } finally {
@@ -2556,7 +2557,7 @@ export default function App() {
                                     setReportPanelManualQueue([]);
                                     loadDomains();
                                     if (route.name === "domain" && reportPanelDomain.id) {
-                                      loadDomainDetail(reportPanelDomain.id);
+                                      loadDomainDetail(reportPanelDomain.id, snapshotSelection || null);
                                     }
                                     showToast("All manual submissions complete!", "success");
                                   }}
@@ -2637,7 +2638,7 @@ export default function App() {
                                     setReportPanelOpen(false);
                                     loadDomains();
                                     if (route.name === "domain" && reportPanelDomain.id) {
-                                      loadDomainDetail(reportPanelDomain.id);
+                                      loadDomainDetail(reportPanelDomain.id, snapshotSelection || null);
                                     }
                                   }
                                 } catch (err) {
