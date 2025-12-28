@@ -176,6 +176,12 @@ class AnalysisEngine:
                 cleared_instructions = self.evidence_store.clear_report_instructions(domain)
                 if cleared_instructions:
                     logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+                cleared_standard = self.evidence_store.clear_standard_evidence(domain)
+                if cleared_standard:
+                    logger.info(f"Cleared {cleared_standard} stale evidence files for {domain}")
+                removed_exploration = self.evidence_store.clear_exploration_screenshots(domain)
+                if removed_exploration:
+                    logger.info(f"Cleared {removed_exploration} old exploration screenshots for {domain}")
 
                 # Save analysis
                 await self.evidence_store.save_analysis(domain, {
@@ -212,6 +218,12 @@ class AnalysisEngine:
                 cleared_instructions = self.evidence_store.clear_report_instructions(domain)
                 if cleared_instructions:
                     logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+                cleared_standard = self.evidence_store.clear_standard_evidence(domain)
+                if cleared_standard:
+                    logger.info(f"Cleared {cleared_standard} stale evidence files for {domain}")
+                removed_exploration = self.evidence_store.clear_exploration_screenshots(domain)
+                if removed_exploration:
+                    logger.info(f"Cleared {removed_exploration} old exploration screenshots for {domain}")
 
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
@@ -288,6 +300,12 @@ class AnalysisEngine:
                     cleared_instructions = self.evidence_store.clear_report_instructions(domain)
                     if cleared_instructions:
                         logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+                    cleared_standard = self.evidence_store.clear_standard_evidence(domain)
+                    if cleared_standard:
+                        logger.info(f"Cleared {cleared_standard} stale evidence files for {domain}")
+                    removed_exploration = self.evidence_store.clear_exploration_screenshots(domain)
+                    if removed_exploration:
+                        logger.info(f"Cleared {removed_exploration} old exploration screenshots for {domain}")
 
                     infra_ip_addresses: list[str] = []
                     if resolved_ip_list:
@@ -359,6 +377,9 @@ class AnalysisEngine:
                     cleared_instructions = self.evidence_store.clear_report_instructions(domain)
                     if cleared_instructions:
                         logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+                    cleared_standard = self.evidence_store.clear_standard_evidence(domain)
+                    if cleared_standard:
+                        logger.info(f"Cleared {cleared_standard} stale evidence files for {domain}")
 
                     # Save all screenshots for comparison
                     has_early = (

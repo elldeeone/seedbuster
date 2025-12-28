@@ -123,6 +123,29 @@ class EvidenceStore:
                 continue
         return removed
 
+    def clear_standard_evidence(self, domain: str) -> int:
+        """Remove standard evidence files from the latest scan (screenshots/HTML/etc)."""
+        domain_dir = self.get_domain_dir(domain)
+        removed = 0
+        filenames = (
+            "screenshot.png",
+            "screenshot_early.png",
+            "screenshot_final.png",
+            "page.html",
+            "network.har",
+            "console.log",
+        )
+        for name in filenames:
+            path = domain_dir / name
+            try:
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return removed
+
     def clear_report_instructions(self, domain: str) -> int:
         """Remove stale report instruction files for a domain."""
         domain_dir = self.get_domain_dir(domain)

@@ -57,6 +57,9 @@ class DummyEvidenceStore:
     def archive_current_evidence(self, domain):
         return None
 
+    def clear_standard_evidence(self, domain):
+        return 0
+
     async def save_html(self, domain, html):
         return None
 
