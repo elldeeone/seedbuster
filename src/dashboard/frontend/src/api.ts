@@ -1,5 +1,7 @@
 import type {
   Campaign,
+  BulkRescanResponse,
+  BulkRescanStatus,
   Domain,
   DomainDetailResponse,
   DomainsResponse,
@@ -137,22 +139,16 @@ export async function rescanDomain(domainId: number, domain?: string): Promise<{
   });
 }
 
-export async function bulkRescanDomains(domainIds: number[]): Promise<{
-  bulk_id: string;
-  requested: number;
-  found: number;
-  missing: number;
-  queued: number;
-  skipped: number;
-  status: Record<string, number>;
-}> {
+export async function bulkRescanDomains(domainIds: number[]): Promise<BulkRescanResponse> {
   return request("/domains/bulk-rescan", {
     method: "POST",
     body: JSON.stringify({ domain_ids: domainIds }),
   });
 }
 
-export async function fetchBulkRescanStatus(bulkId: string): Promise<{ bulk_id: string; status: Record<string, number> }> {
+export async function fetchBulkRescanStatus(
+  bulkId: string,
+): Promise<{ bulk_id: string; status: BulkRescanStatus }> {
   return request(`/domains/bulk-rescan/${encodeURIComponent(bulkId)}`);
 }
 
