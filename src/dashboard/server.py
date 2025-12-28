@@ -3832,6 +3832,7 @@ def _render_domain_detail(
     *,
     evidence_dir: Path | None,
     evidence_base_url: str | None,
+    evidence_cache_buster: str | None = None,
     screenshots: list[Path],
     instruction_files: list[Path],
     admin: bool,
@@ -3860,6 +3861,7 @@ def _render_domain_detail(
     evidence_bits = ""
     if evidence_base_url and (screenshots or instruction_files or evidence_dir):
         files = []
+        cache_suffix = f"?v={evidence_cache_buster}" if evidence_cache_buster else ""
         for label, filename in (
             ("analysis.json", "analysis.json"),
             ("page.html", "page.html"),
@@ -3868,18 +3870,18 @@ def _render_domain_detail(
         ):
             if evidence_dir and (evidence_dir / filename).exists():
                 files.append(
-                    f'<a class="sb-btn" style="font-size: 11px; padding: 6px 12px;" href="{_escape(evidence_base_url + "/" + quote(filename))}" target="_blank" rel="noreferrer">{_escape(label)}</a>'
+                    f'<a class="sb-btn" style="font-size: 11px; padding: 6px 12px;" href="{_escape(evidence_base_url + "/" + quote(filename) + cache_suffix)}" target="_blank" rel="noreferrer">{_escape(label)}</a>'
                 )
         for p in instruction_files:
             files.append(
-                f'<a class="sb-btn" style="font-size: 11px; padding: 6px 12px;" href="{_escape(evidence_base_url + "/" + quote(p.name))}" target="_blank" rel="noreferrer">{_escape(p.name)}</a>'
+                f'<a class="sb-btn" style="font-size: 11px; padding: 6px 12px;" href="{_escape(evidence_base_url + "/" + quote(p.name) + cache_suffix)}" target="_blank" rel="noreferrer">{_escape(p.name)}</a>'
             )
 
         images = []
         for p in screenshots:
             images.append(
-                f'<div class="sb-screenshot"><a href="{_escape(evidence_base_url + "/" + quote(p.name))}" target="_blank" rel="noreferrer">'
-                f'<img src="{_escape(evidence_base_url + "/" + quote(p.name))}" loading="lazy" alt="{_escape(p.name)}" />'
+                f'<div class="sb-screenshot"><a href="{_escape(evidence_base_url + "/" + quote(p.name) + cache_suffix)}" target="_blank" rel="noreferrer">'
+                f'<img src="{_escape(evidence_base_url + "/" + quote(p.name) + cache_suffix)}" loading="lazy" alt="{_escape(p.name)}" />'
                 f'</a><div class="sb-screenshot-label">{_escape(p.name)}</div></div>'
             )
 
@@ -4745,9 +4747,13 @@ class DashboardServer:
     async def _evidence_sandbox_middleware(self, request: web.Request, handler):  # type: ignore[override]
         response = await handler(request)
         path = (request.path or "").lower()
-        if path.startswith("/evidence") and path.endswith((".html", ".htm")):
-            response.headers["Content-Security-Policy"] = EVIDENCE_HTML_CSP
-            response.headers["X-Content-Type-Options"] = "nosniff"
+        if path.startswith("/evidence"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            if path.endswith((".html", ".htm")):
+                response.headers["Content-Security-Policy"] = EVIDENCE_HTML_CSP
+                response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     def _get_or_set_csrf(self, request: web.Request, response: web.StreamResponse) -> str:
@@ -4883,6 +4889,7 @@ class DashboardServer:
             is_latest = True
 
         evidence_base = None
+        evidence_cache_buster = resolved_snapshot_id or latest_id
         if snapshot_dir:
             evidence_base = f"/evidence/{domain_dir.name}"
             if not is_latest and resolved_snapshot_id:
@@ -4898,9 +4905,10 @@ class DashboardServer:
 
         body = _render_domain_detail(
             domain,
-            reports,
+            self._filter_reports_for_snapshot(reports, snapshots, resolved_snapshot_id or latest_id),
             evidence_dir=snapshot_dir,
             evidence_base_url=evidence_base,
+            evidence_cache_buster=evidence_cache_buster,
             screenshots=screenshots,
             instruction_files=instruction_files,
             admin=False,
@@ -5222,6 +5230,7 @@ class DashboardServer:
             is_latest = True
 
         evidence_base = None
+        evidence_cache_buster = resolved_snapshot_id or latest_id
         if snapshot_dir:
             evidence_base = f"/evidence/{domain_dir.name}"
             if not is_latest and resolved_snapshot_id:
@@ -5246,9 +5255,10 @@ class DashboardServer:
                 title="SeedBuster Dashboard",
                 body=_render_domain_detail(
                     domain,
-                    reports,
+                    self._filter_reports_for_snapshot(reports, snapshots, resolved_snapshot_id or latest_id),
                     evidence_dir=snapshot_dir,
                     evidence_base_url=evidence_base,
+                    evidence_cache_buster=evidence_cache_buster,
                     screenshots=screenshots,
                     instruction_files=instruction_files,
                     admin=True,
@@ -5556,6 +5566,65 @@ class DashboardServer:
             return datetime.fromtimestamp(fallback.stat().st_mtime, tz=timezone.utc)
         return None
 
+    def _parse_report_time(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                if fmt.endswith("%z"):
+                    return datetime.strptime(value, fmt)
+                return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _report_timestamp(self, report: dict) -> datetime | None:
+        return (
+            self._parse_report_time(report.get("submitted_at"))
+            or self._parse_report_time(report.get("attempted_at"))
+            or self._parse_report_time(report.get("created_at"))
+        )
+
+    def _snapshot_window(
+        self,
+        snapshots: list[dict],
+        snapshot_id: str | None,
+    ) -> tuple[datetime | None, datetime | None]:
+        if not snapshot_id:
+            return None, None
+        ordered = []
+        for snap in snapshots:
+            ts_raw = snap.get("timestamp")
+            ts = self._parse_snapshot_time(ts_raw) if isinstance(ts_raw, str) else None
+            ordered.append((snap.get("id"), ts))
+        ordered = [entry for entry in ordered if entry[0] and entry[1]]
+        for idx, (sid, ts) in enumerate(ordered):
+            if sid == snapshot_id:
+                end = ordered[idx - 1][1] if idx > 0 else None
+                return ts, end
+        return None, None
+
+    def _filter_reports_for_snapshot(
+        self,
+        reports: list[dict],
+        snapshots: list[dict],
+        snapshot_id: str | None,
+    ) -> list[dict]:
+        start, end = self._snapshot_window(snapshots, snapshot_id)
+        if not start:
+            return reports
+        filtered = []
+        for report in reports:
+            ts = self._report_timestamp(report)
+            if not ts:
+                continue
+            if ts >= start and (end is None or ts < end):
+                filtered.append(report)
+        return filtered
+
     def _snapshot_meta(self, analysis_path: Path, snapshot_id: str, is_latest: bool) -> tuple[dict, datetime | None]:
         data: dict = {}
         timestamp = None
@@ -5709,6 +5778,7 @@ class DashboardServer:
         instruction_files: list[str] = []
         snapshot: dict | None = None
         snapshots: list[dict] = []
+        latest_id: str | None = None
         campaign = self._get_campaign_for_domain(row["domain"])
         filtered_campaign = None
         if campaign:
@@ -5726,29 +5796,31 @@ class DashboardServer:
             if snapshot_param and not snapshot_dir:
                 return web.json_response({"error": "Snapshot not found"}, status=404)
 
+            evidence_cache_buster = resolved_snapshot_id or latest_id
+            cache_suffix = f"?v={evidence_cache_buster}" if evidence_cache_buster else ""
             evidence_base = f"/evidence/{domain_dir.name}"
             if snapshot_dir and not is_latest and resolved_snapshot_id:
                 evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
 
             if snapshot_dir:
                 evidence["html"] = (
-                    f"{evidence_base}/page.html"
+                    f"{evidence_base}/page.html{cache_suffix}"
                     if (snapshot_dir / "page.html").exists()
                     else None
                 )
                 evidence["analysis"] = (
-                    f"{evidence_base}/analysis.json"
+                    f"{evidence_base}/analysis.json{cache_suffix}"
                     if (snapshot_dir / "analysis.json").exists()
                     else None
                 )
                 evidence["screenshots"] = [
-                    f"{evidence_base}/{p.name}"
+                    f"{evidence_base}/{p.name}{cache_suffix}"
                     for p in self._get_screenshots(row, snapshot_dir)
                 ]
 
             if is_latest and domain_dir.exists():
                 instruction_files = [
-                    f"/evidence/{domain_dir.name}/{p.name}"
+                    f"/evidence/{domain_dir.name}/{p.name}{cache_suffix}"
                     for p in self._get_instruction_files(domain_dir)
                 ]
 
@@ -5855,10 +5927,20 @@ class DashboardServer:
         except Exception:
             rescan_request_info = None
 
+        selected_snapshot_id = None
+        if snapshots:
+            selected_snapshot_id = None
+            if snapshot and snapshot.get("id"):
+                selected_snapshot_id = snapshot.get("id")
+            elif snapshot_param:
+                selected_snapshot_id = snapshot_param
+            elif "latest_id" in locals():
+                selected_snapshot_id = latest_id
+
         return web.json_response(
             {
                 "domain": row,
-                "reports": reports,
+                "reports": self._filter_reports_for_snapshot(reports, snapshots, selected_snapshot_id),
                 "evidence": evidence,
                 "infrastructure": infrastructure,
                 "campaign": filtered_campaign,
