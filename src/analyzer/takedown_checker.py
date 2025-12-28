@@ -38,11 +38,44 @@ class TakedownCheckResult:
 class TakedownChecker:
     """Perform DNS/HTTP probes to estimate takedown status."""
 
-    async def check_domain(self, domain: str) -> TakedownCheckResult:
-        dns_result = await self._check_dns(domain)
-        http_result = await self._check_http(domain)
-        whois_result = await self._check_rdap(domain)
-        return self._analyze(domain, dns_result, http_result, whois_result)
+    async def check_domain(
+        self,
+        domain: str,
+        *,
+        previous_status: TakedownStatus | str | None = None,
+    ) -> TakedownCheckResult:
+        dns_task = asyncio.create_task(self._check_dns(domain))
+        http_task = asyncio.create_task(self._check_http(domain))
+        dns_result, http_result = await asyncio.gather(dns_task, http_task)
+
+        preliminary = self._analyze(domain, dns_result, http_result, None)
+        prior = self._normalize_status(previous_status)
+        if self._should_check_rdap(preliminary.status, prior):
+            whois_result = await self._check_rdap(domain)
+            return self._analyze(domain, dns_result, http_result, whois_result)
+        return preliminary
+
+    @staticmethod
+    def _normalize_status(status: TakedownStatus | str | None) -> Optional[TakedownStatus]:
+        if isinstance(status, TakedownStatus):
+            return status
+        if isinstance(status, str):
+            value = status.strip().lower()
+            for entry in TakedownStatus:
+                if entry.value == value:
+                    return entry
+        return None
+
+    @staticmethod
+    def _should_check_rdap(
+        current_status: TakedownStatus,
+        previous_status: Optional[TakedownStatus],
+    ) -> bool:
+        if current_status in {TakedownStatus.LIKELY_DOWN, TakedownStatus.CONFIRMED_DOWN}:
+            return True
+        if previous_status and current_status != previous_status:
+            return True
+        return False
 
     async def _check_dns(self, domain: str) -> dict:
         loop = asyncio.get_running_loop()
@@ -87,7 +120,7 @@ class TakedownChecker:
         except Exception as e:
             return {"status": None, "error": str(e)}
 
-    def _analyze(self, domain: str, dns: dict, http: dict, whois: dict) -> TakedownCheckResult:
+    def _analyze(self, domain: str, dns: dict, http: dict, whois: Optional[dict]) -> TakedownCheckResult:
         confidence = 0.0
 
         dns_resolves = bool(dns.get("resolves"))

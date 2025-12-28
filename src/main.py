@@ -785,24 +785,30 @@ class SeedBusterPipeline:
         age_hours = max(0.0, (now - reported_at).total_seconds() / 3600.0)
 
         if status == TakedownStatus.CONFIRMED_DOWN.value:
-            return 24 * 60 * 60  # check daily for resurrection
+            hours = max(1, int(self.config.takedown_interval_confirmed_down_hours or 6))
+            return hours * 60 * 60
         if status == TakedownStatus.LIKELY_DOWN.value:
-            return 2 * 60 * 60  # tighten checks while confirming
+            minutes = max(1, int(self.config.takedown_interval_likely_down_minutes or 30))
+            return minutes * 60
         if age_hours < 24:
-            return 30 * 60  # first day: 30m cadence
+            minutes = max(1, int(self.config.takedown_interval_new_minutes or 15))
+            return minutes * 60
         if age_hours < 24 * 7:
-            return 2 * 60 * 60  # first week: 2h cadence
-        return 6 * 60 * 60  # older: 6h cadence
+            hours = max(1, int(self.config.takedown_interval_week_hours or 1))
+            return hours * 60 * 60
+        hours = max(1, int(self.config.takedown_interval_older_hours or 3))
+        return hours * 60 * 60
 
     async def _takedown_worker(self):
         """Monitor domains for takedown signals (DNS/HTTP)."""
         logger.info("Takedown monitor worker started")
         while self._running:
             try:
-                domains = await self.database.get_domains_for_takedown_check(limit=200)
+                batch_size = max(1, int(self.config.takedown_check_batch_size or 200))
+                concurrency = max(1, int(self.config.takedown_check_concurrency or 10))
+                domains = await self.database.get_domains_for_takedown_check(limit=batch_size)
                 now = datetime.now(timezone.utc)
-                checked = 0
-
+                due_rows = []
                 for row in domains:
                     domain = str(row.get("domain") or "").strip()
                     if not domain:
@@ -812,37 +818,59 @@ class SeedBusterPipeline:
                     interval = self._takedown_interval_seconds(row, now)
                     if last_checked and (now - last_checked).total_seconds() < interval:
                         continue
+                    due_rows.append(row)
 
-                    result = await self.takedown_checker.check_domain(domain)
-                    await self.database.add_takedown_check(
-                        domain_id=int(row.get("id") or 0),
-                        http_status=result.http_status,
-                        http_error=result.http_error,
-                        dns_resolves=result.dns_resolves,
-                        dns_result=result.dns_result,
-                        is_sinkholed=result.is_sinkholed,
-                        domain_status=result.domain_status,
-                        content_hash=result.content_hash,
-                        still_phishing=None,
-                        takedown_status=result.status.value,
-                        confidence=result.confidence,
-                    )
+                if not due_rows:
+                    await asyncio.sleep(300)
+                    continue
 
-                    detected_at = None
-                    confirmed_at = None
-                    if result.status in {TakedownStatus.LIKELY_DOWN, TakedownStatus.CONFIRMED_DOWN}:
-                        detected_at = now.isoformat()
-                    if result.status == TakedownStatus.CONFIRMED_DOWN:
-                        confirmed_at = now.isoformat()
+                semaphore = asyncio.Semaphore(concurrency)
 
-                    await self.database.update_domain_takedown_status(
-                        int(row.get("id") or 0),
-                        result.status.value,
-                        detected_at=detected_at,
-                        confirmed_at=confirmed_at,
-                    )
-                    checked += 1
+                async def _check_row(row: dict) -> int:
+                    async with semaphore:
+                        domain = str(row.get("domain") or "").strip()
+                        if not domain:
+                            return 0
+                        try:
+                            check_time = datetime.now(timezone.utc)
+                            result = await self.takedown_checker.check_domain(
+                                domain,
+                                previous_status=row.get("takedown_status"),
+                            )
+                            await self.database.add_takedown_check(
+                                domain_id=int(row.get("id") or 0),
+                                http_status=result.http_status,
+                                http_error=result.http_error,
+                                dns_resolves=result.dns_resolves,
+                                dns_result=result.dns_result,
+                                is_sinkholed=result.is_sinkholed,
+                                domain_status=result.domain_status,
+                                content_hash=result.content_hash,
+                                still_phishing=None,
+                                takedown_status=result.status.value,
+                                confidence=result.confidence,
+                            )
 
+                            detected_at = None
+                            confirmed_at = None
+                            if result.status in {TakedownStatus.LIKELY_DOWN, TakedownStatus.CONFIRMED_DOWN}:
+                                detected_at = check_time.isoformat()
+                            if result.status == TakedownStatus.CONFIRMED_DOWN:
+                                confirmed_at = check_time.isoformat()
+
+                            await self.database.update_domain_takedown_status(
+                                int(row.get("id") or 0),
+                                result.status.value,
+                                detected_at=detected_at,
+                                confirmed_at=confirmed_at,
+                            )
+                            return 1
+                        except Exception as exc:
+                            logger.error(f"Takedown check failed for {domain}: {exc}")
+                            return 0
+
+                results = await asyncio.gather(*[_check_row(row) for row in due_rows])
+                checked = sum(results)
                 await asyncio.sleep(60 if checked else 300)
 
             except asyncio.CancelledError:

@@ -5,9 +5,13 @@ Used by manual and email reporters to find registrar names and abuse contacts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import time
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -87,6 +91,70 @@ def parse_registrar_and_abuse_email(data: object) -> tuple[Optional[str], Option
     return (registrar_name, abuse_email)
 
 
+RDAP_MIN_QPM = max(1, int(os.getenv("TAKEDOWN_RDAP_MIN_QPM", "30")))
+RDAP_MAX_QPM = max(RDAP_MIN_QPM, int(os.getenv("TAKEDOWN_RDAP_MAX_QPM", "120")))
+RDAP_RAMP_UP_SUCCESSES = 30
+RDAP_RAMP_UP_INTERVAL_SECONDS = 60
+
+
+class AdaptiveRateLimiter:
+    """Adaptive per-host rate limiter with fast backoff on throttling."""
+
+    def __init__(self, min_qpm: int, max_qpm: int, *, label: str) -> None:
+        self.min_qpm = max(1, min_qpm)
+        self.max_qpm = max(self.min_qpm, max_qpm)
+        self.current_qpm = self.min_qpm
+        self.label = label
+        self._next_allowed = 0.0
+        self._success_streak = 0
+        self._last_adjust = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            interval = 60.0 / max(1, self.current_qpm)
+            now = time.monotonic()
+            if self._next_allowed > now:
+                await asyncio.sleep(self._next_allowed - now)
+                now = time.monotonic()
+            self._next_allowed = now + interval
+
+    async def record_success(self) -> None:
+        async with self._lock:
+            self._success_streak += 1
+            now = time.monotonic()
+            if (
+                self._success_streak >= RDAP_RAMP_UP_SUCCESSES
+                and now - self._last_adjust >= RDAP_RAMP_UP_INTERVAL_SECONDS
+                and self.current_qpm < self.max_qpm
+            ):
+                self.current_qpm += 1
+                self._success_streak = 0
+                self._last_adjust = now
+
+    async def record_throttle(self) -> None:
+        async with self._lock:
+            self.current_qpm = max(self.min_qpm, max(1, self.current_qpm // 2))
+            self._success_streak = 0
+            self._last_adjust = time.monotonic()
+            interval = 60.0 / max(1, self.current_qpm)
+            self._next_allowed = max(self._next_allowed, self._last_adjust + interval)
+
+
+_rdap_limiters: dict[str, AdaptiveRateLimiter] = {}
+_rdap_limiters_lock = asyncio.Lock()
+
+
+async def _get_rdap_limiter(url: str) -> AdaptiveRateLimiter:
+    host = urlparse(url).netloc.lower() or "rdap"
+    async with _rdap_limiters_lock:
+        limiter = _rdap_limiters.get(host)
+        if limiter is None:
+            limiter = AdaptiveRateLimiter(RDAP_MIN_QPM, RDAP_MAX_QPM, label=host)
+            _rdap_limiters[host] = limiter
+        return limiter
+
+
 from ..cache import create_rdap_cache
 
 # Module-level cache instance
@@ -94,10 +162,13 @@ _rdap_cache = create_rdap_cache(ttl_seconds=3600)
 
 
 async def _fetch_rdap(url: str, timeout: float) -> RdapLookupResult:
+    limiter = await _get_rdap_limiter(url)
+    await limiter.acquire()
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.get(url, headers={"User-Agent": "SeedBuster/1.0"})
     except httpx.TimeoutException:
+        await limiter.record_throttle()
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
@@ -115,6 +186,8 @@ async def _fetch_rdap(url: str, timeout: float) -> RdapLookupResult:
         )
 
     if resp.status_code != 200:
+        if resp.status_code in (429, 503):
+            await limiter.record_throttle()
         return RdapLookupResult(
             registrar_name=None,
             abuse_email=None,
@@ -123,6 +196,7 @@ async def _fetch_rdap(url: str, timeout: float) -> RdapLookupResult:
             error=f"RDAP lookup failed ({resp.status_code})",
             status_code=int(resp.status_code),
         )
+    await limiter.record_success()
 
     try:
         data = resp.json()

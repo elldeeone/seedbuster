@@ -216,6 +216,13 @@ class Config:
     # Operational limits
     analysis_timeout: int = 30
     max_concurrent_analyses: int = 3
+    takedown_check_batch_size: int = 200
+    takedown_check_concurrency: int = 10
+    takedown_interval_new_minutes: int = 15
+    takedown_interval_week_hours: int = 1
+    takedown_interval_older_hours: int = 3
+    takedown_interval_likely_down_minutes: int = 30
+    takedown_interval_confirmed_down_hours: int = 6
 
     # Paths
     data_dir: Path = field(default_factory=lambda: Path("./data"))
@@ -628,6 +635,17 @@ def load_config() -> Config:
         public_rescan_cooldown_hours=int(os.getenv("PUBLIC_RESCAN_COOLDOWN_HOURS", "24")),
         analysis_timeout=int(os.getenv("ANALYSIS_TIMEOUT", "30")),
         max_concurrent_analyses=int(os.getenv("MAX_CONCURRENT_ANALYSES", "3")),
+        takedown_check_batch_size=max(1, int(os.getenv("TAKEDOWN_CHECK_BATCH_SIZE", "200"))),
+        takedown_check_concurrency=max(1, int(os.getenv("TAKEDOWN_CHECK_CONCURRENCY", "10"))),
+        takedown_interval_new_minutes=max(1, int(os.getenv("TAKEDOWN_INTERVAL_NEW_MINUTES", "15"))),
+        takedown_interval_week_hours=max(1, int(os.getenv("TAKEDOWN_INTERVAL_WEEK_HOURS", "1"))),
+        takedown_interval_older_hours=max(1, int(os.getenv("TAKEDOWN_INTERVAL_OLDER_HOURS", "3"))),
+        takedown_interval_likely_down_minutes=max(
+            1, int(os.getenv("TAKEDOWN_INTERVAL_LIKELY_DOWN_MINUTES", "30"))
+        ),
+        takedown_interval_confirmed_down_hours=max(
+            1, int(os.getenv("TAKEDOWN_INTERVAL_CONFIRMED_DOWN_HOURS", "6"))
+        ),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),
         evidence_dir=Path(os.getenv("EVIDENCE_DIR", "./data/evidence")),
         config_dir=Path(os.getenv("CONFIG_DIR", "./config")),
