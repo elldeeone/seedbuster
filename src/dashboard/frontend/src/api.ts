@@ -168,16 +168,7 @@ export async function cleanupEvidence(
 }
 
 export async function fetchReportOptions(domainId: number): Promise<ReportOptionsResponse> {
-  const res = await fetch(`/api/domains/${domainId}/report-options`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || "Failed to load report options");
-  }
-  return res.json();
+  return request<ReportOptionsResponse>(`/domains/${domainId}/report-options`);
 }
 
 export async function recordReportEngagement(domainId: number, platform: string): Promise<{ status: string; platform: string; new_count: number; message?: string }> {

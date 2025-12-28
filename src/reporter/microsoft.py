@@ -33,19 +33,9 @@ class MicrosoftReporter(BaseReporter):
         super().__init__()
         self._configured = True
 
-    async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        is_valid, error = self.validate_evidence(evidence)
-        if not is_valid:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message=error,
-            )
-
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         details = evidence.to_summary().strip()
-
-        # Build structured data for the new UI
-        manual_data = ManualSubmissionData(
+        return ManualSubmissionData(
             form_url=self.REPORT_URL,
             reason="Microsoft form (bot protection)",
             fields=[
@@ -72,6 +62,21 @@ class MicrosoftReporter(BaseReporter):
             ],
         )
 
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        manual_data = self.generate_manual_submission(evidence)
+        details = next(
+            (field.value for field in manual_data.fields if field.name == "details"),
+            evidence.to_summary().strip(),
+        )
+
         message = "\n".join([
             "Manual submission required (Microsoft):",
             self.REPORT_URL,
@@ -90,4 +95,3 @@ class MicrosoftReporter(BaseReporter):
             message=message,
             response_data={"manual_fields": manual_data.to_dict()},
         )
-

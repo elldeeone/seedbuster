@@ -318,6 +318,11 @@ class CloudflareReporter(BaseReporter):
 
         return "\n".join(lines).strip(), manual_data
 
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        """Generate structured manual submission data for public instructions."""
+        _, manual_data = self._build_manual_payload(evidence, reason="Manual submission required")
+        return manual_data
+
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """
         Submit phishing report to Cloudflare.

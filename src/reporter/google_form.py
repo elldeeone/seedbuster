@@ -43,6 +43,31 @@ class GoogleFormReporter(BaseReporter):
         super().__init__()
         self._configured = True  # Always available
 
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        """Generate structured manual submission data for public instructions."""
+        additional_info = ReportTemplates.google_safebrowsing_comment(evidence)
+        return ManualSubmissionData(
+            form_url=self.REPORT_URL,
+            reason="Google Safe Browsing form",
+            fields=[
+                ManualSubmissionField(
+                    name="url",
+                    label="URL of the suspected phishing page",
+                    value=evidence.url,
+                ),
+                ManualSubmissionField(
+                    name="details",
+                    label="Additional details (optional)",
+                    value=additional_info,
+                    multiline=True,
+                ),
+            ],
+            notes=[
+                "Paste the URL into Google's form.",
+                "Complete the reCAPTCHA if prompted.",
+            ],
+        )
+
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """
         Submit phishing report to Google Safe Browsing.

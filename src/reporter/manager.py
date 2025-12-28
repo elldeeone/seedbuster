@@ -163,6 +163,80 @@ class ReportManager:
         lines.extend(["Evidence Summary:", evidence.to_summary().strip(), ""])
         return "\n".join(lines).strip() + "\n"
 
+    @staticmethod
+    def _public_placeholder_for_field(name: str, label: str) -> Optional[str]:
+        """Return placeholder text for identity fields in public mode."""
+        key = f"{name} {label}".lower()
+        if "email" in key:
+            return "(your email)"
+        if "name" in key:
+            return "(your name)"
+        if "company" in key or "organization" in key or "organisation" in key:
+            return "(your organization)"
+        if "title" in key:
+            return "(your title)"
+        if "telephone" in key or "phone" in key or "tele" in key:
+            return "(your phone)"
+        if "country" in key:
+            return "(your country)"
+        return None
+
+    @staticmethod
+    def _identity_tokens_from(value: str) -> set[str]:
+        tokens: set[str] = set()
+        raw = (value or "").strip()
+        if not raw:
+            return tokens
+        tokens.add(raw)
+        if "<" in raw and ">" in raw:
+            name = raw.split("<", 1)[0].strip().strip('"')
+            email = raw.split("<", 1)[1].split(">", 1)[0].strip()
+            if name:
+                tokens.add(name)
+            if email:
+                tokens.add(email)
+        return tokens
+
+    def _public_identity_tokens(self) -> list[str]:
+        tokens: set[str] = set()
+        tokens.update(self._identity_tokens_from(self.reporter_email))
+        tokens.update(self._identity_tokens_from(self.resend_from_email or ""))
+        tokens.update(self._identity_tokens_from(self.smtp_config.get("from_email", "")))
+        return [t for t in tokens if t]
+
+    def _scrub_public_identity(self, data: dict) -> dict:
+        """Replace operator identity with placeholders for public manual instructions."""
+        if not isinstance(data, dict):
+            return data
+        fields = data.get("fields")
+        if not isinstance(fields, list):
+            return data
+
+        tokens = self._public_identity_tokens()
+        scrubbed_fields: list[dict] = []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            name = str(field.get("name") or "")
+            label = str(field.get("label") or "")
+            value = field.get("value")
+
+            placeholder = self._public_placeholder_for_field(name, label)
+            if placeholder is not None:
+                field["value"] = placeholder
+            elif isinstance(value, str) and tokens:
+                updated = value
+                for token in tokens:
+                    if token and token in updated:
+                        replacement = "(your email)" if "@" in token else "(your details)"
+                        updated = updated.replace(token, replacement)
+                field["value"] = updated
+
+            scrubbed_fields.append(field)
+
+        data["fields"] = scrubbed_fields
+        return data
+
     async def retry_due_reports(self, *, limit: int = 20) -> list[ReportResult]:
         """
         Retry rate-limited reports that are due.
@@ -898,6 +972,8 @@ class ReportManager:
         domain_id: int,
         domain: str,
         platforms: Optional[list[str]] = None,
+        *,
+        public: bool = False,
     ) -> dict[str, dict]:
         """
         Build manual submission instructions for the given domain/platforms.
@@ -973,7 +1049,18 @@ class ReportManager:
                 logger.debug(f"Skipping {platform} for {domain}: {reason}")
                 continue
             try:
-                manual = reporter.generate_manual_submission(evidence)
+                manual = None
+                if (
+                    platform == "registrar"
+                    and hasattr(reporter, "generate_manual_submission_with_hints")
+                ):
+                    manual = reporter.generate_manual_submission_with_hints(
+                        evidence,
+                        registrar_name=registrar_name,
+                        registrar_abuse_email=registrar_abuse_email,
+                    )
+                else:
+                    manual = reporter.generate_manual_submission(evidence)
                 data = manual.to_dict() if hasattr(manual, "to_dict") else dict(manual)
 
                 # Add quick context so public users know why a platform is shown.
@@ -995,6 +1082,19 @@ class ReportManager:
                             context = f"Registrar abuse contact found: {registrar_abuse_email}"
                             if context not in notes:
                                 notes.insert(0, context)
+                    if public:
+                        data = self._scrub_public_identity(data)
+                        notes = data.get("notes")
+                        if not isinstance(notes, list):
+                            notes = []
+                            data["notes"] = notes
+                        if "Use your own contact details" not in notes:
+                            notes.append("Use your own contact details (do not use SeedBuster details).")
+                    form_url = str(data.get("form_url") or "").strip() if isinstance(data, dict) else ""
+                    if not form_url:
+                        missing = "Destination missing; research needed."
+                        if isinstance(notes, list) and missing not in notes:
+                            notes.insert(0, missing)
 
                 results[platform] = data
             except Exception as e:
@@ -1084,6 +1184,13 @@ class ReportManager:
         if not hosting_provider:
             hosting_provider = (analysis_json.get("infrastructure") or {}).get("hosting_provider")
 
+        scam_type = (analysis_json.get("scam_type") or domain_data.get("scam_type") or "").strip() or None
+        scammer_wallets = analysis_json.get("scammer_wallets") or []
+        if isinstance(scammer_wallets, str):
+            scammer_wallets = [scammer_wallets]
+        if not isinstance(scammer_wallets, list):
+            scammer_wallets = []
+
         # Choose the best available screenshot for reports (seed form > suspicious exploration > early > main).
         screenshot_path = None
         try:
@@ -1110,6 +1217,8 @@ class ReportManager:
             backend_domains=backend_domains,
             api_keys_found=api_keys_found,
             hosting_provider=hosting_provider,
+            scam_type=scam_type,
+            scammer_wallets=[str(w).strip() for w in scammer_wallets if str(w).strip()],
         )
 
         return evidence

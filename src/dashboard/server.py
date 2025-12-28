@@ -4615,6 +4615,7 @@ class DashboardServer:
         self._app.router.add_patch("/admin/api/domains/{domain_id}/status", self._admin_api_update_domain_status)
         self._app.router.add_post("/admin/api/domains/{domain_id}/baseline", self._admin_api_update_baseline)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
+        self._app.router.add_get("/admin/api/domains/{domain_id}/report-options", self._admin_api_report_options)
         self._app.router.add_post("/admin/api/cleanup_evidence", self._admin_api_cleanup_evidence)
         self._app.router.add_get("/admin/api/campaigns", self._admin_api_campaigns)
         self._app.router.add_get("/admin/api/campaigns/{campaign_id}", self._admin_api_campaign)
@@ -5826,6 +5827,70 @@ class DashboardServer:
             }
         )
 
+    async def _admin_api_report_options(self, request: web.Request) -> web.Response:
+        """Return manual report options for admin (prefilled)."""
+        domain_id = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        domain = await self.database.get_domain_by_id(domain_id)
+        if not domain:
+            raise web.HTTPNotFound(text="Domain not found")
+
+        platform_info = self.get_platform_info()
+        available_platforms = self.get_available_platforms()
+        if not available_platforms:
+            return web.json_response({"error": "No reporting platforms configured"}, status=503)
+
+        manual_data: dict[str, dict] = {}
+        if self.get_manual_report_options:
+            try:
+                manual_data = await self.get_manual_report_options(
+                    domain_id,
+                    domain.get("domain", ""),
+                    available_platforms,
+                    public=False,
+                )
+            except Exception as e:
+                raise web.HTTPServiceUnavailable(text=f"Manual instructions unavailable: {e}")
+        else:
+            raise web.HTTPServiceUnavailable(text="Manual instructions not configured")
+
+        engagement_counts = await self.database.get_report_engagement_counts(domain_id)
+        total_engagements = sum(engagement_counts.get(p, 0) for p in manual_data.keys())
+
+        entries = []
+        for platform in manual_data.keys():
+            info = platform_info.get(platform, {}) if isinstance(platform_info, dict) else {}
+            raw_instruction = manual_data.get(platform)
+            instructions = None
+            error = None
+            if isinstance(raw_instruction, dict):
+                if set(raw_instruction.keys()) == {"error"}:
+                    error = str(raw_instruction.get("error"))
+                else:
+                    instructions = raw_instruction
+            entries.append(
+                {
+                    "id": platform,
+                    "name": info.get("name") or " ".join(part.capitalize() for part in platform.split("_")),
+                    "manual_only": bool(info.get("manual_only", True)),
+                    "url": info.get("url", ""),
+                    "engagement_count": engagement_counts.get(platform, 0),
+                    "instructions": instructions,
+                    "error": error,
+                }
+            )
+
+        return web.json_response(
+            {
+                "domain": domain.get("domain"),
+                "domain_id": domain_id,
+                "platforms": entries,
+                "total_engagements": total_engagements,
+            }
+        )
+
     async def _public_api_report_options(self, request: web.Request) -> web.Response:
         """Return manual report options + counters for a domain."""
         domain_id = _coerce_int(request.match_info.get("domain_id"), default=0, min_value=1)
@@ -5848,6 +5913,7 @@ class DashboardServer:
                     domain_id,
                     domain.get("domain", ""),
                     available_platforms,
+                    public=True,
                 )
             except Exception as e:
                 raise web.HTTPServiceUnavailable(text=f"Manual instructions unavailable: {e}")

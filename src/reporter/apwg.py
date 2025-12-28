@@ -34,21 +34,14 @@ class APWGReporter(BaseReporter):
         super().__init__()
         self._configured = True
 
-    async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        is_valid, error = self.validate_evidence(evidence)
-        if not is_valid:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message=error,
-            )
-
-        subject = f"Phishing Report: {evidence.domain} - Cryptocurrency Seed Phrase Theft"
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        if evidence.scam_type == "crypto_doubler":
+            subject = f"Fraud Report: {evidence.domain} - Crypto Doubler / Fake Giveaway"
+        else:
+            subject = f"Phishing Report: {evidence.domain} - Cryptocurrency Seed Phrase Theft"
         email_body = evidence.to_summary().strip()
-
-        # Build structured data for the new UI
         mailto_url = f"mailto:{self.DESTINATION_EMAIL}?subject={subject}"
-        manual_data = ManualSubmissionData(
+        return ManualSubmissionData(
             form_url=mailto_url,
             reason="Email submission",
             fields=[
@@ -73,6 +66,25 @@ class APWGReporter(BaseReporter):
                 "Best practice: Forward the original phishing email as an attachment with full headers.",
                 "If no email artifact is available, send the URL and evidence summary instead.",
             ],
+        )
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        manual_data = self.generate_manual_submission(evidence)
+        subject = next(
+            (field.value for field in manual_data.fields if field.name == "subject"),
+            f"Phishing Report: {evidence.domain}",
+        )
+        email_body = next(
+            (field.value for field in manual_data.fields if field.name == "body"),
+            evidence.to_summary().strip(),
         )
 
         body_lines = [
@@ -104,4 +116,3 @@ class APWGReporter(BaseReporter):
             message="\n".join(body_lines).strip(),
             response_data={"manual_fields": manual_data.to_dict()},
         )
-

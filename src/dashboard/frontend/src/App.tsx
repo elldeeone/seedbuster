@@ -30,6 +30,7 @@ import type {
   Campaign,
   Domain,
   DomainDetailResponse,
+  ManualSubmissionData,
   PendingReport,
   PublicSubmission,
   AnalyticsResponse,
@@ -49,6 +50,15 @@ const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
 
 // Statuses to exclude when using "dangerous" filter mode
 const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
+
+const isPublicReportEligible = (domain?: Domain | null) => {
+  if (!domain) return false;
+  const status = (domain.status || "").toLowerCase();
+  const verdict = (domain.verdict || "").toLowerCase();
+  if (["allowlisted", "false_positive", "watchlist"].includes(status)) return false;
+  if (verdict === "benign") return false;
+  return true;
+};
 
 const parseHash = (): Route => {
   const rawHash = window.location.hash.replace(/^#/, "");
@@ -646,6 +656,7 @@ export default function App() {
   const [reportPanelDomain, setReportPanelDomain] = useState<Domain | null>(null);
   const [reportPanelPlatforms, setReportPanelPlatforms] = useState<string[]>([]);
   const [reportPanelInfo, setReportPanelInfo] = useState<Record<string, PlatformInfo>>({});
+  const [reportPanelInstructions, setReportPanelInstructions] = useState<Record<string, ManualSubmissionData | undefined>>({});
   const [reportPanelSelected, setReportPanelSelected] = useState<Set<string>>(new Set());
   const [reportPanelSubmitting, setReportPanelSubmitting] = useState(false);
   const [reportPanelManualMode, setReportPanelManualMode] = useState<string | null>(null);
@@ -1040,17 +1051,23 @@ export default function App() {
     setReportPanelManualMode(null);
     setReportPanelManualQueue([]);
     setReportPanelSelected(new Set());
+    setReportPanelInstructions({});
 
     // Fetch available platforms
     try {
       const data = await fetchReportOptions(domain.id);
       const platforms = (data.platforms || []).map((p) => p.id);
       const info: Record<string, PlatformInfo> = {};
+      const instructions: Record<string, ManualSubmissionData> = {};
       for (const p of data.platforms || []) {
         info[p.id] = { manual_only: p.manual_only, url: p.url || "", name: p.name };
+        if (p.instructions) {
+          instructions[p.id] = p.instructions;
+        }
       }
       setReportPanelPlatforms(platforms);
       setReportPanelInfo(info);
+      setReportPanelInstructions(instructions);
       // Pre-select all applicable platforms by default
       setReportPanelSelected(new Set(platforms));
     } catch (err) {
@@ -1203,6 +1220,13 @@ export default function App() {
     if (!times.length) return null;
     return times.sort()[0];
   }, [domainDetail]);
+
+  const reportPanelManualInstructions = reportPanelManualMode
+    ? reportPanelInstructions[reportPanelManualMode]
+    : undefined;
+  const reportPanelManualFormUrl = reportPanelManualMode
+    ? reportPanelManualInstructions?.form_url || reportPanelInfo[reportPanelManualMode]?.url || ""
+    : "";
 
   const domainDownloadBase = canEdit ? "/admin/domains" : "/domains";
   const campaignDownloadBase = canEdit ? "/admin/campaigns" : "/campaigns";
@@ -1911,7 +1935,7 @@ export default function App() {
             </div>
           </div>
 
-          {!canEdit && (
+          {!canEdit && isPublicReportEligible(domainDetail?.domain) && (
             <div className="sb-panel" style={{ marginTop: 8 }}>
               <div className="sb-panel-header">
                 <span className="sb-panel-title">Help Take Down This Scam</span>
@@ -2231,89 +2255,129 @@ export default function App() {
                         </div>
                       )}
 
-                      {reportPanelInfo[reportPanelManualMode]?.url && (
+                      {reportPanelManualFormUrl && (
                         <div className="sb-manual-cta">
-                          <a className="sb-manual-cta-btn" href={reportPanelInfo[reportPanelManualMode].url} target="_blank" rel="noopener noreferrer">
-                            ↗ Open {(reportPanelInfo[reportPanelManualMode].name || reportPanelManualMode).charAt(0).toUpperCase() + (reportPanelInfo[reportPanelManualMode].name || reportPanelManualMode).slice(1)} Abuse Form
+                          <a className="sb-manual-cta-btn" href={reportPanelManualFormUrl} target="_blank" rel="noopener noreferrer">
+                            ↗ Open {((reportPanelInfo[reportPanelManualMode]?.name || reportPanelManualMode) as string).charAt(0).toUpperCase() + ((reportPanelInfo[reportPanelManualMode]?.name || reportPanelManualMode) as string).slice(1)} Abuse Form
                           </a>
                         </div>
                       )}
-                      <div className="sb-copy-field">
-                        <div className="sb-copy-field-label">Full URL</div>
-                        <div className="sb-copy-field-value" style={{ position: "relative" }}>
-                          {`https://${reportPanelDomain.domain}`}
-                          <button className="sb-copy-btn" onClick={(e) => {
-                            navigator.clipboard.writeText(`https://${reportPanelDomain.domain}`);
-                            const btn = e.currentTarget;
-                            btn.textContent = "Copied!";
-                            btn.classList.add("copied");
-                            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
-                          }}>Copy</button>
-                        </div>
-                      </div>
-                      <div className="sb-copy-field">
-                        <div className="sb-copy-field-label">Additional Details Template</div>
-                        <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {(() => {
-                            const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
-                            const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
+                      {reportPanelManualInstructions ? (
+                        <>
+                          <div className="sb-muted" style={{ marginBottom: 8 }}>
+                            {reportPanelManualInstructions.reason || "Manual submission"}
+                          </div>
+                          <div style={{ marginBottom: 8 }}>
+                            <div className="sb-label">Report URL</div>
+                            {reportPanelManualInstructions.form_url ? (
+                              <a href={reportPanelManualInstructions.form_url} target="_blank" rel="noreferrer">
+                                {reportPanelManualInstructions.form_url}
+                              </a>
+                            ) : (
+                              <span className="sb-muted">No form URL provided</span>
+                            )}
+                          </div>
+                          {reportPanelManualInstructions.fields?.map((field) => (
+                            <div key={field.name} style={{ marginBottom: 10 }}>
+                              <div className="sb-label">{field.label}</div>
+                              <div className="sb-row" style={{ gap: 8 }}>
+                                <textarea
+                                  className="sb-input"
+                                  value={field.value}
+                                  readOnly
+                                  rows={field.multiline ? 3 : 1}
+                                  style={{ width: "100%", resize: "vertical" }}
+                                />
+                                <button className="sb-btn" type="button" onClick={() => copyValue(field.value)}>Copy</button>
+                              </div>
+                            </div>
+                          ))}
+                          {reportPanelManualInstructions.notes && reportPanelManualInstructions.notes.length > 0 && (
+                            <ul className="sb-muted" style={{ paddingLeft: 18, marginTop: 8 }}>
+                              {reportPanelManualInstructions.notes.map((n, idx) => <li key={idx}>{n}</li>)}
+                            </ul>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="sb-copy-field">
+                            <div className="sb-copy-field-label">Full URL</div>
+                            <div className="sb-copy-field-value" style={{ position: "relative" }}>
+                              {`https://${reportPanelDomain.domain}`}
+                              <button className="sb-copy-btn" onClick={(e) => {
+                                navigator.clipboard.writeText(`https://${reportPanelDomain.domain}`);
+                                const btn = e.currentTarget;
+                                btn.textContent = "Copied!";
+                                btn.classList.add("copied");
+                                setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                              }}>Copy</button>
+                            </div>
+                          </div>
+                          <div className="sb-copy-field">
+                            <div className="sb-copy-field-label">Additional Details Template</div>
+                            <div className="sb-copy-field-value multiline" style={{ position: "relative", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {(() => {
+                                const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                                const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
 
-                            let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+                                let template = `Reporting ${verdict} phishing/scam site.\n\n`;
 
-                            if (verdictReasons) {
-                              const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
-                              // Deduplicate reasons
-                              const uniqueReasons = Array.from(new Set(reasons));
-                              if (uniqueReasons.length > 0) {
-                                template += "Evidence:\n";
-                                uniqueReasons.slice(0, 5).forEach((reason: string) => {
-                                  template += `- ${reason}\n`;
-                                });
-                                template += "\n";
-                              }
-                            }
+                                if (verdictReasons) {
+                                  const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                                  // Deduplicate reasons
+                                  const uniqueReasons = Array.from(new Set(reasons));
+                                  if (uniqueReasons.length > 0) {
+                                    template += "Evidence:\n";
+                                    uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                                      template += `- ${reason}\n`;
+                                    });
+                                    template += "\n";
+                                  }
+                                }
 
-                            template += "This site poses a security risk to users.";
+                                template += "This site poses a security risk to users.";
 
-                            return template;
-                          })()}
-                          <button className="sb-copy-btn" onClick={(e) => {
-                            const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
-                            const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
+                                return template;
+                              })()}
+                              <button className="sb-copy-btn" onClick={(e) => {
+                                const verdict = domainDetail?.domain?.verdict || reportPanelDomain.verdict || "malicious";
+                                const verdictReasons = domainDetail?.domain?.verdict_reasons || "";
 
-                            let template = `Reporting ${verdict} phishing/scam site.\n\n`;
+                                let template = `Reporting ${verdict} phishing/scam site.\n\n`;
 
-                            if (verdictReasons) {
-                              const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
-                              // Deduplicate reasons
-                              const uniqueReasons = Array.from(new Set(reasons));
-                              if (uniqueReasons.length > 0) {
-                                template += "Evidence:\n";
-                                uniqueReasons.slice(0, 5).forEach((reason: string) => {
-                                  template += `- ${reason}\n`;
-                                });
-                                template += "\n";
-                              }
-                            }
+                                if (verdictReasons) {
+                                  const reasons = verdictReasons.split("\n").map((line: string) => line.trim()).filter(Boolean);
+                                  // Deduplicate reasons
+                                  const uniqueReasons = Array.from(new Set(reasons));
+                                  if (uniqueReasons.length > 0) {
+                                    template += "Evidence:\n";
+                                    uniqueReasons.slice(0, 5).forEach((reason: string) => {
+                                      template += `- ${reason}\n`;
+                                    });
+                                    template += "\n";
+                                  }
+                                }
 
-                            template += "This site poses a security risk to users.";
+                                template += "This site poses a security risk to users.";
 
-                            navigator.clipboard.writeText(template);
-                            const btn = e.currentTarget;
-                            btn.textContent = "Copied!";
-                            btn.classList.add("copied");
-                            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
-                          }}>Copy</button>
-                        </div>
-                      </div>
-                      <div className="sb-manual-notes">
-                        <div className="sb-manual-notes-title">Tips</div>
-                        <ul>
-                          <li>Copy the URL and paste into "URL to report" field</li>
-                          <li>Copy the Additional Details template and paste into the form's description field</li>
-                          <li>Review and edit the template if needed before submitting</li>
-                        </ul>
-                      </div>
+                                navigator.clipboard.writeText(template);
+                                const btn = e.currentTarget;
+                                btn.textContent = "Copied!";
+                                btn.classList.add("copied");
+                                setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1500);
+                              }}>Copy</button>
+                            </div>
+                          </div>
+                          <div className="sb-manual-notes">
+                            <div className="sb-manual-notes-title">Tips</div>
+                            <ul>
+                              <li>Copy the URL and paste into "URL to report" field</li>
+                              <li>Copy the Additional Details template and paste into the form's description field</li>
+                              <li>Review and edit the template if needed before submitting</li>
+                            </ul>
+                          </div>
+                        </>
+                      )}
                       <div style={{ marginTop: 20, display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {(() => {
                           const currentIndex = reportPanelManualQueue.indexOf(reportPanelManualMode);

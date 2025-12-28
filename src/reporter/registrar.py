@@ -71,50 +71,20 @@ class RegistrarReporter(BaseReporter):
                 return dest
         return None
 
-    async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        is_valid, error = self.validate_evidence(evidence)
-        if not is_valid:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message=error,
-            )
-
-        domain = (evidence.domain or "").strip().lower()
-        if not domain:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.SKIPPED,
-                message="No domain available for RDAP lookup",
-            )
-
-        lookup = await lookup_registrar_via_rdap(domain)
-        rdap_url = lookup.rdap_url
-        if lookup.error:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.SKIPPED,
-                message=f"{lookup.error}: {rdap_url}",
-            )
-
-        registrar_name = lookup.registrar_name
-        abuse_email = lookup.abuse_email or self._match_known(registrar_name, REGISTRAR_ABUSE_EMAILS)
-        abuse_form = self._match_known(registrar_name, REGISTRAR_ABUSE_FORMS)
-
-        if not registrar_name and not abuse_email and not abuse_form:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.SKIPPED,
-                message=f"Registrar not found via RDAP: {rdap_url}",
-            )
-
+    def _build_manual_submission(
+        self,
+        evidence: ReportEvidence,
+        *,
+        registrar_name: Optional[str],
+        abuse_email: Optional[str],
+        abuse_form: Optional[str],
+    ) -> ManualSubmissionData:
         template = ReportTemplates.registrar(
             evidence,
             reporter_email=self.reporter_email or "your-email@example.com",
             registrar_name=registrar_name,
         )
 
-        # Build structured data for the new UI
         fields: list[ManualSubmissionField] = [
             ManualSubmissionField(
                 name="url",
@@ -124,7 +94,7 @@ class RegistrarReporter(BaseReporter):
             ManualSubmissionField(
                 name="domain",
                 label="Domain",
-                value=domain,
+                value=(evidence.domain or "").strip().lower(),
             ),
         ]
 
@@ -162,7 +132,6 @@ class RegistrarReporter(BaseReporter):
                 ),
             ])
 
-        # Determine the best destination URL
         destination_url = abuse_form or (f"mailto:{abuse_email}" if abuse_email else "")
 
         notes = []
@@ -171,11 +140,98 @@ class RegistrarReporter(BaseReporter):
         if not abuse_email:
             notes.append("No abuse email found; search registrar support for contact.")
 
-        manual_data = ManualSubmissionData(
+        return ManualSubmissionData(
             form_url=destination_url,
             reason=f"Registrar: {registrar_name or 'Unknown'}",
             fields=fields,
             notes=notes,
+        )
+
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        registrar_name = None
+        abuse_email = None
+        abuse_form = None
+        try:
+            infra = (evidence.analysis_json or {}).get("infrastructure") or {}
+            registrar_name = infra.get("registrar")
+            abuse_email = infra.get("registrar_abuse_email")
+        except Exception:
+            pass
+        abuse_email = abuse_email or self._match_known(registrar_name, REGISTRAR_ABUSE_EMAILS)
+        abuse_form = self._match_known(registrar_name, REGISTRAR_ABUSE_FORMS)
+        return self._build_manual_submission(
+            evidence,
+            registrar_name=registrar_name,
+            abuse_email=abuse_email,
+            abuse_form=abuse_form,
+        )
+
+    def generate_manual_submission_with_hints(
+        self,
+        evidence: ReportEvidence,
+        *,
+        registrar_name: Optional[str] = None,
+        registrar_abuse_email: Optional[str] = None,
+    ) -> ManualSubmissionData:
+        abuse_email = registrar_abuse_email or self._match_known(registrar_name, REGISTRAR_ABUSE_EMAILS)
+        abuse_form = self._match_known(registrar_name, REGISTRAR_ABUSE_FORMS)
+        return self._build_manual_submission(
+            evidence,
+            registrar_name=registrar_name,
+            abuse_email=abuse_email,
+            abuse_form=abuse_form,
+        )
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        domain = (evidence.domain or "").strip().lower()
+        if not domain:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.SKIPPED,
+                message="No domain available for RDAP lookup",
+            )
+
+        lookup = await lookup_registrar_via_rdap(domain)
+        rdap_url = lookup.rdap_url
+        if lookup.error:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.SKIPPED,
+                message=f"{lookup.error}: {rdap_url}",
+            )
+
+        registrar_name = lookup.registrar_name
+        abuse_email = lookup.abuse_email or self._match_known(registrar_name, REGISTRAR_ABUSE_EMAILS)
+        abuse_form = self._match_known(registrar_name, REGISTRAR_ABUSE_FORMS)
+
+        if not registrar_name and not abuse_email and not abuse_form:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.SKIPPED,
+                message=f"Registrar not found via RDAP: {rdap_url}",
+            )
+
+        manual_data = self._build_manual_submission(
+            evidence,
+            registrar_name=registrar_name,
+            abuse_email=abuse_email,
+            abuse_form=abuse_form,
+        )
+        subject_value = next(
+            (field.value for field in manual_data.fields if field.name == "subject"),
+            "",
+        )
+        body_value = next(
+            (field.value for field in manual_data.fields if field.name == "body"),
+            "",
         )
 
         # Build plain text message for backwards compatibility
@@ -194,18 +250,18 @@ class RegistrarReporter(BaseReporter):
             parts.extend([
                 f"Manual submission (email): {abuse_email}",
                 "",
-                f"Subject: {template['subject']}",
+                f"Subject: {subject_value}",
                 "",
-                template["body"].strip(),
+                body_value.strip(),
                 "",
             ])
         else:
             parts.extend([
                 "No registrar abuse email found; search registrar support for an abuse contact.",
                 "",
-                f"Suggested email subject: {template['subject']}",
+                f"Suggested email subject: {subject_value}",
                 "",
-                template["body"].strip(),
+                body_value.strip(),
                 "",
             ])
 

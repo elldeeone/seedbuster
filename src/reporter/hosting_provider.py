@@ -77,6 +77,9 @@ class HostingProviderReporter(BaseReporter):
     def _detect_provider_from_evidence(evidence: ReportEvidence) -> Optional[str]:
         provider = (evidence.hosting_provider or "").strip().lower()
         if provider:
+            for key in list(ABUSE_FORMS.keys()) + list(ABUSE_EMAILS.keys()):
+                if key in provider:
+                    return key
             return provider
 
         # Fall back to backend-domain patterns.
@@ -96,33 +99,8 @@ class HostingProviderReporter(BaseReporter):
 
         return None
 
-    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:
-        provider = self._detect_provider_from_evidence(evidence)
-        if not provider:
-            return False, "No hosting provider identified"
-        return True, ""
-
-    async def submit(self, evidence: ReportEvidence) -> ReportResult:
-        """Return manual instructions for the best-matching hosting provider."""
-        is_valid, error = self.validate_evidence(evidence)
-        if not is_valid:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.FAILED,
-                message=error,
-            )
-
-        provider = self._detect_provider_from_evidence(evidence)
-        if not provider:
-            return ReportResult(
-                platform=self.platform_name,
-                status=ReportStatus.SKIPPED,
-                message="No hosting provider identified",
-            )
-
-        form_url = ABUSE_FORMS.get(provider)
-        email = ABUSE_EMAILS.get(provider)
-
+    @staticmethod
+    def _extract_ips(evidence: ReportEvidence) -> list[str]:
         ips: list[str] = []
         try:
             infra = evidence.analysis_json.get("infrastructure") if evidence.analysis_json else {}
@@ -132,8 +110,17 @@ class HostingProviderReporter(BaseReporter):
                     ips = [ips]
         except Exception:
             ips = []
+        return ips
 
-        # Build structured data for the new UI
+    def _build_manual_submission(
+        self,
+        evidence: ReportEvidence,
+        *,
+        provider: str,
+        form_url: Optional[str],
+        email: Optional[str],
+        ips: list[str],
+    ) -> ManualSubmissionData:
         fields: list[ManualSubmissionField] = [
             ManualSubmissionField(
                 name="url",
@@ -197,21 +184,85 @@ class HostingProviderReporter(BaseReporter):
                 )
             )
 
-        # Determine the best destination URL
         destination_url = form_url or f"mailto:{email}" if email else ""
 
-        manual_data = ManualSubmissionData(
+        notes = [
+            f"Detected hosting provider: {provider.upper()}",
+            "Submit via the abuse form or email the abuse contact.",
+        ]
+        if not form_url and not email:
+            notes.append("No specific abuse contact found; use the provider/ASN WHOIS abuse email.")
+
+        return ManualSubmissionData(
             form_url=destination_url,
             reason=f"Hosting provider: {provider}",
             fields=fields,
-            notes=[
-                f"Detected hosting provider: {provider.upper()}",
-                "Submit via the abuse form or email the abuse contact.",
-            ],
+            notes=notes,
+        )
+
+    def is_applicable(self, evidence: ReportEvidence) -> tuple[bool, str]:
+        provider = self._detect_provider_from_evidence(evidence)
+        if not provider:
+            return False, "No hosting provider identified"
+        return True, ""
+
+    def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
+        provider = self._detect_provider_from_evidence(evidence)
+        if not provider:
+            return ManualSubmissionData(
+                form_url="",
+                reason="Hosting provider not identified",
+                fields=[
+                    ManualSubmissionField(
+                        name="url",
+                        label="Phishing URL",
+                        value=evidence.url,
+                    )
+                ],
+                notes=["No hosting provider identified from this evidence."],
+            )
+
+        form_url = ABUSE_FORMS.get(provider)
+        email = ABUSE_EMAILS.get(provider)
+        ips = self._extract_ips(evidence)
+        return self._build_manual_submission(
+            evidence,
+            provider=provider,
+            form_url=form_url,
+            email=email,
+            ips=ips,
+        )
+
+    async def submit(self, evidence: ReportEvidence) -> ReportResult:
+        """Return manual instructions for the best-matching hosting provider."""
+        is_valid, error = self.validate_evidence(evidence)
+        if not is_valid:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.FAILED,
+                message=error,
+            )
+
+        provider = self._detect_provider_from_evidence(evidence)
+        if not provider:
+            return ReportResult(
+                platform=self.platform_name,
+                status=ReportStatus.SKIPPED,
+                message="No hosting provider identified",
+            )
+
+        form_url = ABUSE_FORMS.get(provider)
+        email = ABUSE_EMAILS.get(provider)
+        ips = self._extract_ips(evidence)
+        manual_data = self._build_manual_submission(
+            evidence,
+            provider=provider,
+            form_url=form_url,
+            email=email,
+            ips=ips,
         )
 
         if not form_url and not email:
-            manual_data.notes.append("No specific abuse contact found; use the provider/ASN WHOIS abuse email.")
             return ReportResult(
                 platform=self.platform_name,
                 status=ReportStatus.MANUAL_REQUIRED,

@@ -44,26 +44,40 @@ class NetcraftReporter(BaseReporter):
 
     def _build_reason_string(self, evidence: ReportEvidence) -> str:
         """Summarize why the URL is malicious for Netcraft submissions."""
-        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = (
-            f"Requests seed phrase ('{seed_hint}')."
-            if seed_hint
-            else "Requests cryptocurrency seed phrase."
-        )
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
-
-        reason_lines = [
-            "Cryptocurrency phishing (seed phrase theft).",
-            seed_line,
-            f"Confidence: {evidence.confidence_score}%",
-            "",
-            "Key evidence (automated capture):",
-            *[f"- {r}" for r in highlights],
-            "",
-            "Captured evidence (screenshot + HTML) available on request.",
-            "",
-            "Detected by SeedBuster.",
-        ]
+        if evidence.scam_type == "crypto_doubler":
+            reason_lines = [
+                "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
+                f"Confidence: {evidence.confidence_score}%",
+                "",
+                "Key evidence (automated capture):",
+                *[f"- {r}" for r in highlights],
+                "",
+                "Captured evidence (screenshot + HTML) available on request.",
+                "",
+                "Detected by SeedBuster.",
+            ]
+            if evidence.scammer_wallets:
+                reason_lines.insert(3, f"Scammer wallet: {evidence.scammer_wallets[0]}")
+        else:
+            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+            seed_line = (
+                f"Requests seed phrase ('{seed_hint}')."
+                if seed_hint
+                else "Requests cryptocurrency seed phrase."
+            )
+            reason_lines = [
+                "Cryptocurrency phishing (seed phrase theft).",
+                seed_line,
+                f"Confidence: {evidence.confidence_score}%",
+                "",
+                "Key evidence (automated capture):",
+                *[f"- {r}" for r in highlights],
+                "",
+                "Captured evidence (screenshot + HTML) available on request.",
+                "",
+                "Detected by SeedBuster.",
+            ]
         return "\n".join(reason_lines).strip()
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:

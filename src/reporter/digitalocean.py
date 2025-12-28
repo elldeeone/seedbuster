@@ -69,23 +69,28 @@ class DigitalOceanReporter(BaseReporter):
     def _build_description(self, evidence: ReportEvidence) -> str:
         """Build structured description for DO abuse form."""
         do_apps = self._extract_do_apps(evidence)
-        seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-        seed_line = (
-            f"Requests seed phrase ('{seed_hint}')"
-            if seed_hint
-            else "Requests cryptocurrency seed phrase"
-        )
         highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
+        if evidence.scam_type == "crypto_doubler":
+            scam_header = "CRYPTOCURRENCY FRAUD - Apps to suspend:"
+            observed_line = "Observed crypto giveaway / doubler fraud"
+        else:
+            scam_header = "CRYPTOCURRENCY PHISHING - Apps to suspend:"
+            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
+            observed_line = (
+                f"Requests seed phrase ('{seed_hint}')"
+                if seed_hint
+                else "Requests cryptocurrency seed phrase"
+            )
 
-        return f"""CRYPTOCURRENCY PHISHING - Apps to suspend:
+        return f"""{scam_header}
 {chr(10).join(f'- {app}' for app in do_apps)}
 
-Phishing URL: {evidence.url}
-Observed: {seed_line}
+Reported URL: {evidence.url}
+Observed: {observed_line}
 Confidence: {evidence.confidence_score}%
 
-This site steals cryptocurrency seed phrases (wallet recovery keys).
-Once stolen, attackers drain all funds immediately and irreversibly.
+This site runs a cryptocurrency scam against end users.
+Victims lose funds immediately and irreversibly.
 
 Key evidence (automated capture):
 {chr(10).join(f'- {r}' for r in highlights)}

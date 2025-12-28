@@ -39,6 +39,9 @@ def _humanize_reason(text: str) -> str:
 
 def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) -> str:
     """Build a human-readable abuse report description with context."""
+    if evidence.scam_type == "crypto_doubler":
+        return _basic_description_crypto_doubler(evidence, extra=extra)
+
     # Extract seed phrase indicator if available
     seed_field = _extract_seed_field_name(evidence.detection_reasons)
 
@@ -84,6 +87,69 @@ def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) ->
             lines.append(f"  - {backend}")
 
     # Add suspicious endpoints if present
+    endpoints = evidence.suspicious_endpoints or []
+    if endpoints and not backends:
+        lines.append("")
+        lines.append("SUSPICIOUS ENDPOINTS:")
+        for endpoint in endpoints[:3]:
+            lines.append(f"  - {endpoint}")
+
+    if extra:
+        lines.extend(["", extra])
+
+    lines.extend([
+        "",
+        "Reported by: SeedBuster (automated phishing detection)",
+        "Source: https://github.com/elldeeone/seedbuster",
+    ])
+
+    return "\n".join(lines).strip()
+
+
+def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | None = None) -> str:
+    """Build a human-readable report description for crypto doubler scams."""
+    lines: list[str] = [
+        "ACTION REQUESTED: Please suspend this fraudulent giveaway site.",
+        "",
+        "WHAT THIS SITE DOES:",
+        "This site impersonates a cryptocurrency project and runs an",
+        "advance-fee fraud scheme (\"crypto doubler\" / fake giveaway).",
+        "It promises to multiply deposits (e.g., 2x/3x) but victims receive",
+        "nothing back once funds are sent.",
+        "",
+        "FRAUD SITE DETAILS:",
+        f"  URL: {evidence.url}",
+        f"  Domain: {evidence.domain}",
+        f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
+        f"  Confidence: {evidence.confidence_score}%",
+    ]
+
+    wallets = evidence.scammer_wallets or []
+    if wallets:
+        lines.append("")
+        lines.append("SCAMMER WALLET ADDRESSES:")
+        for wallet in wallets[:5]:
+            lines.append(f"  - {wallet}")
+
+    reasons = evidence.detection_reasons or []
+    skip_terms = ("suspicion score", "domain suspicion", "tld", "keyword")
+    cleaned_reasons = [
+        _humanize_reason(r) for r in reasons[:5]
+        if not any(s in (r or "").lower() for s in skip_terms)
+    ]
+    if cleaned_reasons:
+        lines.append("")
+        lines.append("KEY EVIDENCE:")
+        for reason in cleaned_reasons[:4]:
+            lines.append(f"  - {reason}")
+
+    backends = evidence.backend_domains or []
+    if backends:
+        lines.append("")
+        lines.append("DATA SENT TO (backend servers):")
+        for backend in backends[:3]:
+            lines.append(f"  - {backend}")
+
     endpoints = evidence.suspicious_endpoints or []
     if endpoints and not backends:
         lines.append("")
@@ -174,7 +240,14 @@ class _SimpleEmailReporter(BaseReporter):
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         description = _basic_description(evidence)
         # Use more descriptive subject that conveys urgency
-        subject = f"{self._subject_prefix} {evidence.domain} - Cryptocurrency Seed Phrase Theft"
+        prefix = self._subject_prefix
+        if evidence.scam_type == "crypto_doubler":
+            if "phishing" in prefix.lower():
+                prefix = prefix.replace("Phishing", "Fraud").replace("phishing", "fraud")
+            subject_suffix = "Crypto Doubler / Fake Giveaway Fraud"
+        else:
+            subject_suffix = "Cryptocurrency Seed Phrase Theft"
+        subject = f"{prefix} {evidence.domain} - {subject_suffix}"
         return ManualSubmissionData(
             form_url=self.platform_url,
             reason="Email submission",
@@ -239,7 +312,7 @@ class AzureReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="azure",
-            form_url="https://msrc.microsoft.com/report",
+            form_url="https://msrc.microsoft.com/report/abuse",
             reason="Microsoft Security Response Center",
             notes=[
                 "Choose 'Abuse' or 'Phishing' when prompted.",
