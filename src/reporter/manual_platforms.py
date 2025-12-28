@@ -78,16 +78,16 @@ def _finalize_description(
 
 def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) -> str:
     """Build a human-readable abuse report description with context."""
-    scam_type = evidence.resolve_scam_type()
-    seed_field = _extract_seed_field_name(evidence.detection_reasons)
+    description = evidence.to_summary().strip()
+    if not extra:
+        return description
 
-    if scam_type == "crypto_doubler":
-        return _basic_description_crypto_doubler(evidence, extra=extra)
-    if scam_type == "fake_airdrop":
-        return _basic_description_fake_airdrop(evidence, extra=extra)
-    if scam_type == "seed_phishing" or seed_field:
-        return _basic_description_seed_phishing(evidence, seed_field=seed_field, extra=extra)
-    return _basic_description_generic(evidence, extra=extra)
+    public_line = evidence.get_public_entry_line()
+    if public_line and description.endswith(public_line):
+        base = description[: -len(public_line)].rstrip()
+        return f"{base}\n\n{extra}\n{public_line}".strip()
+
+    return f"{description}\n\n{extra}".strip()
 
 
 def _basic_description_seed_phishing(

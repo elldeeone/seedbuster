@@ -12,7 +12,6 @@ from .base import (
     ReportResult,
     ReportStatus,
 )
-from .templates import ReportTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -44,104 +43,7 @@ class NetcraftReporter(BaseReporter):
 
     def _build_reason_string(self, evidence: ReportEvidence) -> str:
         """Summarize why the URL is malicious for Netcraft submissions."""
-        highlights = ReportTemplates._summarize_reasons(evidence.detection_reasons, max_items=4)
-        scam_type = ReportTemplates._resolve_scam_type(evidence)
-        impersonation = evidence.get_impersonation_lines()
-        if scam_type == "crypto_doubler":
-            reason_lines = [
-                "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam).",
-                f"Confidence: {evidence.confidence_score}%",
-                "",
-            ]
-            if impersonation:
-                reason_lines.extend([
-                    "Impersonation indicators:",
-                    *[f"- {line}" for line in impersonation],
-                    "",
-                ])
-            reason_lines.extend([
-                "Key evidence from our review:",
-                *[f"- {r}" for r in highlights],
-                "",
-                "Captured evidence (screenshot + HTML) available on request.",
-                "",
-                "Detected by SeedBuster.",
-            ])
-            if evidence.scammer_wallets:
-                reason_lines.insert(3, f"Scammer wallet: {evidence.scammer_wallets[0]}")
-        elif scam_type == "fake_airdrop":
-            reason_lines = [
-                "Cryptocurrency fraud (fake airdrop/claim).",
-                "Observed fake airdrop/claim flow.",
-                f"Confidence: {evidence.confidence_score}%",
-                "",
-            ]
-            if impersonation:
-                reason_lines.extend([
-                    "Impersonation indicators:",
-                    *[f"- {line}" for line in impersonation],
-                    "",
-                ])
-            reason_lines.extend([
-                "Key evidence from our review:",
-                *[f"- {r}" for r in highlights],
-                "",
-                "Captured evidence (screenshot + HTML) available on request.",
-                "",
-                "Detected by SeedBuster.",
-            ])
-        elif scam_type == "seed_phishing":
-            seed_hint = ReportTemplates._extract_seed_phrase_indicator(evidence.detection_reasons)
-            seed_line = (
-                f"Requests seed phrase ('{seed_hint}')."
-                if seed_hint
-                else "Requests cryptocurrency seed phrase."
-            )
-            reason_lines = [
-                "Cryptocurrency phishing (seed phrase theft).",
-                seed_line,
-                f"Confidence: {evidence.confidence_score}%",
-                "",
-            ]
-            if impersonation:
-                reason_lines.extend([
-                    "Impersonation indicators:",
-                    *[f"- {line}" for line in impersonation],
-                    "",
-                ])
-            reason_lines.extend([
-                "Key evidence from our review:",
-                *[f"- {r}" for r in highlights],
-                "",
-                "Captured evidence (screenshot + HTML) available on request.",
-                "",
-                "Detected by SeedBuster.",
-            ])
-        else:
-            reason_lines = [
-                "Cryptocurrency fraud / phishing.",
-                "Observed cryptocurrency fraud/phishing content.",
-                f"Confidence: {evidence.confidence_score}%",
-                "",
-            ]
-            if impersonation:
-                reason_lines.extend([
-                    "Impersonation indicators:",
-                    *[f"- {line}" for line in impersonation],
-                    "",
-                ])
-            reason_lines.extend([
-                "Key evidence from our review:",
-                *[f"- {r}" for r in highlights],
-                "",
-                "Captured evidence (screenshot + HTML) available on request.",
-                "",
-                "Detected by SeedBuster.",
-            ])
-        public_line = evidence.get_public_entry_line()
-        if public_line:
-            reason_lines.append(public_line)
-        return "\n".join(reason_lines).strip()
+        return evidence.to_summary().strip()
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         """Manual instructions for Netcraft web form."""

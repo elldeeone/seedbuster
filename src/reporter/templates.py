@@ -119,78 +119,19 @@ class ReportTemplates:
     def generic_email(cls, evidence: ReportEvidence, reporter_email: str) -> dict:
         """
         Generate a generic abuse report email.
-        Action-first format optimized for busy abuse teams.
-        Routes to appropriate template based on scam_type.
+        Uses the standardized evidence summary for consistency across platforms.
         """
         scam_type = cls._resolve_scam_type(evidence)
-        # Route to crypto doubler template if applicable
         if scam_type == "crypto_doubler":
-            return cls.crypto_doubler_generic(evidence, reporter_email)
-
-        impersonation = evidence.get_impersonation_lines()
-
-        if scam_type == "seed_phishing":
+            subject = f"Fraud Report (Crypto Doubler/Giveaway Scam): {evidence.domain}"
+        elif scam_type == "seed_phishing":
             subject = f"Phishing Takedown Request (Seed Phrase Theft): {evidence.domain}"
-            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-            seed_line = (
-                f"Observed seed phrase field: '{seed_hint}'"
-                if seed_hint
-                else "Observed seed phrase theft flow"
-            )
-            observations = [seed_line]
-            impact_lines = [
-                "- A seed phrase is the master key for a crypto wallet; theft enables immediate, irreversible loss of funds.",
-            ]
         elif scam_type == "fake_airdrop":
             subject = f"Fraudulent Airdrop Takedown Request: {evidence.domain}"
-            observations = ["Observed fake airdrop/claim flow"]
-            impact_lines = [
-                "- Victims can be tricked into authorizing wallet actions or sending funds under false pretenses.",
-            ]
         else:
             subject = f"Fraud/Phishing Takedown Request: {evidence.domain}"
-            observations = ["Observed cryptocurrency fraud/phishing content"]
-            impact_lines = [
-                "- Victims can be misled into unsafe actions resulting in loss of funds.",
-            ]
 
-        if impersonation:
-            observations.extend(impersonation)
-
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
-        if scam_type == "seed_phishing":
-            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-            if seed_hint:
-                seed_lower = seed_hint.lower()
-                highlights = [
-                    h
-                    for h in highlights
-                    if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
-                ]
-        observations = [*observations, *highlights]
-
-        body = f"""{cls._scam_headline(evidence)}
-
-Action requested:
-- Please suspend/disable the phishing content for the URL below.
-
-{cls._build_target_section(evidence)}
-
-What we observed:
-{cls._format_list(observations, prefix='- ')}
-
-Impact:
-{cls._format_list(impact_lines, prefix='')}
-
-"""
-        body += cls._build_backend_section(evidence)
-        body += cls._build_endpoints_section(evidence)
-        body += cls._build_api_keys_section(evidence)
-        body += cls._build_attachments_section(evidence)
-        body += cls._build_footer(reporter_email)
-
-        body = cls._append_public_entry(body, evidence)
-
+        body = evidence.to_summary().strip()
         return {"subject": subject, "body": body}
 
     @classmethod
@@ -401,137 +342,23 @@ Captured evidence (screenshot + HTML) available on request.
         registrar_name: Optional[str] = None,
     ) -> dict:
         """Generate a domain registrar abuse report."""
-        # Route to crypto doubler template if applicable
         scam_type = cls._resolve_scam_type(evidence)
-        if scam_type == "crypto_doubler":
-            return cls.crypto_doubler_registrar(evidence, reporter_email, registrar_name)
-
-        registrar_str = f" - {registrar_name}" if registrar_name else ""
         if scam_type == "seed_phishing":
             subject = f"Domain Abuse Report (phishing / seed phrase theft): {evidence.domain}"
         elif scam_type == "fake_airdrop":
             subject = f"Domain Abuse Report (fake airdrop/fraud): {evidence.domain}"
+        elif scam_type == "crypto_doubler":
+            subject = f"Domain Abuse Report (crypto fraud): {evidence.domain}"
         else:
             subject = f"Domain Abuse Report (cryptocurrency fraud): {evidence.domain}"
 
-        observed_line = cls._observed_summary_line(evidence)
-        impersonation = evidence.get_impersonation_lines()
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
-        if scam_type == "seed_phishing":
-            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-            if seed_hint:
-                seed_lower = seed_hint.lower()
-                highlights = [
-                    h
-                    for h in highlights
-                    if "seed phrase form detected" not in h.lower() and seed_lower not in h.lower()
-                ]
-        observations = [observed_line, *impersonation, *highlights]
-
-        body = f"""Registrar abuse report{registrar_str}
-
-Action requested:
-- Please suspend/disable this domain for phishing / cryptocurrency theft.
-
-{cls._build_target_section(evidence)}
-
-What we observed:
-{cls._format_list(observations, prefix='- ')}
-
-"""
-        body += cls._build_backend_section(evidence)
-        body += cls._build_endpoints_section(evidence)
-        body += cls._build_attachments_section(evidence)
-        body += cls._build_footer(reporter_email)
-
-        body = cls._append_public_entry(body, evidence)
-
+        body = evidence.to_summary().strip()
         return {"subject": subject, "body": body}
 
     @classmethod
     def google_safebrowsing_comment(cls, evidence: ReportEvidence) -> str:
         """Generate additional info for Google Safe Browsing report."""
-        scam_type = cls._resolve_scam_type(evidence)
-        if scam_type == "crypto_doubler":
-            return cls._google_safebrowsing_doubler_comment(evidence)
-
-        headline = cls._scam_headline(evidence)
-        impersonation = evidence.get_impersonation_lines()
-        highlights = cls._summarize_reasons(evidence.detection_reasons, max_items=5)
-
-        lower_reasons = " ".join(r.lower() for r in (evidence.detection_reasons or []))
-        has_support_redirect = any(token in lower_reasons for token in ("support", "telegram", "discord", "whatsapp"))
-
-        if scam_type == "seed_phishing":
-            what_users_see = [
-                "A wallet restore/import page that requests a 12 or 24-word seed phrase.",
-                "The page presents itself as a legitimate wallet recovery flow.",
-            ]
-            seed_hint = cls._extract_seed_phrase_indicator(evidence.detection_reasons)
-            if seed_hint:
-                what_users_see.append(f"Seed phrase field label observed: '{seed_hint}'.")
-            harm_lines = [
-                "A seed phrase grants full control of a wallet; theft leads to immediate, irreversible loss.",
-            ]
-        elif scam_type == "fake_airdrop":
-            what_users_see = [
-                "A page advertising a crypto airdrop/claim.",
-                "Prompts visitors to connect a wallet or claim tokens.",
-            ]
-            if has_support_redirect:
-                what_users_see.append("Redirects users to social media \"support\" channels for persuasion.")
-            harm_lines = [
-                "Users can be tricked into approving malicious transactions or sending funds.",
-                "Wallet connections can expose additional data to attackers.",
-            ]
-        else:
-            what_users_see = [
-                "A crypto-themed page with misleading claims and calls-to-action.",
-                "Prompts users to proceed with unsafe actions (connect wallet, submit info, or send funds).",
-            ]
-            harm_lines = [
-                "Victims may lose funds or expose sensitive wallet data.",
-            ]
-
-        lines = [f"{headline}."]
-
-        if impersonation:
-            lines.append("")
-            lines.append("Impersonation indicators:")
-            lines.extend(f"- {line}" for line in impersonation)
-
-        lines.append("")
-        lines.append("What a visitor sees:")
-        lines.extend(f"- {line}" for line in what_users_see)
-
-        lines.append("")
-        lines.append("Why this is harmful:")
-        lines.extend(f"- {line}" for line in harm_lines)
-
-        if evidence.backend_domains:
-            lines.append("")
-            lines.append("Observed data collection hosts:")
-            for backend in evidence.backend_domains[:3]:
-                lines.append(f"- {backend}")
-        elif evidence.suspicious_endpoints:
-            lines.append("")
-            lines.append("Observed suspicious endpoints:")
-            for endpoint in evidence.suspicious_endpoints[:3]:
-                lines.append(f"- {endpoint}")
-
-        lines.append("")
-        lines.append("Key evidence from our review:")
-        for reason in highlights:
-            lines.append(f"- {reason}")
-
-        lines.append("")
-        lines.append("We captured a screenshot and HTML during the scan and can provide them on request.")
-        public_line = evidence.get_public_entry_line()
-        if public_line:
-            lines.append("")
-            lines.append(public_line)
-
-        return "\n".join(lines)
+        return evidence.to_summary().strip()
 
     @classmethod
     def _google_safebrowsing_doubler_comment(cls, evidence: ReportEvidence) -> str:

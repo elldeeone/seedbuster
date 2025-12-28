@@ -73,9 +73,22 @@ class ReportEvidence:
             return self._seed_phishing_summary()
         return self._generic_summary()
 
+    def _action_request_line(self) -> str:
+        """Return a consistent action request line for report summaries."""
+        scam_type = self.resolve_scam_type()
+        if scam_type == "seed_phishing":
+            return "ACTION REQUESTED: Please remove/block this phishing site (seed phrase theft)."
+        if scam_type == "fake_airdrop":
+            return "ACTION REQUESTED: Please remove/block this fraudulent airdrop/claim site."
+        if scam_type == "crypto_doubler":
+            return "ACTION REQUESTED: Please remove/block this fraudulent giveaway site."
+        return "ACTION REQUESTED: Please remove/block this fraudulent site."
+
     def _seed_phishing_summary(self) -> str:
         """Generate summary for seed phrase phishing scams."""
         lines = [
+            self._action_request_line(),
+            "",
             "PHISHING REPORT - Cryptocurrency Seed Phrase Theft",
             "",
             "This site impersonates a cryptocurrency wallet to steal seed phrases.",
@@ -119,6 +132,10 @@ class ReportEvidence:
             for endpoint in self.suspicious_endpoints[:3]:
                 lines.append(f"  - {endpoint}")
 
+        if self.screenshot_path or self.html_path:
+            lines.append("")
+            lines.append("Captured evidence (screenshot + HTML) available on request.")
+
         lines.extend([
             "",
             "Reported by: SeedBuster (automated phishing detection)",
@@ -134,6 +151,8 @@ class ReportEvidence:
     def _fake_airdrop_summary(self) -> str:
         """Generate summary for fake airdrop / claim scams."""
         lines = [
+            self._action_request_line(),
+            "",
             "FRAUD REPORT - Cryptocurrency Fake Airdrop/Claim",
             "",
             "This site impersonates a cryptocurrency project and promotes a",
@@ -176,6 +195,10 @@ class ReportEvidence:
             for endpoint in self.suspicious_endpoints[:3]:
                 lines.append(f"  - {endpoint}")
 
+        if self.screenshot_path or self.html_path:
+            lines.append("")
+            lines.append("Captured evidence (screenshot + HTML) available on request.")
+
         lines.extend([
             "",
             "Reported by: SeedBuster (automated phishing detection)",
@@ -191,6 +214,8 @@ class ReportEvidence:
     def _generic_summary(self) -> str:
         """Generate a generic summary for crypto fraud/phishing."""
         lines = [
+            self._action_request_line(),
+            "",
             "FRAUD REPORT - Cryptocurrency Phishing/Fraud",
             "",
             "This site hosts cryptocurrency-related fraud/phishing content intended",
@@ -231,6 +256,10 @@ class ReportEvidence:
             lines.append("SUSPICIOUS ENDPOINTS:")
             for endpoint in self.suspicious_endpoints[:3]:
                 lines.append(f"  - {endpoint}")
+
+        if self.screenshot_path or self.html_path:
+            lines.append("")
+            lines.append("Captured evidence (screenshot + HTML) available on request.")
 
         lines.extend([
             "",
@@ -509,6 +538,8 @@ class ReportEvidence:
     def _crypto_doubler_summary(self) -> str:
         """Generate summary for crypto doubler / fake giveaway scams."""
         lines = [
+            self._action_request_line(),
+            "",
             "FRAUD REPORT - Cryptocurrency Doubler/Giveaway Scam",
             "",
             "This site runs an advance-fee fraud scheme (\"crypto doubler\"/giveaway).",
@@ -545,6 +576,13 @@ class ReportEvidence:
             "  2. Displays a deposit address and urgency cues (e.g., countdown)",
             "  3. Victim sends cryptocurrency to the scammer's address",
             "  4. Scammer keeps funds; victim receives nothing",
+        ])
+
+        if self.screenshot_path or self.html_path:
+            lines.append("")
+            lines.append("Captured evidence (screenshot + HTML) available on request.")
+
+        lines.extend([
             "",
             "Reported by: SeedBuster (automated phishing detection)",
             "Source: https://github.com/elldeeone/seedbuster",
