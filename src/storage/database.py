@@ -705,6 +705,31 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def get_analyzing_domains(self, limit: int | None = None) -> list[dict]:
+        """Get domains stuck in analyzing status."""
+        async with self._lock:
+            if limit and limit > 0:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY updated_at ASC
+                    LIMIT ?
+                    """,
+                    (DomainStatus.ANALYZING.value, limit),
+                )
+            else:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY updated_at ASC
+                    """,
+                    (DomainStatus.ANALYZING.value,),
+                )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
     async def update_domain_status(
         self,
         domain_id: int,

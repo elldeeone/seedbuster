@@ -273,6 +273,42 @@ class SeedBusterPipeline:
         if resumed:
             logger.info("Re-queued %s pending domains from previous run", resumed)
 
+    async def _resume_stuck_analyzing_domains(self) -> None:
+        """Reset domains stuck in analyzing status and requeue them."""
+        try:
+            analyzing = await self.database.get_analyzing_domains(limit=None)
+        except Exception as exc:
+            logger.warning("Failed to load analyzing domains on startup: %s", exc)
+            return
+
+        if not analyzing:
+            return
+
+        resumed = 0
+        for row in analyzing:
+            try:
+                domain_id = int(row.get("id") or 0)
+                domain = str(row.get("domain") or "").strip()
+                domain_score = int(row.get("domain_score") or 0)
+                if not domain or not domain_id:
+                    continue
+                await self.database.update_domain_status(domain_id, DomainStatus.PENDING)
+                await self._analysis_queue.put({
+                    "id": domain_id,
+                    "domain": domain,
+                    "domain_score": domain_score,
+                    "reasons": [],
+                })
+                resumed += 1
+            except asyncio.QueueFull:
+                logger.warning("Analysis queue full while resuming analyzing domains")
+                break
+            except Exception:
+                continue
+
+        if resumed:
+            logger.info("Re-queued %s analyzing domains from previous run", resumed)
+
     def _health_snapshot(self) -> dict:
         """Provide a lightweight status dict for health endpoints."""
         uptime = (datetime.now(timezone.utc) - self._started_at).total_seconds()
@@ -295,6 +331,7 @@ class SeedBusterPipeline:
         await self.database.connect()
         logger.info("Database connected")
 
+        await self._resume_stuck_analyzing_domains()
         await self._resume_pending_domains()
 
         # Start browser
