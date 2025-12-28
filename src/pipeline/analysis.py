@@ -170,6 +170,13 @@ class AnalysisEngine:
                     + urlscan_history_reasons
                 )
 
+                archived = self.evidence_store.archive_current_evidence(domain)
+                if archived:
+                    logger.info(f"Archived previous evidence for {domain} (snapshot {archived})")
+                cleared_instructions = self.evidence_store.clear_report_instructions(domain)
+                if cleared_instructions:
+                    logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+
                 # Save analysis
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
@@ -179,6 +186,7 @@ class AnalysisEngine:
                     "dns_resolves": False,
                     "resolved_ips": resolved_ip_list,
                     "infrastructure": {"unresolvable": True},
+                    "scan_reason": scan_reason.value,
                 })
                 self.temporal.add_snapshot(
                     domain=domain,
@@ -198,6 +206,13 @@ class AnalysisEngine:
                     )
                 ]
 
+                archived = self.evidence_store.archive_current_evidence(domain)
+                if archived:
+                    logger.info(f"Archived previous evidence for {domain} (snapshot {archived})")
+                cleared_instructions = self.evidence_store.clear_report_instructions(domain)
+                if cleared_instructions:
+                    logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
                     "score": analysis_score,
@@ -206,6 +221,7 @@ class AnalysisEngine:
                     "dns_resolves": True,
                     "resolved_ips": resolved_ip_list,
                     "blocked_for_ssrf": True,
+                    "scan_reason": scan_reason.value,
                 })
                 self.temporal.add_snapshot(
                     domain=domain,
@@ -266,6 +282,13 @@ class AnalysisEngine:
                         + urlscan_history_reasons
                     )
 
+                    archived = self.evidence_store.archive_current_evidence(domain)
+                    if archived:
+                        logger.info(f"Archived previous evidence for {domain} (snapshot {archived})")
+                    cleared_instructions = self.evidence_store.clear_report_instructions(domain)
+                    if cleared_instructions:
+                        logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+
                     infra_ip_addresses: list[str] = []
                     if resolved_ip_list:
                         infra_ip_addresses.extend(resolved_ip_list)
@@ -311,6 +334,7 @@ class AnalysisEngine:
                             ),
                         } if infra_result else None,
                         "external_intel": external_result.to_dict() if external_result else None,
+                        "scan_reason": scan_reason.value,
                     })
                     self.temporal.add_snapshot(
                         domain=domain,
@@ -329,6 +353,13 @@ class AnalysisEngine:
                         scan_reason=scan_reason,
                     )
                 else:
+                    archived = self.evidence_store.archive_current_evidence(domain)
+                    if archived:
+                        logger.info(f"Archived previous evidence for {domain} (snapshot {archived})")
+                    cleared_instructions = self.evidence_store.clear_report_instructions(domain)
+                    if cleared_instructions:
+                        logger.info(f"Cleared {cleared_instructions} old report instructions for {domain}")
+
                     # Save all screenshots for comparison
                     has_early = (
                         hasattr(browser_result, 'screenshot_early') and
@@ -578,6 +609,7 @@ class AnalysisEngine:
                             if urlscan_submission and urlscan_submission.submitted
                             else None
                         ),
+                        "scan_reason": scan_reason.value,
                     })
 
             # Update database

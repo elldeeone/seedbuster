@@ -38,6 +38,7 @@ import type {
   ReportOptionsResponse,
   Stats,
   RescanRequestInfo,
+  SnapshotSummary,
 } from "./types";
 
 type Route =
@@ -103,6 +104,14 @@ const formatDate = (value?: string | null) => {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString();
+};
+
+const formatSnapshotLabel = (snapshot: SnapshotSummary) => {
+  const parts: string[] = [];
+  if (snapshot.timestamp) parts.push(formatDate(snapshot.timestamp));
+  if (snapshot.verdict) parts.push(snapshot.verdict.toUpperCase());
+  if (snapshot.scan_reason) parts.push(snapshot.scan_reason.replace(/_/g, " "));
+  return parts.length ? parts.join(" | ") : snapshot.id;
 };
 
 const timeAgo = (value?: string | null) => {
@@ -474,7 +483,7 @@ const DomainTable = ({
   );
 };
 
-const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
+const EvidenceSection = ({ data, snapshotLabel }: { data: DomainDetailResponse | null; snapshotLabel?: string | null }) => {
   if (!data) return null;
   const evidence = data.evidence || {};
   const shots = evidence.screenshots || [];
@@ -489,7 +498,10 @@ const EvidenceSection = ({ data }: { data: DomainDetailResponse | null }) => {
       <div className="sb-panel">
         <div className="sb-panel-header">
           <span className="sb-panel-title">Evidence Files</span>
-          <span className="sb-muted">{files.length ? `${files.length} files` : "No files"}</span>
+          <span className="sb-muted">
+            {files.length ? `${files.length} files` : "No files"}
+            {snapshotLabel ? ` | ${snapshotLabel}` : ""}
+          </span>
         </div>
         <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
           {files.length === 0 && <span className="sb-muted">No evidence files yet.</span>}
@@ -633,6 +645,7 @@ export default function App() {
 
   const [domainDetail, setDomainDetail] = useState<DomainDetailResponse | null>(null);
   const [domainDetailLoading, setDomainDetailLoading] = useState(false);
+  const [snapshotSelection, setSnapshotSelection] = useState<string | null>(null);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignDetail, setCampaignDetail] = useState<{ campaign: Campaign; domains: Domain[] } | null>(null);
@@ -705,6 +718,24 @@ export default function App() {
   const isAdmin = isAdminMode();
   const canEdit = isAdmin;
 
+  const snapshotList = domainDetail?.snapshots || [];
+  const snapshotDetail = domainDetail?.snapshot || null;
+  const resolvedSnapshotId = snapshotSelection && snapshotList.some((s) => s.id === snapshotSelection)
+    ? snapshotSelection
+    : snapshotDetail?.id || snapshotList.find((s) => s.is_latest)?.id || snapshotList[0]?.id || null;
+  const resolvedSnapshot = snapshotList.find((s) => s.id === resolvedSnapshotId) || snapshotDetail || null;
+  const snapshotIsLatest = snapshotDetail?.is_latest ?? resolvedSnapshot?.is_latest ?? true;
+  const snapshotScore = snapshotDetail?.score ?? domainDetail?.domain.analysis_score ?? (domainDetail?.domain as any)?.score ?? null;
+  const snapshotVerdict = snapshotDetail?.verdict ?? domainDetail?.domain.verdict ?? "unknown";
+  const snapshotTimestamp = snapshotDetail?.timestamp ?? domainDetail?.domain.analyzed_at ?? null;
+  const snapshotReasonsRaw = snapshotDetail?.reasons;
+  const snapshotReasonsText = Array.isArray(snapshotReasonsRaw)
+    ? snapshotReasonsRaw.join("\n")
+    : snapshotReasonsRaw || null;
+  const snapshotScanReason = snapshotDetail?.scan_reason || resolvedSnapshot?.scan_reason || null;
+  const snapshotLabel = resolvedSnapshot ? formatSnapshotLabel(resolvedSnapshot) : null;
+  const verdictReasons = snapshotReasonsText || (domainDetail?.domain.verdict_reasons as any) || null;
+
   useEffect(() => {
     const onHash = () => {
       setRoute(parseHash());
@@ -762,10 +793,11 @@ export default function App() {
     }
   }, [filters]);
 
-  const loadDomainDetail = useCallback(async (id: number) => {
+  const loadDomainDetail = useCallback(async (id: number, snapshotId?: string | null) => {
     setDomainDetailLoading(true);
     try {
-      const detail = await fetchDomainDetail(id);
+      const requestedSnapshot = snapshotId === undefined ? snapshotSelection : snapshotId;
+      const detail = await fetchDomainDetail(id, requestedSnapshot || undefined);
       setDomainDetail(detail);
     } catch (err) {
       showToast((err as Error).message || "Failed to load domain", "error");
@@ -773,7 +805,13 @@ export default function App() {
     } finally {
       setDomainDetailLoading(false);
     }
-  }, []);
+  }, [snapshotSelection]);
+
+  const handleSnapshotChange = useCallback(async (snapshotId: string) => {
+    if (!domainDetail?.domain.id) return;
+    setSnapshotSelection(snapshotId);
+    await loadDomainDetail(domainDetail.domain.id, snapshotId);
+  }, [domainDetail?.domain.id, loadDomainDetail]);
 
   const loadCampaigns = useCallback(async () => {
     setCampaignLoading(true);
@@ -863,9 +901,11 @@ export default function App() {
 
   useEffect(() => {
     if (route.name === "domain") {
-      loadDomainDetail(route.id);
+      setSnapshotSelection(null);
+      loadDomainDetail(route.id, null);
     } else {
       setDomainDetail(null);
+      setSnapshotSelection(null);
     }
     if (route.name === "campaigns") {
       loadCampaigns();
@@ -887,6 +927,22 @@ export default function App() {
   useEffect(() => {
     setRescanRequestInfo(domainDetail?.rescan_request || null);
   }, [domainDetail?.rescan_request]);
+
+  useEffect(() => {
+    if (!domainDetail) {
+      setSnapshotSelection(null);
+      return;
+    }
+    const snapshots = domainDetail.snapshots || [];
+    if (!snapshots.length) {
+      setSnapshotSelection(null);
+      return;
+    }
+    const latest = snapshots.find((s) => s.is_latest) || snapshots[0];
+    if (!snapshotSelection || !snapshots.some((s) => s.id === snapshotSelection)) {
+      setSnapshotSelection(latest?.id || null);
+    }
+  }, [domainDetail, snapshotSelection]);
 
   const handleSubmit = async (e: FormEvent | MouseEvent, mode: "submit" | "rescan" = "submit") => {
     e.preventDefault();
@@ -1109,7 +1165,7 @@ export default function App() {
 
   const openReportPanelById = async (domainId: number, domainName: string) => {
     try {
-      const detail = await fetchDomainDetail(domainId);
+      const detail = await fetchDomainDetail(domainId, null);
       await openReportPanel(detail.domain);
     } catch (err) {
       showToast((err as Error).message || `Failed to open report panel for ${domainName}`, "error");
@@ -1808,7 +1864,7 @@ export default function App() {
                 <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>{domainDetail.domain.domain}</div>
                 <div className="sb-row" style={{ gap: 8, flexWrap: "wrap" }}>
                   <span className={badgeClass(domainDetail.domain.status, "status")}>{(domainDetail.domain.status || "unknown").toUpperCase()}</span>
-                  <span className={badgeClass(domainDetail.domain.verdict, "verdict")}>{(domainDetail.domain.verdict || "unknown").toUpperCase()}</span>
+                  <span className={badgeClass(snapshotVerdict, "verdict")}>{(snapshotVerdict || "unknown").toUpperCase()}</span>
                   <span className="sb-muted">ID: {domainDetail.domain.id ?? "N/A"}</span>
                   {domainDetail.domain.last_checked_at && <span className="sb-muted">Last checked {timeAgo(domainDetail.domain.last_checked_at)}</span>}
                 </div>
@@ -1890,10 +1946,10 @@ export default function App() {
             <div className="sb-grid" style={{ marginTop: 16, gap: 12 }}>
               {[
                 ["Domain score", (domainDetail.domain as any).domain_score ?? (domainDetail.domain as any).score ?? "\u2014"],
-                ["Analysis score", (domainDetail.domain as any).analysis_score ?? "\u2014"],
+                ["Analysis score", snapshotScore ?? "\u2014"],
                 ["Source", domainDetail.domain.source || "\u2014"],
                 ["First seen", domainDetail.domain.first_seen || "\u2014"],
-                ["Analyzed at", domainDetail.domain.analyzed_at || "\u2014"],
+                ["Analyzed at", snapshotTimestamp || "\u2014"],
                 ["Reported at", (domainDetail.domain as any).reported_at || "\u2014"],
                 ["Updated", domainDetail.domain.updated_at || "\u2014"],
               ].map(([label, value]) => (
@@ -1903,6 +1959,38 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {snapshotList.length > 0 && (
+              <div className="sb-section" style={{ marginTop: 16 }}>
+                <div className="sb-row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                  <div>
+                    <div className="sb-label">Snapshot view</div>
+                    <select
+                      className="sb-input"
+                      value={resolvedSnapshotId || ""}
+                      onChange={(e) => handleSnapshotChange(e.target.value)}
+                      disabled={domainDetailLoading}
+                      style={{ minWidth: 260 }}
+                    >
+                      {snapshotList.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {formatSnapshotLabel(s)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sb-muted" style={{ fontSize: 12 }}>
+                    {snapshotList.length} snapshots
+                    {snapshotScanReason ? ` | Scan: ${snapshotScanReason.replace(/_/g, " ")}` : ""}
+                  </div>
+                </div>
+                {!snapshotIsLatest && (
+                  <div className="sb-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                    Viewing historical snapshot. Reporting and status actions use the latest scan.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Watchlist baseline section */}
             {(() => {
@@ -2111,15 +2199,15 @@ export default function App() {
             )}
           </div>
 
-          <EvidenceSection data={domainDetail} />
+          <EvidenceSection data={domainDetail} snapshotLabel={snapshotLabel} />
           <ReportsTable data={domainDetail} />
 
           {/* Verdict and Notes panels */}
           <div className="sb-grid" style={{ gap: 16 }}>
             <div className="col-6">
-              <div className="sb-panel" style={{ margin: 0 }}>
+                <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Verdict Reasons</span></div>
-                <VerdictReasons reasons={domainDetail.domain.verdict_reasons as any} />
+                <VerdictReasons reasons={verdictReasons as any} />
               </div>
             </div>
             <div className="col-6">

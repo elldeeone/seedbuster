@@ -4871,10 +4871,24 @@ class DashboardServer:
             raise web.HTTPNotFound(text="Domain not found.")
 
         reports = await self.database.get_reports_for_domain(did)
+        snapshot_param = (request.query.get("snapshot") or "").strip()
+        domain_dir = self.evidence_dir / _domain_dir_name(domain["domain"])
+        snapshots, latest_id = self._list_snapshots(domain_dir)
+        snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
+            domain_dir, snapshot_param, latest_id
+        )
+        if snapshot_param and not snapshot_dir and domain_dir.exists():
+            snapshot_dir = domain_dir
+            resolved_snapshot_id = latest_id
+            is_latest = True
 
-        evidence_dir, evidence_base = self._resolve_evidence(domain)
-        screenshots = self._get_screenshots(domain, evidence_dir)
-        instruction_files = self._get_instruction_files(evidence_dir)
+        evidence_base = None
+        if snapshot_dir:
+            evidence_base = f"/evidence/{domain_dir.name}"
+            if not is_latest and resolved_snapshot_id:
+                evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
+        screenshots = self._get_screenshots(domain, snapshot_dir)
+        instruction_files = self._get_instruction_files(domain_dir) if is_latest else []
 
         # Get campaign info for this domain
         domain_name = domain.get("domain") or ""
@@ -4885,7 +4899,7 @@ class DashboardServer:
         body = _render_domain_detail(
             domain,
             reports,
-            evidence_dir=evidence_dir,
+            evidence_dir=snapshot_dir,
             evidence_base_url=evidence_base,
             screenshots=screenshots,
             instruction_files=instruction_files,
@@ -5196,9 +5210,24 @@ class DashboardServer:
             raise web.HTTPNotFound(text="Domain not found.")
         reports = await self.database.get_reports_for_domain(did)
 
-        evidence_dir, evidence_base = self._resolve_evidence(domain)
-        screenshots = self._get_screenshots(domain, evidence_dir)
-        instruction_files = self._get_instruction_files(evidence_dir)
+        snapshot_param = (request.query.get("snapshot") or "").strip()
+        domain_dir = self.evidence_dir / _domain_dir_name(domain["domain"])
+        snapshots, latest_id = self._list_snapshots(domain_dir)
+        snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
+            domain_dir, snapshot_param, latest_id
+        )
+        if snapshot_param and not snapshot_dir and domain_dir.exists():
+            snapshot_dir = domain_dir
+            resolved_snapshot_id = latest_id
+            is_latest = True
+
+        evidence_base = None
+        if snapshot_dir:
+            evidence_base = f"/evidence/{domain_dir.name}"
+            if not is_latest and resolved_snapshot_id:
+                evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
+        screenshots = self._get_screenshots(domain, snapshot_dir)
+        instruction_files = self._get_instruction_files(domain_dir) if is_latest else []
 
         # Get campaign info for this domain
         domain_name = domain.get("domain") or ""
@@ -5218,7 +5247,7 @@ class DashboardServer:
                 body=_render_domain_detail(
                     domain,
                     reports,
-                    evidence_dir=evidence_dir,
+                    evidence_dir=snapshot_dir,
                     evidence_base_url=evidence_base,
                     screenshots=screenshots,
                     instruction_files=instruction_files,
@@ -5508,6 +5537,107 @@ class DashboardServer:
         except Exception:
             return []
 
+    def _sanitize_snapshot_id(self, snapshot_id: str | None) -> str | None:
+        raw = (snapshot_id or "").strip()
+        if not raw:
+            return None
+        safe = "".join(c for c in raw if c.isalnum() or c in "._-")
+        if safe != raw:
+            return None
+        return safe
+
+    def _parse_snapshot_time(self, value: str | None, fallback: Path | None = None) -> datetime | None:
+        if value:
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if fallback and fallback.exists():
+            return datetime.fromtimestamp(fallback.stat().st_mtime, tz=timezone.utc)
+        return None
+
+    def _snapshot_meta(self, analysis_path: Path, snapshot_id: str, is_latest: bool) -> tuple[dict, datetime | None]:
+        data: dict = {}
+        timestamp = None
+        try:
+            data = json.loads(analysis_path.read_text(encoding="utf-8"))
+            timestamp = self._parse_snapshot_time(data.get("saved_at"), analysis_path)
+        except Exception:
+            timestamp = self._parse_snapshot_time(None, analysis_path)
+        meta = {
+            "id": snapshot_id,
+            "timestamp": timestamp.isoformat() if timestamp else None,
+            "score": data.get("score"),
+            "verdict": data.get("verdict"),
+            "scan_reason": data.get("scan_reason"),
+            "is_latest": is_latest,
+        }
+        return meta, timestamp
+
+    def _derive_snapshot_id(self, analysis_path: Path) -> str | None:
+        try:
+            data = json.loads(analysis_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        scan_id = self._sanitize_snapshot_id(data.get("scan_id"))
+        if scan_id:
+            return scan_id
+        saved_at = data.get("saved_at")
+        parsed = self._parse_snapshot_time(saved_at, analysis_path)
+        if not parsed:
+            return None
+        return parsed.strftime("%Y%m%dT%H%M%S%fZ").lower()
+
+    def _list_snapshots(self, domain_dir: Path) -> tuple[list[dict], str | None]:
+        snapshots: list[dict] = []
+        latest_id = None
+        latest_path = domain_dir / "analysis.json"
+        if latest_path.exists():
+            latest_id = self._derive_snapshot_id(latest_path) or "latest"
+            meta, timestamp = self._snapshot_meta(latest_path, latest_id, True)
+            meta["is_latest"] = True
+            meta["_sort_ts"] = timestamp
+            snapshots.append(meta)
+
+        runs_dir = domain_dir / "runs"
+        if runs_dir.exists():
+            for run_dir in sorted(runs_dir.iterdir()):
+                if not run_dir.is_dir():
+                    continue
+                analysis_path = run_dir / "analysis.json"
+                if not analysis_path.exists():
+                    continue
+                meta, timestamp = self._snapshot_meta(analysis_path, run_dir.name, False)
+                meta["_sort_ts"] = timestamp
+                snapshots.append(meta)
+
+        snapshots.sort(
+            key=lambda s: (
+                s.get("_sort_ts") or datetime.fromtimestamp(0, tz=timezone.utc),
+                0 if not s.get("is_latest") else 1,
+            ),
+            reverse=True,
+        )
+        for meta in snapshots:
+            meta.pop("_sort_ts", None)
+        return snapshots, latest_id
+
+    def _resolve_snapshot_dir(
+        self,
+        domain_dir: Path,
+        snapshot_id: str | None,
+        latest_id: str | None,
+    ) -> tuple[Path | None, str | None, bool]:
+        safe_snapshot = self._sanitize_snapshot_id(snapshot_id)
+        if not safe_snapshot or safe_snapshot == "latest" or (latest_id and safe_snapshot == latest_id):
+            if domain_dir.exists():
+                return domain_dir, latest_id, True
+            return None, None, False
+        candidate = domain_dir / "runs" / safe_snapshot
+        if candidate.exists():
+            return candidate, safe_snapshot, False
+        return None, None, False
+
     # -------------------------------------------------------------------------
     # Domain PDF/Package/Preview Routes
     # -------------------------------------------------------------------------
@@ -5568,6 +5698,7 @@ class DashboardServer:
         domain_id = int(request.match_info.get("domain_id") or 0)
         if not domain_id:
             raise web.HTTPBadRequest(text="domain_id required")
+        snapshot_param = (request.query.get("snapshot") or "").strip()
         row = await self.database.get_domain_by_id(domain_id)
         if not row:
             raise web.HTTPNotFound(text="Domain not found")
@@ -5576,6 +5707,8 @@ class DashboardServer:
         evidence = {}
         infrastructure = {}
         instruction_files: list[str] = []
+        snapshot: dict | None = None
+        snapshots: list[dict] = []
         campaign = self._get_campaign_for_domain(row["domain"])
         filtered_campaign = None
         if campaign:
@@ -5586,18 +5719,41 @@ class DashboardServer:
         )
         try:
             domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
-            evidence["html"] = f"/evidence/{domain_dir.name}/page.html" if (domain_dir / "page.html").exists() else None
-            evidence["analysis"] = f"/evidence/{domain_dir.name}/analysis.json" if (domain_dir / "analysis.json").exists() else None
-            evidence["screenshots"] = [
-                f"/evidence/{domain_dir.name}/{p.name}"
-                for p in sorted(domain_dir.glob("screenshot*.png"))
-            ]
-            instruction_files = [
-                f"/evidence/{domain_dir.name}/{p.name}"
-                for p in self._get_instruction_files(domain_dir)
-            ]
-            analysis_path = domain_dir / "analysis.json"
-            if analysis_path.exists():
+            snapshots, latest_id = self._list_snapshots(domain_dir)
+            snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
+                domain_dir, snapshot_param, latest_id
+            )
+            if snapshot_param and not snapshot_dir:
+                return web.json_response({"error": "Snapshot not found"}, status=404)
+
+            evidence_base = f"/evidence/{domain_dir.name}"
+            if snapshot_dir and not is_latest and resolved_snapshot_id:
+                evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
+
+            if snapshot_dir:
+                evidence["html"] = (
+                    f"{evidence_base}/page.html"
+                    if (snapshot_dir / "page.html").exists()
+                    else None
+                )
+                evidence["analysis"] = (
+                    f"{evidence_base}/analysis.json"
+                    if (snapshot_dir / "analysis.json").exists()
+                    else None
+                )
+                evidence["screenshots"] = [
+                    f"{evidence_base}/{p.name}"
+                    for p in self._get_screenshots(row, snapshot_dir)
+                ]
+
+            if is_latest and domain_dir.exists():
+                instruction_files = [
+                    f"/evidence/{domain_dir.name}/{p.name}"
+                    for p in self._get_instruction_files(domain_dir)
+                ]
+
+            analysis_path = snapshot_dir / "analysis.json" if snapshot_dir else None
+            if analysis_path and analysis_path.exists():
                 import json
 
                 try:
@@ -5617,8 +5773,18 @@ class DashboardServer:
                         "tls_age_days": infra.get("tls_age_days"),
                         "domain_age_days": infra.get("domain_age_days"),
                     }
+                    snapshot = {
+                        "id": resolved_snapshot_id or latest_id,
+                        "timestamp": data.get("saved_at"),
+                        "score": data.get("score"),
+                        "verdict": data.get("verdict"),
+                        "reasons": data.get("reasons"),
+                        "scan_reason": data.get("scan_reason"),
+                        "is_latest": is_latest,
+                    }
                 except Exception:
                     infrastructure = {}
+                    snapshot = None
             else:
                 infrastructure = {}
         except Exception:
@@ -5699,6 +5865,8 @@ class DashboardServer:
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
                 "rescan_request": rescan_request_info,
+                "snapshots": snapshots,
+                "snapshot": snapshot,
             }
         )
 

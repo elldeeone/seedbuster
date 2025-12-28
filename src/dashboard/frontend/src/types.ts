@@ -72,6 +72,19 @@ export interface EvidenceSummary {
   screenshots?: string[];
 }
 
+export interface SnapshotSummary {
+  id: string;
+  timestamp?: string | null;
+  score?: number | null;
+  verdict?: string | null;
+  scan_reason?: string | null;
+  is_latest?: boolean;
+}
+
+export interface SnapshotDetail extends SnapshotSummary {
+  reasons?: string[] | string | null;
+}
+
 export interface RescanRequestInfo {
   count: number;
   threshold: number;
@@ -87,6 +100,8 @@ export interface DomainDetailResponse {
   campaign?: Campaign | null;
   instruction_files?: string[];
   rescan_request?: RescanRequestInfo | null;
+  snapshots?: SnapshotSummary[];
+  snapshot?: SnapshotDetail | null;
   infrastructure?: {
     hosting_provider?: string | null;
     registrar?: string | null;

@@ -59,7 +59,13 @@ class EvidenceStore:
         path = domain_dir / "analysis.json"
 
         # Add timestamp
-        analysis_data["saved_at"] = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        analysis_data["saved_at"] = now.isoformat()
+        scan_id = analysis_data.get("scan_id")
+        if scan_id:
+            analysis_data["scan_id"] = self._safe_filename_component(str(scan_id))
+        else:
+            analysis_data["scan_id"] = self._format_scan_id(now)
 
         analysis_json = json.dumps(analysis_data, indent=2)
         await asyncio.to_thread(path.write_text, analysis_json, encoding="utf-8")
@@ -116,6 +122,91 @@ class EvidenceStore:
             except OSError:
                 continue
         return removed
+
+    def clear_report_instructions(self, domain: str) -> int:
+        """Remove stale report instruction files for a domain."""
+        domain_dir = self.get_domain_dir(domain)
+        removed = 0
+        for path in domain_dir.glob("report_instructions_*.txt"):
+            try:
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return removed
+
+    def archive_current_evidence(self, domain: str) -> Optional[str]:
+        """Move current evidence files into a snapshot run directory.
+
+        Returns the snapshot id if evidence was archived, otherwise None.
+        """
+        domain_dir = self.get_domain_dir(domain)
+        analysis_path = domain_dir / "analysis.json"
+        if not analysis_path.exists():
+            return None
+
+        scan_id = self._read_scan_id(analysis_path)
+        if not scan_id:
+            scan_id = self._format_scan_id(
+                datetime.fromtimestamp(analysis_path.stat().st_mtime, tz=timezone.utc)
+            )
+
+        runs_dir = domain_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        scan_id = self._ensure_unique_scan_id(runs_dir, scan_id)
+        target_dir = runs_dir / scan_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        moved = 0
+        for path in domain_dir.iterdir():
+            if path.name == "runs":
+                continue
+            if path.is_dir():
+                continue
+            if path.name.startswith("report_instructions_"):
+                continue
+            try:
+                path.rename(target_dir / path.name)
+                moved += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+
+        return scan_id if moved else None
+
+    @staticmethod
+    def _format_scan_id(value: datetime) -> str:
+        """Format a timestamp as a stable snapshot id."""
+        return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ").lower()
+
+    def _read_scan_id(self, analysis_path: Path) -> Optional[str]:
+        try:
+            data = json.loads(analysis_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        scan_id = (data.get("scan_id") or "").strip()
+        if scan_id:
+            return self._safe_filename_component(scan_id)
+        saved_at = (data.get("saved_at") or "").strip()
+        if not saved_at:
+            return None
+        try:
+            parsed = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return self._format_scan_id(parsed)
+
+    @staticmethod
+    def _ensure_unique_scan_id(base_dir: Path, scan_id: str) -> str:
+        candidate = scan_id
+        counter = 1
+        while (base_dir / candidate).exists():
+            candidate = f"{scan_id}-{counter:02d}"
+            counter += 1
+        return candidate
 
     def get_evidence_path(self, domain: str) -> Path:
         """Get the evidence directory path for a domain."""

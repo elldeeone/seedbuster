@@ -98,8 +98,9 @@ export async function fetchDomains(params: {
 }
 
 
-export async function fetchDomainDetail(domainId: number): Promise<DomainDetailResponse> {
-  return request<DomainDetailResponse>(`/domains/${domainId}`);
+export async function fetchDomainDetail(domainId: number, snapshotId?: string | null): Promise<DomainDetailResponse> {
+  const qs = snapshotId ? `?snapshot=${encodeURIComponent(snapshotId)}` : "";
+  return request<DomainDetailResponse>(`/domains/${domainId}${qs}`);
 }
 
 export async function submitTarget(target: string): Promise<{ status: string; domain: string }> {
