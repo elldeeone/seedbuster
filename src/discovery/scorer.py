@@ -120,8 +120,11 @@ class DomainScorer:
         score += idn_score
         reasons.extend(idn_reasons)
 
-        # Check fuzzy match against target patterns
-        fuzzy_score, fuzzy_reasons = self._check_fuzzy_match(extracted.domain)
+        # Check fuzzy match against target patterns (include subdomain for lookalikes).
+        host_label = extracted.domain
+        if extracted.subdomain:
+            host_label = f"{extracted.subdomain}.{extracted.domain}"
+        fuzzy_score, fuzzy_reasons = self._check_fuzzy_match(host_label)
         score += fuzzy_score
         reasons.extend(fuzzy_reasons)
 

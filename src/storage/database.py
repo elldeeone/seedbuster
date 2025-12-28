@@ -743,8 +743,8 @@ class Database:
                 WHERE id = ?
                 """,
                 params,
-            )
-            await self._connection.commit()
+                )
+                await self._connection.commit()
 
         # Set baseline timestamp when marking domain as watchlist
         if status_value == DomainStatus.WATCHLIST.value:
@@ -754,6 +754,19 @@ class Database:
                     (domain_id,)
                 )
                 await self._connection.commit()
+
+    async def update_domain_score(self, domain_id: int, domain_score: int) -> None:
+        """Update domain_score for an existing domain."""
+        async with self._lock:
+            await self._connection.execute(
+                """
+                UPDATE domains
+                SET domain_score = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (int(domain_score), domain_id),
+            )
+            await self._connection.commit()
 
         # Auto-cancel pending reports for certain status changes
         if status_value in (
