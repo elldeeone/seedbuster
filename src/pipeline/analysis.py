@@ -638,7 +638,7 @@ class AnalysisEngine:
             # Convert scam_type string to ScamType enum if present
             from ..storage.database import ScamType
             scam_type_enum = None
-            if detection.scam_type:
+            if detection and detection.scam_type:
                 try:
                     scam_type_enum = ScamType(detection.scam_type)
                 except ValueError:
