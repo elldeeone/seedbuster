@@ -1,6 +1,7 @@
 """Base classes for abuse reporting in SeedBuster."""
 
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ class ReportEvidence:
     url: str
     detected_at: datetime
     confidence_score: int
+    domain_id: Optional[int] = None
     detection_reasons: list[str] = field(default_factory=list)
     suspicious_endpoints: list[str] = field(default_factory=list)
 
@@ -123,6 +125,10 @@ class ReportEvidence:
             "Source: https://github.com/elldeeone/seedbuster",
         ])
 
+        public_line = self.get_public_entry_line()
+        if public_line:
+            lines.append(public_line)
+
         return "\n".join(lines)
 
     def _fake_airdrop_summary(self) -> str:
@@ -176,6 +182,10 @@ class ReportEvidence:
             "Source: https://github.com/elldeeone/seedbuster",
         ])
 
+        public_line = self.get_public_entry_line()
+        if public_line:
+            lines.append(public_line)
+
         return "\n".join(lines)
 
     def _generic_summary(self) -> str:
@@ -227,6 +237,10 @@ class ReportEvidence:
             "Reported by: SeedBuster (automated phishing detection)",
             "Source: https://github.com/elldeeone/seedbuster",
         ])
+
+        public_line = self.get_public_entry_line()
+        if public_line:
+            lines.append(public_line)
 
         return "\n".join(lines)
 
@@ -325,6 +339,20 @@ class ReportEvidence:
             return "unknown"
 
         return scam_type
+
+    def get_public_entry_url(self) -> Optional[str]:
+        """Return public SeedBuster URL for this domain entry, if configured."""
+        base_url = os.getenv("DASHBOARD_PUBLIC_URL", "").strip()
+        if not base_url or not self.domain_id:
+            return None
+        base_url = base_url.rstrip("/")
+        return f"{base_url}/#/domains/{self.domain_id}"
+
+    def get_public_entry_line(self) -> Optional[str]:
+        url = self.get_public_entry_url()
+        if not url:
+            return None
+        return f"More information: {url}"
 
     def get_filtered_reasons(self, max_items: int = 5) -> list[str]:
         """Get detection reasons with low-signal items filtered out."""
@@ -521,6 +549,10 @@ class ReportEvidence:
             "Reported by: SeedBuster (automated phishing detection)",
             "Source: https://github.com/elldeeone/seedbuster",
         ])
+
+        public_line = self.get_public_entry_line()
+        if public_line:
+            lines.append(public_line)
 
         return "\n".join(lines)
 
@@ -923,6 +955,11 @@ def build_manual_submission(
     details.append("Key evidence:")
     for reason_text in evidence.get_filtered_reasons(max_items=4):
         details.append(f"  - {reason_text}")
+
+    public_line = evidence.get_public_entry_line()
+    if public_line:
+        details.append("")
+        details.append(public_line)
 
     fields.append(
         ManualSubmissionField(

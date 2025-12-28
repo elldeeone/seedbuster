@@ -138,6 +138,9 @@ class NetcraftReporter(BaseReporter):
                 "",
                 "Detected by SeedBuster.",
             ])
+        public_line = evidence.get_public_entry_line()
+        if public_line:
+            reason_lines.append(public_line)
         return "\n".join(reason_lines).strip()
 
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:

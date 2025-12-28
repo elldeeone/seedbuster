@@ -69,6 +69,10 @@ def _finalize_description(
         "Source: https://github.com/elldeeone/seedbuster",
     ])
 
+    public_line = evidence.get_public_entry_line()
+    if public_line:
+        lines.append(public_line)
+
     return "\n".join(lines).strip()
 
 
@@ -224,6 +228,10 @@ def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | 
         "Reported by: SeedBuster (automated phishing detection)",
         "Source: https://github.com/elldeeone/seedbuster",
     ])
+
+    public_line = evidence.get_public_entry_line()
+    if public_line:
+        lines.append(public_line)
 
     return "\n".join(lines).strip()
 

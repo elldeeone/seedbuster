@@ -189,6 +189,8 @@ Impact:
         body += cls._build_attachments_section(evidence)
         body += cls._build_footer(reporter_email)
 
+        body = cls._append_public_entry(body, evidence)
+
         return {"subject": subject, "body": body}
 
     @classmethod
@@ -382,6 +384,8 @@ Captured evidence (screenshot + HTML) available on request.
                 "Key evidence from our review:",
             )
 
+        body = cls._append_public_entry(body, evidence)
+
         return {
             "subject": subject,
             "body": body,
@@ -439,6 +443,8 @@ What we observed:
         body += cls._build_endpoints_section(evidence)
         body += cls._build_attachments_section(evidence)
         body += cls._build_footer(reporter_email)
+
+        body = cls._append_public_entry(body, evidence)
 
         return {"subject": subject, "body": body}
 
@@ -520,6 +526,10 @@ What we observed:
 
         lines.append("")
         lines.append("We captured a screenshot and HTML during the scan and can provide them on request.")
+        public_line = evidence.get_public_entry_line()
+        if public_line:
+            lines.append("")
+            lines.append(public_line)
 
         return "\n".join(lines)
 
@@ -556,6 +566,10 @@ What we observed:
         for reason in highlights:
             lines.append(f"- {reason}")
         lines.extend(["", "We captured a screenshot and HTML during the scan and can provide them on request."])
+        public_line = evidence.get_public_entry_line()
+        if public_line:
+            lines.append("")
+            lines.append(public_line)
         return "\n".join(lines)
 
     # -------------------------------------------------------------------------
@@ -594,6 +608,8 @@ Impact:
 """
         body += cls._build_attachments_section(evidence)
         body += cls._build_footer(reporter_email)
+
+        body = cls._append_public_entry(body, evidence)
 
         return {"subject": subject, "body": body}
 
@@ -640,6 +656,8 @@ This is advance-fee fraud targeting cryptocurrency users.
         body += cls._build_attachments_section(evidence)
         body += cls._build_footer(reporter_email)
 
+        body = cls._append_public_entry(body, evidence)
+
         return {"subject": subject, "body": body}
 
     @classmethod
@@ -680,6 +698,8 @@ Steps to reproduce:
 
 Captured evidence (screenshot + HTML) available on request.
 """
+
+        body = cls._append_public_entry(body, evidence)
 
         return {
             "subject": subject,
@@ -730,6 +750,13 @@ Captured evidence (screenshot + HTML) available on request.
         if not attachments:
             return ""
         return f"Attachments:\n{cls._format_list(attachments, prefix='- ')}\n\n"
+
+    @staticmethod
+    def _append_public_entry(body: str, evidence: ReportEvidence) -> str:
+        line = evidence.get_public_entry_line()
+        if not line:
+            return body
+        return f"{body.rstrip()}\n{line}\n"
 
     @staticmethod
     def _build_footer(reporter_email: str) -> str:

@@ -106,6 +106,9 @@ Victims lose funds immediately and irreversibly.
 Captured evidence (screenshot + HTML) available on request.
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
+        public_line = evidence.get_public_entry_line()
+        if public_line:
+            description = f"{description.rstrip()}\n{public_line}"
         return description
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         """Generate structured manual submission data for public dashboard."""

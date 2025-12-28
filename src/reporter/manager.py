@@ -1208,6 +1208,7 @@ class ReportManager:
                 domain_data.get("first_seen", datetime.now().isoformat())
             ),
             confidence_score=domain_data.get("analysis_score", 0),
+            domain_id=domain_id,
             detection_reasons=detection_reasons,
             suspicious_endpoints=suspicious_endpoints,
             screenshot_path=screenshot_path,
@@ -1892,6 +1893,10 @@ Captured evidence (screenshot + HTML) available on request.
 
 Detected by SeedBuster - github.com/elldeeone/seedbuster"""
 
+            public_line = evidence.get_public_entry_line()
+            if public_line:
+                description = f"{description.rstrip()}\n{public_line}"
+
             return f"""
 DIGITALOCEAN ABUSE REPORT PREVIEW
 =================================
@@ -2104,6 +2109,9 @@ Note: Google's form includes dynamic hidden fields; SeedBuster auto-discovers th
                     "",
                     "Detected by SeedBuster.",
                 ])
+            public_line = evidence.get_public_entry_line()
+            if public_line:
+                reason_lines.append(public_line)
             reason = "\n".join(reason_lines).strip()
 
             payload: dict[str, object] = {
