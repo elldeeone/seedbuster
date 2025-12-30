@@ -54,6 +54,8 @@ type Route =
   | { name: "campaigns" }
   | { name: "campaign"; id: string };
 
+type AllowlistEntry = { domain: string; locked: boolean };
+
 const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
@@ -773,7 +775,7 @@ export default function App() {
 
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [allowlistEntries, setAllowlistEntries] = useState<string[]>([]);
+  const [allowlistEntries, setAllowlistEntries] = useState<AllowlistEntry[]>([]);
   const [allowlistLoading, setAllowlistLoading] = useState(false);
   const [allowlistError, setAllowlistError] = useState<string | null>(null);
   const [allowlistInput, setAllowlistInput] = useState("");
@@ -955,7 +957,18 @@ export default function App() {
     setAllowlistError(null);
     try {
       const res = await fetchAllowlist();
-      setAllowlistEntries(res.entries || []);
+      const normalized = (res.entries || [])
+        .map((entry: any) => {
+          if (typeof entry === "string") {
+            return { domain: entry, locked: false };
+          }
+          const domain = String(entry?.domain || "").trim();
+          if (!domain) return null;
+          return { domain, locked: Boolean(entry?.locked) };
+        })
+        .filter(Boolean) as AllowlistEntry[];
+      normalized.sort((a, b) => a.domain.localeCompare(b.domain));
+      setAllowlistEntries(normalized);
     } catch (err) {
       setAllowlistError((err as Error).message || "Failed to load allowlist");
     } finally {
@@ -2714,13 +2727,16 @@ export default function App() {
                       {!allowlistLoading && allowlistEntries.length > 0 && (
                         <div className="sb-allowlist-list" style={{ marginTop: 8 }}>
                           {allowlistEntries.map((entry) => (
-                            <div key={entry} className="sb-allowlist-item">
-                              <span className="sb-allowlist-domain">{entry}</span>
+                            <div key={entry.domain} className="sb-allowlist-item">
+                              <div className="sb-allowlist-meta">
+                                <span className="sb-allowlist-domain">{entry.domain}</span>
+                                {entry.locked && <span className="sb-allowlist-badge">Managed</span>}
+                              </div>
                               <button
                                 className="sb-btn sb-btn-ghost"
                                 type="button"
-                                disabled={allowlistBusy}
-                                onClick={() => removeAllowlistDomain(entry)}
+                                disabled={allowlistBusy || entry.locked}
+                                onClick={() => removeAllowlistDomain(entry.domain)}
                                 style={{ padding: "4px 8px" }}
                               >
                                 Remove

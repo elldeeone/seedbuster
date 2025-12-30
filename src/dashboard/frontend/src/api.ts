@@ -219,7 +219,7 @@ export async function fetchCampaign(campaignId: string): Promise<{ campaign: Cam
   return request(`/campaigns/${encodeURIComponent(campaignId)}`);
 }
 
-export async function fetchAllowlist(): Promise<{ entries: string[] }> {
+export async function fetchAllowlist(): Promise<{ entries: Array<{ domain: string; locked?: boolean }> }> {
   return request("/allowlist");
 }
 

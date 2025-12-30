@@ -4240,7 +4240,6 @@ class DashboardServer:
         if self._allowlist_path and self._allowlist_path.exists():
             file_entries = self._read_allowlist_entries()
             self._allowlist_file_entries = file_entries
-            self._allowlist_heuristics = self._allowlist_config - file_entries
         self._allowlist = self._allowlist_file_entries | self._allowlist_heuristics
         self._allowlist_loaded_at: float | None = None
         self._allowlist_reload_seconds = 5.0
@@ -6188,7 +6187,11 @@ class DashboardServer:
         """Return allowlist entries."""
         self._require_csrf_header(request)
         entries = sorted(self._load_allowlist_entries(force=True))
-        return web.json_response({"entries": entries})
+        payload = [
+            {"domain": entry, "locked": entry in self._allowlist_heuristics}
+            for entry in entries
+        ]
+        return web.json_response({"entries": payload})
 
     async def _admin_api_allowlist_add(self, request: web.Request) -> web.Response:
         """Add a domain to the allowlist."""
