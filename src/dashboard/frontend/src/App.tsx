@@ -492,8 +492,11 @@ const DomainTable = ({
             {!loading && domains.map((d) => {
               const busy = d.id ? actionBusy[d.id] : null;
               const isAllowlisted = (d.status || "").toLowerCase() === "allowlisted";
-              const dScore = (d as any).domain_score ?? (d as any).score ?? "—";
-              const aScore = (d as any).analysis_score ?? "—";
+              const verdictValue = isAllowlisted ? "allowlisted" : d.verdict;
+              const verdictLabel = isAllowlisted ? "ALLOWLISTED" : (d.verdict || "unknown").toUpperCase();
+              const verdictKind = isAllowlisted ? "status" : "verdict";
+              const dScore = isAllowlisted ? "—" : (d as any).domain_score ?? (d as any).score ?? "—";
+              const aScore = isAllowlisted ? "—" : (d as any).analysis_score ?? "—";
               return (
                 <tr key={d.id ?? d.domain}>
                   <td className="domain-cell" title={d.domain}>
@@ -507,7 +510,7 @@ const DomainTable = ({
                     <div className="sb-muted" style={{ fontSize: 12 }}>{timeAgo(d.updated_at || d.created_at)}</div>
                   </td>
                   <td><span className={badgeClass(d.status, "status")}>{(d.status || "unknown").toUpperCase()}</span></td>
-                  <td><span className={badgeClass(d.verdict, "verdict")}>{(d.verdict || "unknown").toUpperCase()}</span></td>
+                  <td><span className={badgeClass(verdictValue, verdictKind)}>{verdictLabel}</span></td>
                   <td><span className="sb-score">{dScore}</span></td>
                   <td><span className="sb-score">{aScore}</span></td>
                   <td className="sb-muted">{d.source || "—"}</td>

@@ -742,6 +742,8 @@ class Database:
 
         status_value = status.value if isinstance(status, Enum) else status
         verdict_value = verdict.value if isinstance(verdict, Enum) else verdict
+        if status_value == DomainStatus.ALLOWLISTED.value and verdict_value is None:
+            verdict_value = Verdict.BENIGN.value
 
         updates = []
         params = []
@@ -818,6 +820,8 @@ class Database:
 
         status_value = (status or "").strip().lower() if status is not None else None
         verdict_value = (verdict or "").strip().lower() if verdict is not None else None
+        if status_value == DomainStatus.ALLOWLISTED.value and verdict_value is None:
+            verdict_value = Verdict.BENIGN.value
 
         if status_value is not None:
             updates.append("status = ?")
