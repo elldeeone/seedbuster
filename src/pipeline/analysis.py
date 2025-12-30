@@ -228,7 +228,10 @@ class AnalysisEngine:
                 )
             else:
                 # Run browser, infrastructure, and external intel in PARALLEL
-                browser_timeout = max(30, int(self.config.analysis_timeout or 30) * 2)
+                browser_timeout = max(
+                    30,
+                    int(getattr(self.config, "analysis_timeout", 30) or 30) * 2,
+                )
                 browser_result, infra_result, external_result = await asyncio.gather(
                     asyncio.wait_for(self.browser.analyze(domain), timeout=browser_timeout),
                     self.infrastructure.analyze(hostname or domain),

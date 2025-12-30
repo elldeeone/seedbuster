@@ -97,7 +97,7 @@ class DomainScorer:
         full_domain = ".".join(
             part for part in [extracted.subdomain, extracted.domain, extracted.suffix] if part
         ) or domain
-        registered_domain = extracted.registered_domain or full_domain
+        registered_domain = extracted.top_domain_under_public_suffix or full_domain
         # Check allowlist (registrable domain + subdomains)
         if allowlist_contains(domain, self.allowlist):
             return ScoringResult(

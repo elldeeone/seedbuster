@@ -574,7 +574,7 @@ class InfrastructureAnalyzer:
             result = DomainInfo(domain=domain)
             loop = asyncio.get_event_loop()
             extracted = tldextract.extract(domain)
-            registered = extracted.registered_domain or domain
+            registered = extracted.top_domain_under_public_suffix or domain
 
             # Get A records
             try:
@@ -648,7 +648,7 @@ class InfrastructureAnalyzer:
             # Fallback: derive registrar-like label from nameserver root
             if not result.registrar and result.nameservers:
                 try:
-                    ns_root = tldextract.extract(result.nameservers[0]).registered_domain
+                    ns_root = tldextract.extract(result.nameservers[0]).top_domain_under_public_suffix
                     if ns_root:
                         result.registrar = ns_root
                 except Exception:
