@@ -291,6 +291,7 @@ class DomainScorer:
         if not normalized_candidate.isascii():
             normalized_candidate = self._normalize_homoglyphs(normalized_candidate).lower()
 
+        extracted = tldextract.extract(domain_lower)
         extracted_candidate = tldextract.extract(normalized_candidate)
 
         # Check if any target pattern is roughly present
