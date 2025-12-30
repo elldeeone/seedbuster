@@ -730,17 +730,15 @@ class SeedBusterPipeline:
                     try:
                         if domain_record:
                             domain_id = int(domain_record.get("id") or 0)
-                            domain_score = int(domain_record.get("domain_score") or 0)
-                            domain_reasons: list[str] = []
-                            if domain_score <= 0:
-                                score_result = self.scorer.score_domain(domain)
-                                domain_score = score_result.score
-                                domain_reasons = score_result.reasons
-                                if domain_id and domain_score > int(domain_record.get("domain_score") or 0):
+                            score_result = self.scorer.score_domain(domain)
+                            domain_score = score_result.score
+                            domain_reasons = score_result.reasons
+                            if domain_id:
+                                current_score = int(domain_record.get("domain_score") or 0)
+                                if domain_score != current_score:
                                     await self.database.update_domain_score(domain_id, domain_score)
                             domain_record["domain_score"] = domain_score
-                            if domain_reasons:
-                                domain_record["reasons"] = domain_reasons
+                            domain_record["reasons"] = domain_reasons
                             await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
                         else:
                             logger.warning(f"Rescan: domain not found in DB: {domain}")

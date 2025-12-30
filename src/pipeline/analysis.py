@@ -80,6 +80,17 @@ class AnalysisEngine:
         is_rescan = scan_reason != ScanReason.INITIAL
         domain_score = task["domain_score"]
         domain_reasons = task.get("reasons", [])
+        status_override = None
+        if is_rescan:
+            existing_status = str(task.get("status") or "").strip().lower()
+            preserve_statuses = {
+                DomainStatus.WATCHLIST.value,
+                DomainStatus.REPORTED.value,
+                DomainStatus.FALSE_POSITIVE.value,
+                DomainStatus.ALLOWLISTED.value,
+            }
+            if existing_status in preserve_statuses:
+                status_override = existing_status
 
         logger.info(f"Analyzing: {domain}")
 
@@ -641,6 +652,7 @@ class AnalysisEngine:
                 verdict_reasons="\n".join(reasons),
                 evidence_path=evidence_path,
                 scam_type=scam_type_enum,
+                status=status_override,
             )
 
             # Determine if we should send an alert

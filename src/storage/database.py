@@ -897,9 +897,13 @@ class Database:
         verdict_reasons: str,
         evidence_path: str,
         scam_type: Optional["ScamType"] = None,
+        status: DomainStatus | str | None = None,
     ):
         """Update domain with analysis results."""
         scam_type_value = scam_type.value if scam_type else None
+        status_value = status.value if isinstance(status, Enum) else status
+        if not status_value:
+            status_value = DomainStatus.ANALYZED.value
         async with self._lock:
             await self._connection.execute(
                 """
@@ -920,7 +924,7 @@ class Database:
                     verdict_reasons,
                     evidence_path,
                     scam_type_value,
-                    DomainStatus.ANALYZED.value,
+                    status_value,
                     domain_id,
                 ),
             )
