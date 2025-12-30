@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import tldextract
+
 
 def canonicalize_domain(value: str) -> str:
     """
@@ -32,3 +34,42 @@ def canonicalize_domain(value: str) -> str:
         host = f"{host}:{port}"
 
     return host
+
+
+def _strip_port(host: str) -> str:
+    if not host:
+        return ""
+    if host.count(":") == 1:
+        return host.split(":", 1)[0]
+    return host
+
+
+def registered_domain(value: str) -> str:
+    """Return the registrable domain for a host or URL (best-effort)."""
+    host = canonicalize_domain(value)
+    if not host:
+        return ""
+    host = _strip_port(host)
+    extracted = tldextract.extract(host)
+    if extracted.domain and extracted.suffix:
+        return f"{extracted.domain}.{extracted.suffix}".lower()
+    return host.lower()
+
+
+def normalize_allowlist_domain(value: str) -> str:
+    """Normalize allowlist entries to registrable domain (includes all subdomains)."""
+    return registered_domain(value)
+
+
+def allowlist_contains(domain: str, allowlist: set[str]) -> bool:
+    """Check if a domain matches the allowlist (registrable domain + subdomains)."""
+    if not allowlist:
+        return False
+    host = canonicalize_domain(domain)
+    if not host:
+        return False
+    host = _strip_port(host)
+    if host in allowlist:
+        return True
+    registered = registered_domain(host)
+    return registered in allowlist

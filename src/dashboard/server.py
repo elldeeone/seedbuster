@@ -16,6 +16,7 @@ import os
 import hashlib
 import secrets
 import ipaddress
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,7 +26,7 @@ from urllib.parse import quote, urlencode, urlparse
 from aiohttp import web
 
 from ..storage.database import Database, DomainStatus, Verdict
-from ..utils.domains import canonicalize_domain
+from ..utils.domains import allowlist_contains, canonicalize_domain, normalize_allowlist_domain
 
 EVIDENCE_HTML_CSP = (
     "sandbox; "
@@ -4197,6 +4198,7 @@ class DashboardConfig:
     admin_password: str = ""
     health_url: str = ""
     frontend_dir: Path | None = None
+    allowlist_path: Path | None = None
     allowlist: set[str] = field(default_factory=set)
     public_rescan_threshold: int = 3
     public_rescan_window_hours: int = 24
@@ -4231,7 +4233,17 @@ class DashboardServer:
     ):
         self.config = config
         self.database = database
-        self._allowlist = {d.lower() for d in getattr(config, "allowlist", [])}
+        self._allowlist_path = getattr(config, "allowlist_path", None)
+        self._allowlist_config = {d.lower() for d in getattr(config, "allowlist", [])}
+        self._allowlist_file_entries: set[str] = set()
+        self._allowlist_heuristics = set(self._allowlist_config)
+        if self._allowlist_path and self._allowlist_path.exists():
+            file_entries = self._read_allowlist_entries()
+            self._allowlist_file_entries = file_entries
+            self._allowlist_heuristics = self._allowlist_config - file_entries
+        self._allowlist = self._allowlist_file_entries | self._allowlist_heuristics
+        self._allowlist_loaded_at: float | None = None
+        self._allowlist_reload_seconds = 5.0
         self.evidence_dir = evidence_dir
         self.campaigns_dir = campaigns_dir
         self.frontend_dir = Path(
@@ -4287,6 +4299,57 @@ class DashboardServer:
         except Exception:
             return []
 
+    def _read_allowlist_entries(self) -> set[str]:
+        """Read allowlist entries from disk (best-effort)."""
+        path = self._allowlist_path
+        if not path or not path.exists():
+            return set()
+
+        entries: set[str] = set()
+        for line in path.read_text().splitlines():
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            normalized = normalize_allowlist_domain(value)
+            if normalized:
+                entries.add(normalized)
+        return entries
+
+    def _write_allowlist_entries(self, entries: set[str]) -> None:
+        """Write allowlist entries to disk (sorted, atomic)."""
+        path = self._allowlist_path
+        if not path:
+            raise RuntimeError("allowlist_path is not configured")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        header = [
+            "# Allowed domains (one per line)",
+            "# These will never trigger alerts",
+        ]
+        content = "\n".join(header + sorted(entries) + [""])
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(content)
+        tmp_path.replace(path)
+
+    def _load_allowlist_entries(self, *, force: bool = False) -> set[str]:
+        """Load allowlist entries with a small cache window."""
+        if not self._allowlist_path:
+            return self._allowlist
+
+        now = time.time()
+        if (
+            not force
+            and self._allowlist_loaded_at is not None
+            and (now - self._allowlist_loaded_at) < self._allowlist_reload_seconds
+        ):
+            return self._allowlist
+
+        file_entries = self._read_allowlist_entries()
+        self._allowlist_file_entries = file_entries
+        self._allowlist = file_entries | self._allowlist_heuristics
+        self._allowlist_loaded_at = now
+        return self._allowlist
+
     def _normalize_domain_key(self, domain: str) -> str:
         """Normalize a domain for lookups (strip scheme/path, lowercase)."""
         return canonicalize_domain(domain) or _extract_hostname(domain)
@@ -4303,9 +4366,8 @@ class DashboardServer:
 
     def _is_allowlisted_domain(self, domain: str) -> bool:
         """Return True if the domain (or its registered form) is allowlisted."""
-        host = self._normalize_domain_key(domain)
-        registered = self._registered_domain(domain)
-        return (host in self._allowlist) or (registered in self._allowlist)
+        allowlist = self._load_allowlist_entries()
+        return allowlist_contains(domain, allowlist)
 
     def _client_ip(self, request: web.Request) -> str:
         """Best-effort client IP extraction (supports X-Forwarded-For)."""
@@ -4632,6 +4694,9 @@ class DashboardServer:
         self._app.router.add_get("/admin/api/platforms", self._admin_api_platforms)
         self._app.router.add_get("/admin/api/analytics", self._admin_api_analytics)
         self._app.router.add_get("/admin/api/detection-metrics", self._admin_api_detection_metrics)
+        self._app.router.add_get("/admin/api/allowlist", self._admin_api_allowlist)
+        self._app.router.add_post("/admin/api/allowlist", self._admin_api_allowlist_add)
+        self._app.router.add_post("/admin/api/allowlist/remove", self._admin_api_allowlist_remove)
         self._app.router.add_get("/admin/api/submissions", self._admin_api_submissions)
         self._app.router.add_get("/admin/api/submissions/{submission_id}", self._admin_api_submission)
         self._app.router.add_post("/admin/api/submissions/{submission_id}/approve", self._admin_api_approve_submission)
@@ -4878,26 +4943,38 @@ class DashboardServer:
         if not domain:
             raise web.HTTPNotFound(text="Domain not found.")
 
-        reports = await self.database.get_reports_for_domain(did)
+        is_allowlisted = (
+            str(domain.get("status") or "").strip().lower() == DomainStatus.ALLOWLISTED.value
+            or self._is_allowlisted_domain(domain["domain"])
+        )
+        reports = [] if is_allowlisted else await self.database.get_reports_for_domain(did)
         snapshot_param = (request.query.get("snapshot") or "").strip()
         domain_dir = self.evidence_dir / _domain_dir_name(domain["domain"])
-        snapshots, latest_id = self._list_snapshots(domain_dir)
-        snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
-            domain_dir, snapshot_param, latest_id
-        )
-        if snapshot_param and not snapshot_dir and domain_dir.exists():
-            snapshot_dir = domain_dir
-            resolved_snapshot_id = latest_id
-            is_latest = True
-
+        snapshots, latest_id = ([], None)
+        snapshot_dir = None
+        resolved_snapshot_id = None
+        is_latest = True
         evidence_base = None
-        evidence_cache_buster = resolved_snapshot_id or latest_id
-        if snapshot_dir:
-            evidence_base = f"/evidence/{domain_dir.name}"
-            if not is_latest and resolved_snapshot_id:
-                evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
-        screenshots = self._get_screenshots(domain, snapshot_dir)
-        instruction_files = self._get_instruction_files(domain_dir) if is_latest else []
+        evidence_cache_buster = None
+        screenshots: list[Path] = []
+        instruction_files: list[Path] = []
+        if not is_allowlisted:
+            snapshots, latest_id = self._list_snapshots(domain_dir)
+            snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
+                domain_dir, snapshot_param, latest_id
+            )
+            if snapshot_param and not snapshot_dir and domain_dir.exists():
+                snapshot_dir = domain_dir
+                resolved_snapshot_id = latest_id
+                is_latest = True
+
+            evidence_cache_buster = resolved_snapshot_id or latest_id
+            if snapshot_dir:
+                evidence_base = f"/evidence/{domain_dir.name}"
+                if not is_latest and resolved_snapshot_id:
+                    evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
+            screenshots = self._get_screenshots(domain, snapshot_dir)
+            instruction_files = self._get_instruction_files(domain_dir) if is_latest else []
 
         # Get campaign info for this domain
         domain_name = domain.get("domain") or ""
@@ -5779,7 +5856,11 @@ class DashboardServer:
         if not row:
             raise web.HTTPNotFound(text="Domain not found")
 
-        reports = await self.database.get_reports_for_domain(domain_id)
+        is_allowlisted = (
+            str(row.get("status") or "").strip().lower() == DomainStatus.ALLOWLISTED.value
+            or self._is_allowlisted_domain(row["domain"])
+        )
+        reports = [] if is_allowlisted else await self.database.get_reports_for_domain(domain_id)
         evidence = {}
         infrastructure = {}
         instruction_files: list[str] = []
@@ -5794,80 +5875,81 @@ class DashboardServer:
         related_domains = await self._enrich_related_domains_with_ids(
             self._get_related_domains(row["domain"], filtered_campaign)
         )
-        try:
-            domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
-            snapshots, latest_id = self._list_snapshots(domain_dir)
-            snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
-                domain_dir, snapshot_param, latest_id
-            )
-            if snapshot_param and not snapshot_dir:
-                return web.json_response({"error": "Snapshot not found"}, status=404)
-
-            evidence_cache_buster = resolved_snapshot_id or latest_id
-            cache_suffix = f"?v={evidence_cache_buster}" if evidence_cache_buster else ""
-            evidence_base = f"/evidence/{domain_dir.name}"
-            if snapshot_dir and not is_latest and resolved_snapshot_id:
-                evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
-
-            if snapshot_dir:
-                evidence["html"] = (
-                    f"{evidence_base}/page.html{cache_suffix}"
-                    if (snapshot_dir / "page.html").exists()
-                    else None
+        if not is_allowlisted:
+            try:
+                domain_dir = self.evidence_dir / _domain_dir_name(row["domain"])
+                snapshots, latest_id = self._list_snapshots(domain_dir)
+                snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
+                    domain_dir, snapshot_param, latest_id
                 )
-                evidence["analysis"] = (
-                    f"{evidence_base}/analysis.json{cache_suffix}"
-                    if (snapshot_dir / "analysis.json").exists()
-                    else None
-                )
-                evidence["screenshots"] = [
-                    f"{evidence_base}/{p.name}{cache_suffix}"
-                    for p in self._get_screenshots(row, snapshot_dir)
-                ]
+                if snapshot_param and not snapshot_dir:
+                    return web.json_response({"error": "Snapshot not found"}, status=404)
 
-            if is_latest and domain_dir.exists():
-                instruction_files = [
-                    f"/evidence/{domain_dir.name}/{p.name}{cache_suffix}"
-                    for p in self._get_instruction_files(domain_dir)
-                ]
+                evidence_cache_buster = resolved_snapshot_id or latest_id
+                cache_suffix = f"?v={evidence_cache_buster}" if evidence_cache_buster else ""
+                evidence_base = f"/evidence/{domain_dir.name}"
+                if snapshot_dir and not is_latest and resolved_snapshot_id:
+                    evidence_base = f"/evidence/{domain_dir.name}/runs/{resolved_snapshot_id}"
 
-            analysis_path = snapshot_dir / "analysis.json" if snapshot_dir else None
-            if analysis_path and analysis_path.exists():
-                import json
+                if snapshot_dir:
+                    evidence["html"] = (
+                        f"{evidence_base}/page.html{cache_suffix}"
+                        if (snapshot_dir / "page.html").exists()
+                        else None
+                    )
+                    evidence["analysis"] = (
+                        f"{evidence_base}/analysis.json{cache_suffix}"
+                        if (snapshot_dir / "analysis.json").exists()
+                        else None
+                    )
+                    evidence["screenshots"] = [
+                        f"{evidence_base}/{p.name}{cache_suffix}"
+                        for p in self._get_screenshots(row, snapshot_dir)
+                    ]
 
-                try:
-                    data = json.loads(analysis_path.read_text())
-                    infra = data.get("infrastructure") or {}
-                    nameservers = infra.get("nameservers") or []
-                    if isinstance(nameservers, str):
-                        nameservers = [nameservers] if nameservers else []
-                    ip_addresses = infra.get("ip_addresses") or data.get("resolved_ips") or []
-                    if isinstance(ip_addresses, str):
-                        ip_addresses = [ip_addresses] if ip_addresses else []
-                    infrastructure = {
-                        "hosting_provider": data.get("hosting_provider") or infra.get("hosting_provider"),
-                        "registrar": infra.get("registrar") or data.get("registrar"),
-                        "nameservers": nameservers,
-                        "ip_addresses": ip_addresses,
-                        "tls_age_days": infra.get("tls_age_days"),
-                        "domain_age_days": infra.get("domain_age_days"),
-                    }
-                    snapshot = {
-                        "id": resolved_snapshot_id or latest_id,
-                        "timestamp": data.get("saved_at"),
-                        "score": data.get("score"),
-                        "verdict": data.get("verdict"),
-                        "reasons": data.get("reasons"),
-                        "scan_reason": data.get("scan_reason"),
-                        "is_latest": is_latest,
-                    }
-                except Exception:
+                if is_latest and domain_dir.exists():
+                    instruction_files = [
+                        f"/evidence/{domain_dir.name}/{p.name}{cache_suffix}"
+                        for p in self._get_instruction_files(domain_dir)
+                    ]
+
+                analysis_path = snapshot_dir / "analysis.json" if snapshot_dir else None
+                if analysis_path and analysis_path.exists():
+                    import json
+
+                    try:
+                        data = json.loads(analysis_path.read_text())
+                        infra = data.get("infrastructure") or {}
+                        nameservers = infra.get("nameservers") or []
+                        if isinstance(nameservers, str):
+                            nameservers = [nameservers] if nameservers else []
+                        ip_addresses = infra.get("ip_addresses") or data.get("resolved_ips") or []
+                        if isinstance(ip_addresses, str):
+                            ip_addresses = [ip_addresses] if ip_addresses else []
+                        infrastructure = {
+                            "hosting_provider": data.get("hosting_provider") or infra.get("hosting_provider"),
+                            "registrar": infra.get("registrar") or data.get("registrar"),
+                            "nameservers": nameservers,
+                            "ip_addresses": ip_addresses,
+                            "tls_age_days": infra.get("tls_age_days"),
+                            "domain_age_days": infra.get("domain_age_days"),
+                        }
+                        snapshot = {
+                            "id": resolved_snapshot_id or latest_id,
+                            "timestamp": data.get("saved_at"),
+                            "score": data.get("score"),
+                            "verdict": data.get("verdict"),
+                            "reasons": data.get("reasons"),
+                            "scan_reason": data.get("scan_reason"),
+                            "is_latest": is_latest,
+                        }
+                    except Exception:
+                        infrastructure = {}
+                        snapshot = None
+                else:
                     infrastructure = {}
-                    snapshot = None
-            else:
-                infrastructure = {}
-        except Exception:
-            evidence = {}
+            except Exception:
+                evidence = {}
 
         # Opportunistic live DNS enrichments if missing (avoid blocking; best-effort)
         domain_name = str(row.get("domain") or "").strip()
@@ -6101,6 +6183,67 @@ class DashboardServer:
         platforms = self.get_available_platforms()
         info = self.get_platform_info()
         return web.json_response({"platforms": platforms, "info": info})
+
+    async def _admin_api_allowlist(self, request: web.Request) -> web.Response:
+        """Return allowlist entries."""
+        self._require_csrf_header(request)
+        entries = sorted(self._load_allowlist_entries(force=True))
+        return web.json_response({"entries": entries})
+
+    async def _admin_api_allowlist_add(self, request: web.Request) -> web.Response:
+        """Add a domain to the allowlist."""
+        self._require_csrf_header(request)
+        data = await self._read_json(request)
+        raw_domain = str(data.get("domain") or "").strip()
+        normalized = normalize_allowlist_domain(raw_domain)
+        if not normalized:
+            raise web.HTTPBadRequest(text="domain is required")
+
+        file_entries = self._read_allowlist_entries()
+        merged_entries = file_entries | self._allowlist_heuristics
+        if normalized in merged_entries:
+            updated = await self.database.apply_allowlist_entry(normalized)
+            return web.json_response({"status": "exists", "domain": normalized, "updated_domains": updated})
+
+        file_entries.add(normalized)
+        self._write_allowlist_entries(file_entries)
+        self._load_allowlist_entries(force=True)
+
+        updated = await self.database.apply_allowlist_entry(normalized)
+        await self.database.enqueue_dashboard_action(
+            "allowlist_add",
+            {"domain": normalized},
+            target=normalized,
+            dedupe=True,
+        )
+        return web.json_response({"status": "added", "domain": normalized, "updated_domains": updated})
+
+    async def _admin_api_allowlist_remove(self, request: web.Request) -> web.Response:
+        """Remove a domain from the allowlist."""
+        self._require_csrf_header(request)
+        data = await self._read_json(request)
+        raw_domain = str(data.get("domain") or "").strip()
+        normalized = normalize_allowlist_domain(raw_domain)
+        if not normalized:
+            raise web.HTTPBadRequest(text="domain is required")
+
+        file_entries = self._read_allowlist_entries()
+        if normalized in self._allowlist_heuristics:
+            return web.json_response({"status": "locked", "domain": normalized})
+        if normalized not in file_entries:
+            return web.json_response({"status": "missing", "domain": normalized})
+
+        file_entries.remove(normalized)
+        self._write_allowlist_entries(file_entries)
+        self._load_allowlist_entries(force=True)
+
+        await self.database.enqueue_dashboard_action(
+            "allowlist_remove",
+            {"domain": normalized},
+            target=normalized,
+            dedupe=True,
+        )
+        return web.json_response({"status": "removed", "domain": normalized})
 
     async def _admin_api_analytics(self, request: web.Request) -> web.Response:
         """Return engagement + takedown analytics (admin-only)."""

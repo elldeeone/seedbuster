@@ -13,6 +13,7 @@ from ..analyzer.campaigns import analyze_for_campaign
 from ..analyzer.temporal import ScanReason
 from ..bot.formatters import AlertData, CampaignInfo, LearningInfo, TemporalInfo
 from ..storage.database import DomainStatus, Verdict
+from ..utils.domains import allowlist_contains
 
 logger = logging.getLogger(__name__)
 
@@ -50,24 +51,8 @@ class AnalysisEngine:
         self.bot = bot
 
     def _is_allowlisted(self, domain: str) -> bool:
-        """Check if a domain matches an allowlisted entry.
-
-        Supports both exact matches and parent domain matches,
-        e.g., 'explorer.kaspa.org' matches allowlist entry 'kaspa.org'.
-        """
-        if not self.config.allowlist:
-            return False
-
-        domain = domain.lower().strip()
-        if domain in self.config.allowlist:
-            return True
-
-        # Check if any allowlisted domain is a parent of this domain
-        for allowed in self.config.allowlist:
-            if domain.endswith(f".{allowed}"):
-                return True
-
-        return False
+        """Check if a domain matches an allowlisted entry."""
+        return allowlist_contains(domain, self.config.allowlist)
 
     async def _lookup_urlscan_history(self, domain: str) -> tuple[list[str], str | None, bool]:
         """Find historical urlscan.io scans with wallet/seed UI for unreachable pages."""
@@ -117,8 +102,7 @@ class AnalysisEngine:
             # Check allowlist early to skip analysis of known-good domains
             if self._is_allowlisted(hostname):
                 logger.info(f"Skipping allowlisted domain: {hostname}")
-                await self.database.update_domain_status(domain_id, DomainStatus.BENIGN)
-                await self.database.update_domain_analysis_score(domain_id, 0, "benign")
+                await self.database.update_domain_status(domain_id, DomainStatus.ALLOWLISTED)
                 return
 
             dns_resolves = True

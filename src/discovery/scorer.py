@@ -8,6 +8,8 @@ import idna
 import tldextract
 from rapidfuzz import fuzz
 
+from ..utils.domains import allowlist_contains
+
 
 @dataclass
 class ScoringResult:
@@ -91,12 +93,8 @@ class DomainScorer:
         score = 0
 
         # Extract domain parts
-        extracted = tldextract.extract(domain)
-        registered_domain = f"{extracted.domain}.{extracted.suffix}"
-        full_domain = domain
-
-        # Check allowlist (exact match on registered domain)
-        if registered_domain in self.allowlist or full_domain in self.allowlist:
+        # Check allowlist (registrable domain + subdomains)
+        if allowlist_contains(domain, self.allowlist):
             return ScoringResult(
                 domain=domain,
                 score=0,
@@ -280,9 +278,7 @@ class DomainScorer:
             candidate = domain_lower
 
         # Check allowlist first
-        extracted = tldextract.extract(domain_lower)
-        registered = f"{extracted.domain}.{extracted.suffix}"
-        if registered in self.allowlist or domain_lower in self.allowlist:
+        if allowlist_contains(domain_lower, self.allowlist):
             return False
 
         # If decoded IDN contains homoglyphs, normalize to improve matching.

@@ -28,7 +28,7 @@ from .reporter import ReportManager
 from .reporter.evidence_packager import EvidencePackager
 from .monitoring.health import HealthServer
 from .pipeline.analysis import AnalysisEngine
-from .utils.domains import canonicalize_domain
+from .utils.domains import canonicalize_domain, normalize_allowlist_domain
 
 # Configure logging
 logging.basicConfig(
@@ -220,23 +220,34 @@ class SeedBusterPipeline:
             logger.error(f"Failed to queue manual rescan for {domain}: {e}")
 
     def _allowlist_add(self, domain: str) -> None:
-        """Sync Telegram allowlist updates to the in-memory scorer."""
-        value = canonicalize_domain(domain) or (domain or "").strip().lower()
+        """Sync allowlist updates to the in-memory scorer and database."""
+        value = normalize_allowlist_domain(domain)
         if not value:
             return
         self.scorer.allowlist.add(value)
         self.config.allowlist.add(value)
         self.temporal.cancel_rescans(value)
         logger.info(f"Allowlisted via Telegram: {value}")
+        try:
+            asyncio.create_task(self._apply_allowlist_entry(value))
+        except Exception as e:
+            logger.warning("Failed to schedule allowlist update for %s: %s", value, e)
 
     def _allowlist_remove(self, domain: str) -> None:
-        """Sync Telegram allowlist removals to the in-memory scorer."""
-        value = canonicalize_domain(domain) or (domain or "").strip().lower()
+        """Sync allowlist removals to the in-memory scorer."""
+        value = normalize_allowlist_domain(domain)
         if not value:
             return
         self.scorer.allowlist.discard(value)
         self.config.allowlist.discard(value)
         logger.info(f"Removed from allowlist via Telegram: {value}")
+
+    async def _apply_allowlist_entry(self, domain: str) -> None:
+        """Mark matching domains allowlisted in the database."""
+        try:
+            await self.database.apply_allowlist_entry(domain)
+        except Exception as exc:
+            logger.warning("Failed to apply allowlist entry %s: %s", domain, exc)
 
     async def _resume_pending_domains(self) -> None:
         """Resume any pending domains from previous runs."""
@@ -309,6 +320,17 @@ class SeedBusterPipeline:
         if resumed:
             logger.info("Re-queued %s analyzing domains from previous run", resumed)
 
+    async def _apply_allowlist_entries(self) -> None:
+        """Mark existing domains allowlisted based on configured entries."""
+        if not self.config.allowlist:
+            return
+        total = 0
+        for entry in sorted(self.config.allowlist):
+            self.temporal.cancel_rescans(entry)
+            total += await self.database.apply_allowlist_entry(entry)
+        if total:
+            logger.info("Allowlisted %s existing domains from config", total)
+
     def _health_snapshot(self) -> dict:
         """Provide a lightweight status dict for health endpoints."""
         uptime = (datetime.now(timezone.utc) - self._started_at).total_seconds()
@@ -331,6 +353,7 @@ class SeedBusterPipeline:
         await self.database.connect()
         logger.info("Database connected")
 
+        await self._apply_allowlist_entries()
         await self._resume_stuck_analyzing_domains()
         await self._resume_pending_domains()
 
@@ -663,6 +686,20 @@ class SeedBusterPipeline:
                 platforms=platforms_list,
                 note=note,
             )
+            return
+
+        if action == "allowlist_add":
+            domain = str(payload.get("domain") or "").strip().lower()
+            if not domain:
+                raise ValueError("domain is required")
+            self._allowlist_add(domain)
+            return
+
+        if action == "allowlist_remove":
+            domain = str(payload.get("domain") or "").strip().lower()
+            if not domain:
+                raise ValueError("domain is required")
+            self._allowlist_remove(domain)
             return
 
         raise ValueError(f"unknown action kind: {action}")

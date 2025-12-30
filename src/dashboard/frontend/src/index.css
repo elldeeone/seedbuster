@@ -1405,6 +1405,31 @@ summary:focus-visible {
   margin-bottom: 10px;
 }
 
+.sb-allowlist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.sb-allowlist-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+}
+
+.sb-allowlist-domain {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 @media (max-width: 500px) {
   .sb-settings-popup {
     width: calc(100vw - 32px);

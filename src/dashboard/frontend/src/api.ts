@@ -219,6 +219,24 @@ export async function fetchCampaign(campaignId: string): Promise<{ campaign: Cam
   return request(`/campaigns/${encodeURIComponent(campaignId)}`);
 }
 
+export async function fetchAllowlist(): Promise<{ entries: string[] }> {
+  return request("/allowlist");
+}
+
+export async function addAllowlistEntry(domain: string): Promise<{ status: string; domain: string; updated_domains?: number }> {
+  return request("/allowlist", {
+    method: "POST",
+    body: JSON.stringify({ domain }),
+  });
+}
+
+export async function removeAllowlistEntry(domain: string): Promise<{ status: string; domain: string }> {
+  return request("/allowlist/remove", {
+    method: "POST",
+    body: JSON.stringify({ domain }),
+  });
+}
+
 export async function updateDomainStatus(
   domainId: number,
   status: string,

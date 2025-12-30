@@ -27,6 +27,9 @@ import {
   fetchAnalytics,
   updateWatchlistBaseline,
   requestRescan,
+  fetchAllowlist,
+  addAllowlistEntry,
+  removeAllowlistEntry,
 } from "./api";
 import type { PlatformInfo } from "./api";
 import type {
@@ -308,6 +311,7 @@ const DomainTable = ({
   onRescan,
   onReport,
   onFalsePositive,
+  onAllowlist,
   onBulkRescan,
   actionBusy,
   bulkRescanJob,
@@ -326,6 +330,7 @@ const DomainTable = ({
   onRescan: (d: Domain) => void;
   onReport: (d: Domain) => void;
   onFalsePositive: (d: Domain) => void;
+  onAllowlist: (d: Domain) => void;
   onBulkRescan: (targets: Domain[]) => void;
   actionBusy: Record<number, string | null>;
   bulkRescanJob: BulkRescanResponse | null;
@@ -375,7 +380,7 @@ const DomainTable = ({
           >
             {STATUS_OPTIONS.map((s) => (
               <option key={s || "any"} value={s}>
-                {s === "dangerous" ? "Dangerous Only" : s ? s.toUpperCase() : "All Statuses"}
+                {s === "dangerous" ? "Dangerous Only" : s ? s.toUpperCase() : "All (except allowlisted)"}
               </option>
             ))}
           </select>
@@ -484,6 +489,7 @@ const DomainTable = ({
             )}
             {!loading && domains.map((d) => {
               const busy = d.id ? actionBusy[d.id] : null;
+              const isAllowlisted = (d.status || "").toLowerCase() === "allowlisted";
               const dScore = (d as any).domain_score ?? (d as any).score ?? "—";
               const aScore = (d as any).analysis_score ?? "—";
               return (
@@ -510,15 +516,22 @@ const DomainTable = ({
                         <summary className="sb-btn sb-btn-ghost">Actions ▾</summary>
                         <div className="sb-actions-menu">
                           <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => d.id && onView(d.id)}>Open</button>
-                          <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onRescan(d)}>
+                          <button className="sb-btn" disabled={!d.id || !!busy || isAllowlisted} onClick={() => onRescan(d)}>
                             {busy === "rescan" ? "Rescanning…" : "Rescan"}
                           </button>
-                          <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onReport(d)}>
+                          <button className="sb-btn" disabled={!d.id || !!busy || isAllowlisted} onClick={() => onReport(d)}>
                             {busy === "report" ? "Reporting…" : "Report"}
                           </button>
-                          <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
-                            {busy === "false_positive" ? "Marking…" : "False +"}
-                          </button>
+                          {!isAllowlisted && (
+                            <button className="sb-btn sb-btn-danger" disabled={!d.id || !!busy} onClick={() => onFalsePositive(d)}>
+                              {busy === "false_positive" ? "Marking…" : "False +"}
+                            </button>
+                          )}
+                          {!isAllowlisted && (
+                            <button className="sb-btn" disabled={!d.id || !!busy} onClick={() => onAllowlist(d)}>
+                              {busy === "allowlist" ? "Allowlisting…" : "Allowlist"}
+                            </button>
+                          )}
                         </div>
                       </details>
                     ) : (
@@ -760,6 +773,11 @@ export default function App() {
 
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [allowlistEntries, setAllowlistEntries] = useState<string[]>([]);
+  const [allowlistLoading, setAllowlistLoading] = useState(false);
+  const [allowlistError, setAllowlistError] = useState<string | null>(null);
+  const [allowlistInput, setAllowlistInput] = useState("");
+  const [allowlistBusy, setAllowlistBusy] = useState(false);
 
   // Public submissions (admin only)
   const [publicSubmissions, setPublicSubmissions] = useState<PublicSubmission[]>([]);
@@ -801,6 +819,13 @@ export default function App() {
   const snapshotScanReason = snapshotDetail?.scan_reason || resolvedSnapshot?.scan_reason || null;
   const snapshotLabel = resolvedSnapshot ? formatSnapshotLabel(resolvedSnapshot) : null;
   const verdictReasons = snapshotReasonsText || (domainDetail?.domain.verdict_reasons as any) || null;
+  const isAllowlisted = (domainDetail?.domain.status || "").toLowerCase() === "allowlisted";
+  const domainScoreDisplay = isAllowlisted
+    ? "—"
+    : (domainDetail?.domain as any)?.domain_score ?? (domainDetail?.domain as any)?.score ?? "—";
+  const analysisScoreDisplay = isAllowlisted ? "—" : snapshotScore ?? "—";
+  const analyzedAtDisplay = isAllowlisted ? "—" : snapshotTimestamp || "—";
+  const reportedAtDisplay = isAllowlisted ? "—" : (domainDetail?.domain as any)?.reported_at || "—";
 
   useEffect(() => {
     const onHash = () => {
@@ -841,10 +866,15 @@ export default function App() {
     setDomainsError(null);
     try {
       // Handle special "dangerous" filter mode
+      const excludeStatuses = filters.status === "dangerous"
+        ? EXCLUDED_STATUSES
+        : !filters.status
+          ? ["allowlisted"]
+          : undefined;
       const apiParams = {
         ...filters,
         status: filters.status === "dangerous" ? "" : filters.status,
-        excludeStatuses: filters.status === "dangerous" ? EXCLUDED_STATUSES : undefined,
+        excludeStatuses,
       };
       const res = await fetchDomains(apiParams);
       setDomains(res.domains);
@@ -918,6 +948,25 @@ export default function App() {
       setPublicSubmissionsLoading(false);
     }
   }, [canEdit]);
+
+  const loadAllowlist = useCallback(async () => {
+    if (!canEdit) return;
+    setAllowlistLoading(true);
+    setAllowlistError(null);
+    try {
+      const res = await fetchAllowlist();
+      setAllowlistEntries(res.entries || []);
+    } catch (err) {
+      setAllowlistError((err as Error).message || "Failed to load allowlist");
+    } finally {
+      setAllowlistLoading(false);
+    }
+  }, [canEdit]);
+
+  useEffect(() => {
+    if (!settingsOpen || !canEdit) return;
+    loadAllowlist();
+  }, [settingsOpen, canEdit, loadAllowlist]);
 
   const loadReportOptions = useCallback(async (domainId: number) => {
     if (canEdit) return;
@@ -1318,6 +1367,96 @@ export default function App() {
       showToast((err as Error).message || `${type} failed`, "error");
     } finally {
       setActionBusy((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
+  const allowlistDomain = async (domain: Domain) => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
+    const id = domain.id;
+    const target = (domain.domain || "").trim();
+    if (!target) {
+      showToast("Domain is missing for this record", "error");
+      return;
+    }
+    if ((domain.status || "").toLowerCase() === "allowlisted") {
+      showToast("Already allowlisted", "info");
+      return;
+    }
+    if (id) setActionBusy((prev) => ({ ...prev, [id]: "allowlist" }));
+    try {
+      const res = await addAllowlistEntry(target);
+      if (res.status === "exists") {
+        showToast(`${res.domain} is already allowlisted`, "info");
+      } else {
+        const updated = res.updated_domains ? ` (${res.updated_domains} updated)` : "";
+        showToast(`Allowlisted ${res.domain}${updated}`, "success");
+      }
+      loadDomains();
+      if (route.name === "domain" && id) loadDomainDetail(id, snapshotSelection || null);
+      if (settingsOpen) loadAllowlist();
+    } catch (err) {
+      showToast((err as Error).message || "Allowlist failed", "error");
+    } finally {
+      if (id) setActionBusy((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
+  const removeAllowlistDomain = async (domain: string, domainId?: number) => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
+    const target = (domain || "").trim();
+    if (!target) {
+      showToast("Domain is required", "error");
+      return;
+    }
+    setAllowlistBusy(true);
+    try {
+      const res = await removeAllowlistEntry(target);
+      if (res.status === "missing") {
+        showToast(`${res.domain} was not on the allowlist`, "info");
+      } else if (res.status === "locked") {
+        showToast(`${res.domain} is managed in heuristics.yaml`, "info");
+      } else {
+        showToast(`Removed ${res.domain} from allowlist. Reactivate to resume analysis.`, "success");
+      }
+      if (settingsOpen) loadAllowlist();
+      loadDomains();
+      if (route.name === "domain" && domainId) loadDomainDetail(domainId, snapshotSelection || null);
+    } catch (err) {
+      showToast((err as Error).message || "Allowlist removal failed", "error");
+    } finally {
+      setAllowlistBusy(false);
+    }
+  };
+
+  const handleAllowlistAdd = async () => {
+    if (!canEdit) {
+      showToast("Read-only mode: actions are disabled.", "info");
+      return;
+    }
+    const target = allowlistInput.trim();
+    if (!target) return;
+    setAllowlistBusy(true);
+    try {
+      const res = await addAllowlistEntry(target);
+      if (res.status === "exists") {
+        showToast(`${res.domain} is already allowlisted`, "info");
+      } else {
+        const updated = res.updated_domains ? ` (${res.updated_domains} updated)` : "";
+        showToast(`Allowlisted ${res.domain}${updated}`, "success");
+      }
+      setAllowlistInput("");
+      loadAllowlist();
+      loadDomains();
+    } catch (err) {
+      showToast((err as Error).message || "Allowlist failed", "error");
+    } finally {
+      setAllowlistBusy(false);
     }
   };
 
@@ -1767,6 +1906,7 @@ export default function App() {
         onRescan={(d) => triggerAction(d, "rescan")}
         onReport={(d) => triggerAction(d, "report")}
         onFalsePositive={(d) => triggerAction(d, "false_positive")}
+        onAllowlist={allowlistDomain}
         onBulkRescan={startBulkRescan}
         actionBusy={actionBusy}
         bulkRescanJob={bulkRescanJob}
@@ -2007,6 +2147,11 @@ export default function App() {
               {domainDetail.domain.action_required}
             </div>
           )}
+          {isAllowlisted && (
+            <div className="sb-flash sb-flash-success">
+              Allowlisted domain. Evidence, reports, and verdict details are hidden.
+            </div>
+          )}
 
           {/* Main domain info panel */}
           <div className="sb-panel">
@@ -2015,28 +2160,32 @@ export default function App() {
                 <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>{domainDetail.domain.domain}</div>
                 <div className="sb-row" style={{ gap: 8, flexWrap: "wrap" }}>
                   <span className={badgeClass(domainDetail.domain.status, "status")}>{(domainDetail.domain.status || "unknown").toUpperCase()}</span>
-                  <span className={badgeClass(snapshotVerdict, "verdict")}>{(snapshotVerdict || "unknown").toUpperCase()}</span>
+                  {!isAllowlisted && (
+                    <span className={badgeClass(snapshotVerdict, "verdict")}>{(snapshotVerdict || "unknown").toUpperCase()}</span>
+                  )}
                   <span className="sb-muted">ID: {domainDetail.domain.id ?? "N/A"}</span>
                   {domainDetail.domain.last_checked_at && <span className="sb-muted">Last checked {timeAgo(domainDetail.domain.last_checked_at)}</span>}
                 </div>
-                {(((domainDetail.domain.takedown_status || "") as string).toLowerCase() !== "active") || domainDetail.domain.takedown_detected_at ? (
-                  <div className="sb-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                    <span className={badgeClass(domainDetail.domain.takedown_status, "status")}>
-                      TAKEDOWN: {(domainDetail.domain.takedown_status || "active").toUpperCase()}
-                    </span>
-                    {domainDetail.domain.takedown_detected_at && (
-                      <span className="sb-muted">Detected {timeAgo(domainDetail.domain.takedown_detected_at)}</span>
-                    )}
-                    {domainDetail.domain.takedown_confirmed_at && (
-                      <span className="sb-muted">Confirmed {timeAgo(domainDetail.domain.takedown_confirmed_at)}</span>
-                    )}
-                  </div>
-                ) : null}
+                {!isAllowlisted && (
+                  (((domainDetail.domain.takedown_status || "") as string).toLowerCase() !== "active") || domainDetail.domain.takedown_detected_at ? (
+                    <div className="sb-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                      <span className={badgeClass(domainDetail.domain.takedown_status, "status")}>
+                        TAKEDOWN: {(domainDetail.domain.takedown_status || "active").toUpperCase()}
+                      </span>
+                      {domainDetail.domain.takedown_detected_at && (
+                        <span className="sb-muted">Detected {timeAgo(domainDetail.domain.takedown_detected_at)}</span>
+                      )}
+                      {domainDetail.domain.takedown_confirmed_at && (
+                        <span className="sb-muted">Confirmed {timeAgo(domainDetail.domain.takedown_confirmed_at)}</span>
+                      )}
+                    </div>
+                  ) : null
+                )}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-end" }}>
                 {/* Primary action buttons */}
                 <div className="sb-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                  {canEdit && (
+                  {canEdit && !isAllowlisted && (
                     <>
                       <button className="sb-btn sb-btn-primary" disabled={!domainDetail.domain.id || !!actionBusy[domainDetail.domain.id!]} onClick={() => triggerAction(domainDetail.domain, "rescan")}>
                         {actionBusy[domainDetail.domain.id || 0] === "rescan" ? "Rescanning…" : "Rescan"}
@@ -2059,8 +2208,17 @@ export default function App() {
                 {/* Status action buttons */}
                 {canEdit && (() => {
                   const currentStatus = (domainDetail.domain.status || "").toLowerCase();
-                  const isTerminal = ["false_positive", "allowlisted"].includes(currentStatus);
+                  const isAllowlistedStatus = currentStatus === "allowlisted";
+                  const isTerminal = currentStatus === "false_positive";
                   const isBusy = !!actionBusy[domainDetail.domain.id || 0];
+
+                  if (isAllowlistedStatus) {
+                    return (
+                      <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy || allowlistBusy} onClick={() => removeAllowlistDomain(domainDetail.domain.domain, domainDetail.domain.id)}>
+                        {allowlistBusy ? "Removing…" : "Remove Allowlist"}
+                      </button>
+                    );
+                  }
 
                   if (isTerminal) {
                     return (
@@ -2083,7 +2241,7 @@ export default function App() {
                         </button>
                       )}
                       {currentStatus !== "allowlisted" && (
-                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => changeStatus(domainDetail.domain, "allowlisted")}>
+                        <button className="sb-btn" disabled={!domainDetail.domain.id || isBusy} onClick={() => allowlistDomain(domainDetail.domain)}>
                           {isBusy ? "Adding…" : "✓ Allowlist"}
                         </button>
                       )}
@@ -2096,12 +2254,12 @@ export default function App() {
             {/* Metadata grid */}
             <div className="sb-grid" style={{ marginTop: 16, gap: 12 }}>
               {[
-                ["Domain score", (domainDetail.domain as any).domain_score ?? (domainDetail.domain as any).score ?? "\u2014"],
-                ["Analysis score", snapshotScore ?? "\u2014"],
+                ["Domain score", domainScoreDisplay],
+                ["Analysis score", analysisScoreDisplay],
                 ["Source", domainDetail.domain.source || "\u2014"],
                 ["First seen", domainDetail.domain.first_seen || "\u2014"],
-                ["Analyzed at", snapshotTimestamp || "\u2014"],
-                ["Reported at", (domainDetail.domain as any).reported_at || "\u2014"],
+                ["Analyzed at", analyzedAtDisplay],
+                ["Reported at", reportedAtDisplay],
                 ["Updated", domainDetail.domain.updated_at || "\u2014"],
               ].map(([label, value]) => (
                 <div key={label as string} className="col-3">
@@ -2111,7 +2269,7 @@ export default function App() {
               ))}
             </div>
 
-            {snapshotList.length > 0 && (
+            {!isAllowlisted && snapshotList.length > 0 && (
               <div className="sb-section" style={{ marginTop: 16 }}>
                 <div className="sb-row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
                   <div>
@@ -2320,45 +2478,53 @@ export default function App() {
           )}
 
           {/* Infrastructure / Registrar info */}
-          <div className="sb-panel" style={{ marginTop: 8 }}>
-            <div className="sb-panel-header">
-              <span className="sb-panel-title">Infrastructure</span>
-            </div>
-            {domainDetail.infrastructure ? (
-              <div className="sb-grid" style={{ gap: 12 }}>
-                <div className="col-4">
-                  <div className="sb-label">Hosting Provider</div>
-                  <div className="sb-muted" style={{ fontWeight: 600 }}>
-                    {domainDetail.infrastructure.hosting_provider || "\u2014"}
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 13 }}>
-                    <span className="sb-label" style={{ display: "inline-block", marginRight: 6 }}>IP</span>
-                    {renderInfraList(domainDetail.infrastructure.ip_addresses)}
-                  </div>
-                </div>
-                <div className="col-4">
-                  <div className="sb-label">Registrar</div>
-                  <div className="sb-muted">{domainDetail.infrastructure.registrar || "\u2014"}</div>
-                </div>
-                <div className="col-4">
-                  <div className="sb-label">Nameservers</div>
-                  {renderInfraList(domainDetail.infrastructure.nameservers)}
-                </div>
+          {!isAllowlisted && (
+            <div className="sb-panel" style={{ marginTop: 8 }}>
+              <div className="sb-panel-header">
+                <span className="sb-panel-title">Infrastructure</span>
               </div>
-            ) : (
-              <div className="sb-muted">No infrastructure data available.</div>
-            )}
-          </div>
+              {domainDetail.infrastructure ? (
+                <div className="sb-grid" style={{ gap: 12 }}>
+                  <div className="col-4">
+                    <div className="sb-label">Hosting Provider</div>
+                    <div className="sb-muted" style={{ fontWeight: 600 }}>
+                      {domainDetail.infrastructure.hosting_provider || "\u2014"}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13 }}>
+                      <span className="sb-label" style={{ display: "inline-block", marginRight: 6 }}>IP</span>
+                      {renderInfraList(domainDetail.infrastructure.ip_addresses)}
+                    </div>
+                  </div>
+                  <div className="col-4">
+                    <div className="sb-label">Registrar</div>
+                    <div className="sb-muted">{domainDetail.infrastructure.registrar || "\u2014"}</div>
+                  </div>
+                  <div className="col-4">
+                    <div className="sb-label">Nameservers</div>
+                    {renderInfraList(domainDetail.infrastructure.nameservers)}
+                  </div>
+                </div>
+              ) : (
+                <div className="sb-muted">No infrastructure data available.</div>
+              )}
+            </div>
+          )}
 
-          <EvidenceSection data={domainDetail} snapshotLabel={snapshotLabel} />
-          <ReportsTable data={domainDetail} />
+          {!isAllowlisted && <EvidenceSection data={domainDetail} snapshotLabel={snapshotLabel} />}
+          {!isAllowlisted && <ReportsTable data={domainDetail} />}
 
           {/* Verdict and Notes panels */}
           <div className="sb-grid" style={{ gap: 16 }}>
             <div className="col-6">
                 <div className="sb-panel" style={{ margin: 0 }}>
                 <div className="sb-panel-header"><span className="sb-panel-title">Verdict Reasons</span></div>
-                <VerdictReasons reasons={verdictReasons as any} />
+                {isAllowlisted ? (
+                  <div className="sb-muted" style={{ padding: "8px 0" }}>
+                    Hidden for allowlisted domains.
+                  </div>
+                ) : (
+                  <VerdictReasons reasons={verdictReasons as any} />
+                )}
               </div>
             </div>
             <div className="col-6">
@@ -2414,7 +2580,7 @@ export default function App() {
             </div>
           </div>
 
-          <CampaignCard campaign={domainDetail.campaign} related={domainDetail.related_domains || []} />
+          {!isAllowlisted && <CampaignCard campaign={domainDetail.campaign} related={domainDetail.related_domains || []} />}
         </>
       )}
     </div>
@@ -2511,6 +2677,58 @@ export default function App() {
                       )}
                       {cleanupResult && <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>{cleanupResult}</div>}
                       {cleanupError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8, fontSize: 12 }}>{cleanupError}</div>}
+                    </div>
+
+                    {/* Allowlist */}
+                    <div className="sb-settings-section">
+                      <div className="sb-settings-section-title">Allowlist</div>
+                      <div className="sb-row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <input
+                          className="sb-input"
+                          placeholder="example.org"
+                          value={allowlistInput}
+                          onChange={(e) => setAllowlistInput(e.target.value)}
+                          style={{ flex: 1, minWidth: 160 }}
+                        />
+                        <button
+                          className="sb-btn"
+                          type="button"
+                          disabled={allowlistBusy || !allowlistInput.trim()}
+                          onClick={handleAllowlistAdd}
+                        >
+                          {allowlistBusy ? "Working…" : "Add"}
+                        </button>
+                      </div>
+                      <div className="sb-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                        Applies to the registrable domain and all subdomains.
+                      </div>
+                      {allowlistError && (
+                        <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8, fontSize: 12 }}>
+                          {allowlistError}
+                        </div>
+                      )}
+                      {allowlistLoading && <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>Loading allowlist…</div>}
+                      {!allowlistLoading && allowlistEntries.length === 0 && (
+                        <div className="sb-muted" style={{ marginTop: 8, fontSize: 12 }}>No allowlist entries.</div>
+                      )}
+                      {!allowlistLoading && allowlistEntries.length > 0 && (
+                        <div className="sb-allowlist-list" style={{ marginTop: 8 }}>
+                          {allowlistEntries.map((entry) => (
+                            <div key={entry} className="sb-allowlist-item">
+                              <span className="sb-allowlist-domain">{entry}</span>
+                              <button
+                                className="sb-btn sb-btn-ghost"
+                                type="button"
+                                disabled={allowlistBusy}
+                                onClick={() => removeAllowlistDomain(entry)}
+                                style={{ padding: "4px 8px" }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </>

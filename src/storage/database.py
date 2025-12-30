@@ -1242,6 +1242,32 @@ class Database:
         """Mark domain as false positive."""
         await self.update_domain_status(domain_id, DomainStatus.FALSE_POSITIVE)
 
+    async def apply_allowlist_entry(self, domain: str) -> int:
+        """Mark matching domains as allowlisted based on a registrable domain entry."""
+        from ..utils.domains import normalize_allowlist_domain
+
+        normalized = normalize_allowlist_domain(domain)
+        if not normalized:
+            return 0
+
+        suffix_match = f"%.{normalized}"
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT id
+                FROM domains
+                WHERE canonical_domain = ?
+                   OR canonical_domain LIKE ?
+                """,
+                (normalized, suffix_match),
+            )
+            rows = await cursor.fetchall()
+
+        ids = [int(row["id"]) for row in rows]
+        for domain_id in ids:
+            await self.update_domain_status(domain_id, DomainStatus.ALLOWLISTED)
+        return len(ids)
+
     async def get_stats(self) -> dict:
         """Get pipeline statistics."""
         async with self._lock:
@@ -1264,6 +1290,7 @@ class Database:
                 SELECT verdict, COUNT(*) as count
                 FROM domains
                 WHERE verdict IS NOT NULL
+                  AND status != 'allowlisted'
                 GROUP BY verdict
                 """
             )

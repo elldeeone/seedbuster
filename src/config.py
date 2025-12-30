@@ -8,7 +8,7 @@ from typing import Set
 
 import yaml
 from dotenv import load_dotenv
-from .utils.domains import canonicalize_domain
+from .utils.domains import canonicalize_domain, normalize_allowlist_domain
 
 logger = logging.getLogger(__name__)
 
@@ -335,9 +335,8 @@ class Config:
         if allowlist_path.exists():
             raw_allowlist = self._load_list_file(allowlist_path)
             # Merge with domains from heuristics.yaml (already in self.allowlist)
-            self.allowlist = self.allowlist | {
-                canonicalize_domain(item) or item for item in raw_allowlist
-            }
+            normalized = {normalize_allowlist_domain(item) for item in raw_allowlist}
+            self.allowlist = self.allowlist | {n for n in normalized if n}
         if denylist_path.exists():
             raw_denylist = self._load_list_file(denylist_path)
             self.denylist = {
@@ -586,9 +585,11 @@ def load_config() -> Config:
     if isinstance(allowlist_data, dict):
         raw_domains = allowlist_data.get("domains", [])
         if isinstance(raw_domains, list):
-            for d in raw_domains:
-                if isinstance(d, str) and d.strip():
-                    allowlist_domains.add(d.strip().lower())
+                for d in raw_domains:
+                    if isinstance(d, str) and d.strip():
+                        normalized = normalize_allowlist_domain(d)
+                        if normalized:
+                            allowlist_domains.add(normalized)
 
     return Config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),

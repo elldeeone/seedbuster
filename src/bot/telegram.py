@@ -18,6 +18,7 @@ from telegram.constants import ParseMode
 from .formatters import AlertFormatter, AlertData
 from .service import BotService, KeyboardButton
 from ..storage.database import Database, DomainStatus, Verdict
+from ..utils.domains import normalize_allowlist_domain
 from ..storage.evidence import EvidenceStore
 from ..reporter.base import ReportStatus
 
@@ -112,7 +113,9 @@ class SeedBusterBot:
             value = line.strip()
             if not value or value.startswith("#"):
                 continue
-            entries.add(value.lower())
+            normalized = normalize_allowlist_domain(value)
+            if normalized:
+                entries.add(normalized)
         return entries
 
     def _write_allowlist_entries(self, entries: set[str]) -> None:
@@ -132,7 +135,7 @@ class SeedBusterBot:
 
     def _add_allowlist_entry(self, domain: str) -> bool:
         """Add a domain to the allowlist file and sync callbacks."""
-        normalized = self._extract_hostname(domain)
+        normalized = normalize_allowlist_domain(domain)
         if not normalized:
             return False
 
@@ -153,7 +156,7 @@ class SeedBusterBot:
 
     def _remove_allowlist_entry(self, domain: str) -> bool:
         """Remove a domain from the allowlist file and sync callbacks."""
-        normalized = self._extract_hostname(domain)
+        normalized = normalize_allowlist_domain(domain)
         if not normalized:
             return False
 
