@@ -154,8 +154,10 @@ class ThreatCampaignManager:
     """
 
 
-    VISUAL_HASH_DISTANCE = 4
+    VISUAL_HASH_DISTANCE_STRICT = 4
+    VISUAL_HASH_DISTANCE_LOOSE = 24
     VISUAL_MATCH_SCORE = 40
+    VISUAL_MATCH_SCORE_LOOSE = 30
     DOMAIN_SIMILARITY_SCORE = 20
     DOMAIN_SIMILARITY_THRESHOLD = 0.82
     DOMAIN_SIMILARITY_MIN_LEN = 6
@@ -402,6 +404,7 @@ class ThreatCampaignManager:
         # Track which indicator TYPES matched for each campaign (require multiple)
         indicator_types: Dict[str, Set[str]] = {}  # campaign_id -> set of types
         visual_campaigns: Set[str] = set()
+        visual_loose_candidates: Dict[str, int] = {}
 
         # Generic kits are common across many phishing sites and shouldn't
         # be strong enough alone to link domains to a campaign
@@ -474,32 +477,34 @@ class ThreatCampaignManager:
             for campaign_id, campaign in self.campaigns.items():
                 if not campaign.shared_visual_hashes:
                     continue
-                matched = False
-                distance = None
+                best_distance = None
                 for candidate_hash in campaign.shared_visual_hashes:
                     distance = self._phash_distance(visual_hash, candidate_hash)
                     if distance is None:
                         continue
-                    if distance <= self.VISUAL_HASH_DISTANCE:
-                        matched = True
-                        break
-                if not matched:
+                    if best_distance is None or distance < best_distance:
+                        best_distance = distance
+                if best_distance is None:
                     continue
-                visual_campaigns.add(campaign_id)
-                if campaign_id not in candidate_scores:
-                    candidate_scores[campaign_id] = 0
-                    match_reasons[campaign_id] = []
-                    indicator_types[campaign_id] = set()
-                candidate_scores[campaign_id] += self.VISUAL_MATCH_SCORE
-                match_reasons[campaign_id].append(
-                    f"Visual similarity (phash distance {distance})"
-                )
-                indicator_types[campaign_id].add("visual")
+                if best_distance <= self.VISUAL_HASH_DISTANCE_STRICT:
+                    visual_campaigns.add(campaign_id)
+                    if campaign_id not in candidate_scores:
+                        candidate_scores[campaign_id] = 0
+                        match_reasons[campaign_id] = []
+                        indicator_types[campaign_id] = set()
+                    candidate_scores[campaign_id] += self.VISUAL_MATCH_SCORE
+                    match_reasons[campaign_id].append(
+                        f"Visual similarity (phash distance {best_distance})"
+                    )
+                    indicator_types[campaign_id].add("visual")
+                elif best_distance <= self.VISUAL_HASH_DISTANCE_LOOSE:
+                    visual_loose_candidates[campaign_id] = best_distance
 
-        if visual_campaigns:
+        if visual_campaigns or visual_loose_candidates:
             domain_label = self._domain_similarity_key(domain)
             if domain_label:
-                for campaign_id in visual_campaigns:
+                candidate_ids = set(visual_campaigns) | set(visual_loose_candidates)
+                for campaign_id in candidate_ids:
                     campaign = self.campaigns.get(campaign_id)
                     if not campaign:
                         continue
@@ -519,6 +524,15 @@ class ThreatCampaignManager:
                         reason += f" ({similarity:.0%} to {similar_domain})"
                     match_reasons[campaign_id].append(reason)
                     indicator_types[campaign_id].add("domain")
+
+                    if campaign_id in visual_loose_candidates and campaign_id not in visual_campaigns:
+                        candidate_scores[campaign_id] += self.VISUAL_MATCH_SCORE_LOOSE
+                        match_reasons[campaign_id].append(
+                            "Visual similarity (loose phash distance "
+                            f"{visual_loose_candidates[campaign_id]})"
+                        )
+                        indicator_types[campaign_id].add("visual")
+                        visual_campaigns.add(campaign_id)
 
         # Find best matching campaign
         if candidate_scores:
