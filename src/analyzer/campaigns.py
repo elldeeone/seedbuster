@@ -34,6 +34,7 @@ class CampaignMember:
     ip_address: Optional[str] = None
     asn: Optional[str] = None
     html_hash: Optional[str] = None
+    visual_hash: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +47,7 @@ class CampaignMember:
             "ip_address": self.ip_address,
             "asn": self.asn,
             "html_hash": self.html_hash,
+            "visual_hash": self.visual_hash,
         }
 
     @classmethod
@@ -60,6 +62,7 @@ class CampaignMember:
             ip_address=data.get("ip_address"),
             asn=data.get("asn"),
             html_hash=data.get("html_hash"),
+            visual_hash=data.get("visual_hash"),
         )
 
 
@@ -77,6 +80,7 @@ class ThreatCampaign:
     shared_nameservers: Set[str] = field(default_factory=set)
     shared_kits: Set[str] = field(default_factory=set)
     shared_asns: Set[str] = field(default_factory=set)
+    shared_visual_hashes: Set[str] = field(default_factory=set)
 
     # Threat actor attribution (optional)
     actor_id: Optional[str] = None
@@ -96,6 +100,7 @@ class ThreatCampaign:
             "shared_nameservers": list(self.shared_nameservers),
             "shared_kits": list(self.shared_kits),
             "shared_asns": list(self.shared_asns),
+            "shared_visual_hashes": list(self.shared_visual_hashes),
             "actor_id": self.actor_id,
             "actor_notes": self.actor_notes,
             "confidence": self.confidence,
@@ -120,6 +125,7 @@ class ThreatCampaign:
         campaign.shared_nameservers = set(data.get("shared_nameservers", []))
         campaign.shared_kits = set(data.get("shared_kits", []))
         campaign.shared_asns = set(data.get("shared_asns", []))
+        campaign.shared_visual_hashes = set(data.get("shared_visual_hashes", []))
         return campaign
 
 
@@ -143,6 +149,10 @@ class ThreatCampaignManager:
     4. Same ASN/hosting provider
     5. HTML content similarity
     """
+
+
+    VISUAL_HASH_DISTANCE = 4
+    VISUAL_MATCH_SCORE = 40
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -292,6 +302,16 @@ class ThreatCampaignManager:
         except Exception:
             return None
 
+    def _phash_distance(self, left: str, right: str) -> Optional[int]:
+        if not left or not right:
+            return None
+        try:
+            left_int = int(left, 16)
+            right_int = int(right, 16)
+        except ValueError:
+            return None
+        return (left_int ^ right_int).bit_count()
+
     def find_matching_campaign(
         self,
         domain: str,
@@ -300,6 +320,7 @@ class ThreatCampaignManager:
         nameservers: List[str],
         asn: Optional[str] = None,
         html_hash: Optional[str] = None,
+        visual_hash: Optional[str] = None,
     ) -> CampaignMatch:
         """
         Find if domain matches an existing campaign.
@@ -393,6 +414,32 @@ class ThreatCampaignManager:
                 match_reasons[campaign_id].append(f"Same ASN: {asn}")
                 indicator_types[campaign_id].add("asn")
 
+        # Visual similarity matching (perceptual hash)
+        if visual_hash:
+            for campaign_id, campaign in self.campaigns.items():
+                if not campaign.shared_visual_hashes:
+                    continue
+                matched = False
+                distance = None
+                for candidate_hash in campaign.shared_visual_hashes:
+                    distance = self._phash_distance(visual_hash, candidate_hash)
+                    if distance is None:
+                        continue
+                    if distance <= self.VISUAL_HASH_DISTANCE:
+                        matched = True
+                        break
+                if not matched:
+                    continue
+                if campaign_id not in candidate_scores:
+                    candidate_scores[campaign_id] = 0
+                    match_reasons[campaign_id] = []
+                    indicator_types[campaign_id] = set()
+                candidate_scores[campaign_id] += self.VISUAL_MATCH_SCORE
+                match_reasons[campaign_id].append(
+                    f"Visual similarity (phash distance {distance})"
+                )
+                indicator_types[campaign_id].add("visual")
+
         # Find best matching campaign
         if candidate_scores:
             best_campaign_id = max(candidate_scores, key=candidate_scores.get)
@@ -433,6 +480,7 @@ class ThreatCampaignManager:
         asn: Optional[str] = None,
         ip_address: Optional[str] = None,
         html_hash: Optional[str] = None,
+        visual_hash: Optional[str] = None,
     ) -> Tuple[ThreatCampaign, bool]:
         """
         Add domain to appropriate campaign, creating new one if needed.
@@ -454,6 +502,7 @@ class ThreatCampaignManager:
             nameservers=[ns.lower() for ns in nameservers],
             asn=asn,
             html_hash=html_hash,
+            visual_hash=visual_hash,
         )
 
         # Create member
@@ -467,6 +516,7 @@ class ThreatCampaignManager:
             ip_address=ip_address,
             asn=asn,
             html_hash=html_hash,
+            visual_hash=visual_hash,
         )
 
         if match.campaign and match.match_score >= 50:
@@ -485,6 +535,8 @@ class ThreatCampaignManager:
                 campaign.shared_nameservers.update(ns.lower() for ns in nameservers)
                 if asn:
                     campaign.shared_asns.add(asn)
+                if visual_hash:
+                    campaign.shared_visual_hashes.add(visual_hash)
 
                 # Recalculate confidence based on campaign size and indicator overlap
                 campaign.confidence = self._calculate_campaign_confidence(campaign)
@@ -515,6 +567,7 @@ class ThreatCampaignManager:
                 shared_kits=set(kit_matches),
                 shared_nameservers=set(ns.lower() for ns in nameservers),
                 shared_asns={asn} if asn else set(),
+                shared_visual_hashes={visual_hash} if visual_hash else set(),
                 confidence=50.0,  # Base confidence for new campaign
             )
 
@@ -678,6 +731,8 @@ def analyze_for_campaign(
             for k in kit_matches
         ]
 
+    visual_hash = detection_result.get("visual_hash")
+
     # Get infrastructure data
     nameservers = []
     asn = None
@@ -700,6 +755,7 @@ def analyze_for_campaign(
         nameservers=nameservers,
         asn=asn,
         ip_address=ip_address,
+        visual_hash=visual_hash,
     )
 
     # Get related domains (excluding self)

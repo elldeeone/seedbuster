@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import ipaddress
 import logging
 import socket
 from datetime import datetime
 from urllib.parse import urlparse
+
+from PIL import Image
+import imagehash
 
 from ..analyzer.campaigns import analyze_for_campaign
 from ..analyzer.temporal import ScanReason
@@ -112,9 +116,12 @@ class AnalysisEngine:
 
             # Check allowlist early to skip analysis of known-good domains
             if self._is_allowlisted(hostname):
-                logger.info(f"Skipping allowlisted domain: {hostname}")
-                await self.database.update_domain_status(domain_id, DomainStatus.ALLOWLISTED)
-                return
+                if scan_reason == ScanReason.MANUAL:
+                    logger.info(f"Allowlisted domain manually rescanned: {hostname}")
+                else:
+                    logger.info(f"Skipping allowlisted domain: {hostname}")
+                    await self.database.update_domain_status(domain_id, DomainStatus.ALLOWLISTED)
+                    return
 
             dns_resolves = True
             resolved_ips: set[str] = set()
@@ -503,6 +510,14 @@ class AnalysisEngine:
                     )
 
                     # Campaign analysis - link related phishing sites
+                    visual_hash = None
+                    if browser_result and browser_result.screenshot:
+                        try:
+                            img = Image.open(io.BytesIO(browser_result.screenshot))
+                            visual_hash = str(imagehash.phash(img))
+                        except Exception as exc:
+                            logger.warning("Failed to compute visual hash for %s: %s", domain, exc)
+
                     campaign_result = analyze_for_campaign(
                         manager=self.campaign_manager,
                         domain=domain,
@@ -510,6 +525,7 @@ class AnalysisEngine:
                             "score": analysis_score,
                             "suspicious_endpoints": detection.suspicious_endpoints,
                             "kit_matches": detection.kit_matches,
+                            "visual_hash": visual_hash,
                         },
                         infrastructure={
                             "nameservers": infra_result.domain_info.nameservers if infra_result.domain_info else [],

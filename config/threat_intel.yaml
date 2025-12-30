@@ -1,5 +1,5 @@
-version: '1.21'
-last_updated: '2025-12-23'
+version: '1.25'
+last_updated: '2025-12-28'
 malicious_domains:
 - domain: walrus-app-o5hvw.ondigitalocean.app
   type: exfiltration
@@ -135,26 +135,36 @@ malicious_domains:
   confidence: high
   first_seen: '2025-12-23'
   source: manual_analysis
-  notes: >-
-    Crypto doubler scam impersonating kaspa.org. Landing page clones official
-    site with "Join Event" button leading to /kas/ page. Promises 3X returns
-    on KAS sent. Uses fake countdown timer, fake transaction history, and
-    Yandex analytics tracking. Part of coordinated campaign with kaspa.insure.
+  notes: Crypto doubler scam impersonating kaspa.org. Landing page clones official
+    site with "Join Event" button leading to /kas/ page. Promises 3X returns on KAS
+    sent. Uses fake countdown timer, fake transaction history, and Yandex analytics
+    tracking. Part of coordinated campaign with kaspa.insure.
   scammer_wallets:
-    - kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
+  - kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
 - domain: kaspa.insure
   type: crypto_doubler
   scam_type: crypto_doubler
   confidence: high
   first_seen: '2025-12-23'
   source: manual_analysis
-  notes: >-
-    Crypto doubler scam impersonating kaspa.org. Landing page clones official
-    site with "Join Event" button leading to /kas/index.html page. Promises 3X
-    returns on KAS sent. Uses fake countdown timer, fake testimonials, fake
-    transaction history. Part of coordinated campaign with kaspadrop.org.
+  notes: Crypto doubler scam impersonating kaspa.org. Landing page clones official
+    site with "Join Event" button leading to /kas/index.html page. Promises 3X returns
+    on KAS sent. Uses fake countdown timer, fake testimonials, fake transaction history.
+    Part of coordinated campaign with kaspadrop.org.
   scammer_wallets:
-    - kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
+  - kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
+- domain: kaspawalleit.webflow.io
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-28'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign'
+- domain: kaspa.aspectron.org/wallets/primitives/derivations.html
+  type: phishing_host
+  confidence: high
+  first_seen: '2025-12-28'
+  source: seedbuster_auto
+  notes: 'Auto-detected: score=100, campaign=Kaspa Stealer V1 Campaign'
 malicious_patterns:
 - pattern: /log-ip
   type: ip_logging
@@ -283,20 +293,18 @@ scammer_signatures:
   - kaspa-ldsp-dark-full-color
   - yandex.metrica
   confidence: high
-  notes: >-
-    Crypto doubler/giveaway scam campaign. Clones kaspa.org landing page with
-    "Join Event" CTA leading to fake airdrop page. Uses Divi WordPress theme,
-    Yandex analytics, fake countdown timers, and fake transaction history.
-    Promises 3X returns on sent KAS.
+  notes: Crypto doubler/giveaway scam campaign. Clones kaspa.org landing page with
+    "Join Event" CTA leading to fake airdrop page. Uses Divi WordPress theme, Yandex
+    analytics, fake countdown timers, and fake transaction history. Promises 3X returns
+    on sent KAS.
   known_frontends:
   - kaspadrop.org
   - kaspa.insure
   known_wallets:
   - kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
   - kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
-  attack_flow: >-
-    landing (kaspa.org clone) -> "Join Event" button -> /kas/ page ->
-    fake airdrop form with wallet address -> victim sends KAS -> funds stolen
+  attack_flow: landing (kaspa.org clone) -> "Join Event" button -> /kas/ page -> fake
+    airdrop form with wallet address -> victim sends KAS -> funds stolen
 kit_fingerprints:
   typos:
   - pattern: broswer
@@ -420,12 +428,12 @@ scammer_wallets:
   - address: kaspa:qqmecy7ezj06xfajpc05hg8w8eadmrnmtyw34qad44wurg5yukrvyyzde2227
     first_seen: '2025-12-25'
     associated_domains:
-      - kaspadrop.org
+    - kaspadrop.org
     scam_type: crypto_doubler
     notes: Crypto doubler scam wallet - promises 3X returns
   - address: kaspa:qzsttck4ceghlxtwc4hlqhh0r0haxqmfu26h5leku5gmzmjxhqfaq452mdk03
     first_seen: '2025-12-25'
     associated_domains:
-      - kaspa.insure
+    - kaspa.insure
     scam_type: crypto_doubler
     notes: Crypto doubler scam wallet - promises 3X returns

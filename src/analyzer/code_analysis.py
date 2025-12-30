@@ -5,6 +5,7 @@ obfuscation patterns, and phishing kit signatures.
 """
 
 import logging
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -406,6 +407,19 @@ class CodeAnalyzer:
                 scripts.append(script_content)
         return scripts
 
+    def _extract_asset_urls(self, html: str) -> list[str]:
+        """Extract asset URLs from HTML (best-effort)."""
+        if not html:
+            return []
+        urls = []
+        for match in re.finditer(r'(?:src|href)\s*=\s*["\']([^"\']+)["\']', html, re.IGNORECASE):
+            url = match.group(1).strip()
+            if not url or url.startswith('data:'):
+                continue
+            urls.append(url)
+        return urls
+
+
     def _detect_fingerprinting(self, code: str) -> FingerprintingResult:
         """Detect browser fingerprinting techniques."""
         result = FingerprintingResult()
@@ -515,31 +529,174 @@ class CodeAnalyzer:
         """Match against known phishing kit signatures."""
         matches = []
 
+        asset_urls = self._extract_asset_urls(html)
+        asset_text = "\n".join(asset_urls)
+        asset_hashes = {hashlib.sha256(url.encode()).hexdigest() for url in asset_urls}
+
+        def _collect(patterns: list[str], haystack: str, *, prefix: str = "", kit_name: str = "") -> list[str]:
+            matched = []
+            for pattern_str in patterns:
+                try:
+                    pattern = re.compile(pattern_str, re.IGNORECASE)
+                except re.error as exc:
+                    logger.warning(
+                        "Invalid kit signature regex for %s: %s (%s)",
+                        kit_name,
+                        pattern_str,
+                        exc,
+                    )
+                    continue
+                if pattern.search(haystack):
+                    matched.append(f"{prefix}{pattern_str}" if prefix else pattern_str)
+            return matched
+
+        def _collect_hashes(expected_hashes: list[str]) -> list[str]:
+            matched = []
+            for expected in expected_hashes:
+                raw = (expected or "").strip()
+                if not raw:
+                    continue
+                if raw.startswith("sha256:"):
+                    raw = raw.split(":", 1)[1]
+                if raw in asset_hashes:
+                    matched.append(f"ASSET_HASH: {expected}")
+            return matched
+
         for kit_name, signature in self._kit_signatures.items():
+            signal_groups = signature.get("signal_groups")
+            if signal_groups:
+                total_score = 0
+                group_hits = 0
+                matched_patterns = []
+                failed_required = False
+
+                for group in signal_groups:
+                    group_matches = []
+                    group_matches.extend(
+                        _collect(group.get("patterns", []), code, kit_name=kit_name)
+                    )
+                    group_matches.extend(
+                        _collect(
+                            group.get("html_patterns", []),
+                            html,
+                            prefix="HTML: ",
+                            kit_name=kit_name,
+                        )
+                    )
+                    group_matches.extend(
+                        _collect(
+                            group.get("dom_patterns", []),
+                            html,
+                            prefix="DOM: ",
+                            kit_name=kit_name,
+                        )
+                    )
+                    group_matches.extend(
+                        _collect(
+                            group.get("asset_patterns", []),
+                            asset_text,
+                            prefix="ASSET: ",
+                            kit_name=kit_name,
+                        )
+                    )
+                    group_matches.extend(
+                        _collect_hashes(group.get("asset_hashes", []))
+                    )
+
+                    seen_group = set()
+                    group_deduped = []
+                    for item in group_matches:
+                        if item in seen_group:
+                            continue
+                        group_deduped.append(item)
+                        seen_group.add(item)
+
+                    min_matches = group.get("min_matches", 1)
+                    if group.get("required") and len(group_deduped) < min_matches:
+                        failed_required = True
+                        break
+
+                    if len(group_deduped) >= min_matches:
+                        total_score += int(group.get("weight", 1))
+                        group_hits += 1
+
+                    matched_patterns.extend(group_deduped)
+
+                if failed_required:
+                    continue
+
+                seen = set()
+                deduped = []
+                for item in matched_patterns:
+                    if item in seen:
+                        continue
+                    deduped.append(item)
+                    seen.add(item)
+
+                min_score = signature.get("min_score")
+                if min_score is None:
+                    min_score = max(
+                        1,
+                        sum(int(g.get("weight", 1)) for g in signal_groups),
+                    )
+                min_groups = signature.get("min_groups", 1)
+
+                if total_score >= min_score and group_hits >= min_groups:
+                    confidence = min(total_score / (min_score + 1), 1.0)
+                    matches.append(
+                        KitSignatureMatch(
+                            kit_name=kit_name,
+                            confidence=confidence,
+                            matched_patterns=deduped,
+                        )
+                    )
+                continue
+
             matched_patterns = []
+            required_patterns = signature.get("required_patterns", [])
+            required_html_patterns = signature.get("required_html_patterns", [])
 
-            # Check code patterns
-            for pattern_str in signature.get("patterns", []):
-                pattern = re.compile(pattern_str, re.IGNORECASE)
-                if pattern.search(code):
-                    matched_patterns.append(pattern_str)
+            required_hits = _collect(required_patterns, code, kit_name=kit_name)
+            required_html_hits = _collect(
+                required_html_patterns,
+                html,
+                prefix="HTML: ",
+                kit_name=kit_name,
+            )
 
-            # Check HTML patterns
-            for pattern_str in signature.get("html_patterns", []):
-                pattern = re.compile(pattern_str, re.IGNORECASE)
-                if pattern.search(html):
-                    matched_patterns.append(f"HTML: {pattern_str}")
+            if required_patterns and not required_hits:
+                continue
+            if required_html_patterns and not required_html_hits:
+                continue
+
+            matched_patterns.extend(_collect(signature.get("patterns", []), code, kit_name=kit_name))
+            matched_patterns.extend(
+                _collect(signature.get("html_patterns", []), html, prefix="HTML: ", kit_name=kit_name)
+            )
+            matched_patterns.extend(required_hits)
+            matched_patterns.extend(required_html_hits)
+
+            seen = set()
+            deduped = []
+            for item in matched_patterns:
+                if item in seen:
+                    continue
+                deduped.append(item)
+                seen.add(item)
 
             min_matches = signature.get("min_matches", 2)
-            if len(matched_patterns) >= min_matches:
-                confidence = min(len(matched_patterns) / (min_matches + 2), 1.0)
-                matches.append(KitSignatureMatch(
-                    kit_name=kit_name,
-                    confidence=confidence,
-                    matched_patterns=matched_patterns,
-                ))
+            if len(deduped) >= min_matches:
+                confidence = min(len(deduped) / (min_matches + 2), 1.0)
+                matches.append(
+                    KitSignatureMatch(
+                        kit_name=kit_name,
+                        confidence=confidence,
+                        matched_patterns=deduped,
+                    )
+                )
 
         return matches
+
 
     def _extract_c2_endpoints(self, code: str) -> list[str]:
         """Extract potential C2/backend endpoints from code."""

@@ -135,7 +135,6 @@ class DomainInfo:
         "1984hosting", # Privacy-focused Iceland
         "orangewebsite", # Privacy-focused Iceland
         "flokinet",    # Privacy-focused
-        "cloudflare",  # Often used to mask origins
     ]
 
     SUSPICIOUS_REGISTRARS = [
@@ -230,7 +229,7 @@ class InfrastructureResult:
                     ns for ns in self.domain_info.nameservers
                     if any(p in ns.lower() for p in DomainInfo.SUSPICIOUS_NS_PROVIDERS)
                 ]
-                reasons.append(f"Privacy-focused DNS (Njalla/similar): {ns_providers[0] if ns_providers else 'detected'}")
+                reasons.append(f"Privacy-focused DNS: {ns_providers[0] if ns_providers else 'detected'}")
 
         self.risk_score = score
         self.risk_reasons = reasons

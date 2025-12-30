@@ -18,6 +18,7 @@ from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 from .temporal import TemporalAnalysis
 from .rules import DetectionRule, DetectionContext, RuleResult
 from .metrics import metrics
+from ..utils.domains import canonicalize_domain
 
 logger = logging.getLogger(__name__)
 
@@ -802,7 +803,11 @@ class PhishingDetector:
                 reasons.append(f"Scammer signature: {sig.get('name', 'unknown')}")
 
             # Check for known malicious domains in code
+            current_host = canonicalize_domain(result.domain)
             for indicator in intel.malicious_domains:
+                indicator_host = canonicalize_domain(indicator.value)
+                if indicator_host and current_host and indicator_host == current_host:
+                    continue
                 if indicator.value in result.html:
                     score += 40
                     add_suspicious(indicator.value)
@@ -921,7 +926,12 @@ class PhishingDetector:
                 score += s.get("infra_privacy_dns", 20)
                 ns_list = infra.domain_info.nameservers
                 ns_sample = ns_list[0] if ns_list else "detected"
-                reasons.append(f"INFRA: Privacy DNS (Njalla): {ns_sample}")
+                providers = [
+                    p for p in infra.domain_info.SUSPICIOUS_NS_PROVIDERS
+                    if any(p in (ns or "").lower() for ns in ns_list)
+                ]
+                provider = providers[0] if providers else "detected"
+                reasons.append(f"INFRA: Privacy DNS ({provider}): {ns_sample}")
 
         # Hosting signals
         if infra.hosting:
@@ -945,7 +955,7 @@ class PhishingDetector:
         if hasattr(browser_result, 'html_early') and browser_result.html_early:
             html_content += "\n" + browser_result.html_early
 
-        # Also include network request URLs as pseudo-code for endpoint detection
+        # Also include network request URLs for endpoint detection.
         network_urls = ""
         if browser_result.external_requests:
             network_urls = "\n".join(browser_result.external_requests)
@@ -953,8 +963,15 @@ class PhishingDetector:
         result = self._code_analyzer.analyze(
             domain=browser_result.domain,
             html=html_content,
-            javascript=network_urls,  # Network URLs can reveal C2 patterns
         )
+
+        if network_urls:
+            # Only use network URLs for endpoint extraction to avoid kit false positives.
+            extra_endpoints = self._code_analyzer._extract_c2_endpoints(network_urls)
+            if extra_endpoints:
+                merged = list({*result.c2_endpoints, *extra_endpoints})
+                result.c2_endpoints = merged[:20]
+                result.calculate_risk_score()
 
         return result
 

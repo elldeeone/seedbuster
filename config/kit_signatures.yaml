@@ -1,86 +1,193 @@
 # Phishing Kit Signatures for SeedBuster
 # Add new kit signatures here without code changes.
 #
-# Each kit has:
+# v2 schema:
+#   - signal_groups: list of groups with per-group patterns and weights
+#   - min_score: total score required to match (defaults to sum of group weights)
+#   - min_groups: minimum groups matched (defaults to 1)
+# Group fields:
 #   - patterns: Regex patterns to match in JavaScript/code
 #   - html_patterns: Regex patterns to match in HTML
-#   - min_matches: Minimum number of pattern matches to identify kit
+#   - dom_patterns: Regex patterns to match on DOM markup (HTML)
+#   - asset_patterns: Regex patterns to match against asset URLs
+#   - asset_hashes: SHA256 hashes of asset URLs (prefix with "sha256:" optional)
+#   - weight: Weight applied when group meets min_matches (default 1)
+#   - min_matches: Minimum pattern matches within the group (default 1)
+#   - required: If true, group must meet min_matches or kit won't match
 #
-# Confidence is calculated as: min(matched_count / (min_matches + 2), 1.0)
+# Legacy schema still supported:
+#   - required_patterns, required_html_patterns, patterns, html_patterns, min_matches
+#
+# Confidence is calculated as: min(total_score / (min_score + 1), 1.0)
 
 kit_signatures:
   kaspa_stealer_v1:
     description: Generic Kaspa seed stealer with DigitalOcean backend
-    patterns:
-      - "ondigitalocean\\.app"
-      - "/api/form/submit"
-      - "/log-ip"
-      - "seed.*phrase.*input"
-    html_patterns:
-      - "kaspa.*wallet"
-      - "enter.*your.*seed"
-      - "recovery.*phrase"
-    min_matches: 2
+    min_score: 4
+    min_groups: 2
+    signal_groups:
+      - name: c2_hosts
+        required: true
+        weight: 3
+        min_matches: 1
+        patterns:
+          - 'walrus-app-[a-z0-9-]+\.ondigitalocean\.app'
+          - 'whale-app-[a-z0-9-]+\.ondigitalocean\.app'
+      - name: c2_paths
+        weight: 1
+        min_matches: 1
+        patterns:
+          - '/api/form/submit'
+          - '/api/notification'
+          - '/log-ip'
+      - name: seed_ui
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - 'enter.*your.*seed'
+          - 'recovery.*phrase'
+          - 'seed.*phrase'
+      - name: kaspa_brand
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - 'kaspa.*wallet'
+          - 'kaspa.*(seed|recovery|mnemonic)'
 
   kaspa_ng_phishing:
     description: Phishing clone of legitimate kaspa-ng.org with cloaking
-    patterns:
-      - "kaspa-backend\\.vercel\\.app"  # Known C2 notification backend
-      - "whale-app.*\\.ondigitalocean\\.app"  # Known exfil backend
-      - "walrus-app.*\\.ondigitalocean\\.app"  # Known IP logging backend
-      - "kaspanet\\.one"  # Phishing redirect target
-      - "appName.*Kaspa\\.ng"  # Kit identity string
-      - "appName.*Kaspa\\.one"  # Kit identity string
-      - "/api/form/text"  # Exfil endpoint pattern
-      - "/api/notification"  # C2 notification pattern
-      - "/log-ip"  # IP logging endpoint
-    html_patterns:
-      - "noindex.*nofollow"  # SEO hiding - legitimate sites don't hide
-      - "is_datacenter|is_vpn|is_tor|is_proxy"  # Anti-bot cloaking variables
-      - "hasSeenWallet|hasVisited"  # Cloaking state tracking
-      - "broswer"  # Typo fingerprint unique to this kit
-    min_matches: 2
+    min_score: 3
+    min_groups: 2
+    signal_groups:
+      - name: c2_backend
+        required: true
+        weight: 2
+        min_matches: 1
+        patterns:
+          - 'kaspa-backend\.vercel\.app'
+          - 'walrus-app-[a-z0-9-]+\.ondigitalocean\.app'
+          - 'whale-app-[a-z0-9-]+\.ondigitalocean\.app'
+      - name: kit_identity
+        weight: 1
+        min_matches: 1
+        patterns:
+          - 'appName.*Kaspa\.ng'
+          - 'appName.*Kaspa\.one'
+        html_patterns:
+          - 'kaspa[-\s]*ng'
+          - 'kaspa\.ng'
+      - name: cloaking
+        weight: 1
+        min_matches: 1
+        patterns:
+          - 'noindex.*nofollow'
+          - 'is_datacenter|is_vpn|is_tor|is_proxy'
+          - 'hasSeenWallet|hasVisited'
+          - 'broswer'
 
   generic_seed_stealer:
     description: Generic seed phrase stealer with wallet recovery UI
     patterns:
-      - "mnemonic"
-      - "seed.*phrase"
-      - "recovery.*words?"
-      - "word\\s*#?\\d+"
+      - 'mnemonic'
+      - 'seed.*phrase'
+      - 'recovery.*words?'
+      - 'word\s*#?\d+'
     html_patterns:
       - "<input[^>]*type=['\"]text['\"][^>]*>.*seed"
-      - "wallet.*restore"
-      - "import.*wallet"
+      - 'wallet.*restore'
+      - 'import.*wallet'
     min_matches: 3
 
   metamask_phish:
     description: MetaMask wallet phishing kit
-    patterns:
-      - "metamask"
-      - "secret.*recovery.*phrase"
-      - "12.*word"
-    html_patterns:
-      - "metamask"
-      - "connect.*wallet"
-    min_matches: 2
+    min_score: 3
+    min_groups: 3
+    signal_groups:
+      - name: brand
+        required: true
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - '\bmetamask\b'
+      - name: seed_flow
+        required: true
+        weight: 1
+        min_matches: 1
+        patterns:
+          - 'secret.*recovery.*phrase'
+          - 'seed.*phrase'
+          - '12.*word'
+        html_patterns:
+          - 'secret.*recovery.*phrase'
+          - 'seed.*phrase'
+      - name: domain_refs
+        required: true
+        weight: 1
+        min_matches: 1
+        patterns:
+          - 'metamask\.io'
+        asset_patterns:
+          - 'metamask.*\.(js|css|png|svg|webp)'
+      - name: connect_flow
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - 'connect.*wallet'
+          - 'import.*wallet'
+          - 'restore.*wallet'
+        patterns:
+          - 'connect.*wallet'
 
   trust_wallet_phish:
     description: Trust Wallet phishing kit
-    patterns:
-      - "trustwallet"
-      - "trust.*wallet"
-      - "recovery.*phrase"
-    html_patterns:
-      - "trust.*wallet"
-      - "import.*wallet"
-    min_matches: 2
+    min_score: 3
+    min_groups: 3
+    signal_groups:
+      - name: brand
+        required: true
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - '\btrust\s*wallet\b'
+          - '\btrustwallet\b'
+        patterns:
+          - 'trustwallet'
+      - name: seed_flow
+        required: true
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - '(seed|recovery|mnemonic).*phrase'
+          - '(secret|backup).*phrase'
+          - '12.*word|24.*word'
+        patterns:
+          - 'trust\s*wallet.*(seed|recovery|mnemonic)'
+          - 'import.*(seed|recovery|mnemonic)'
+      - name: domain_refs
+        required: true
+        weight: 1
+        min_matches: 1
+        patterns:
+          - 'trustwallet\.com'
+          - 'trustwallet\.app'
+          - 'trustwallet\.io'
+        asset_patterns:
+          - 'trustwallet.*\.(js|css|png|svg|webp)'
+      - name: import_flow
+        weight: 1
+        min_matches: 1
+        html_patterns:
+          - 'import.*wallet'
+          - 'restore.*wallet'
+          - 'multi-coin wallet'
 
   # Template for adding new kits:
   # new_kit_name:
   #   description: Description of the phishing kit
-  #   patterns:
-  #     - "pattern_in_javascript"
-  #   html_patterns:
-  #     - "pattern_in_html"
-  #   min_matches: 2
+  #   signal_groups:
+  #     - name: brand
+  #       required: true
+  #       weight: 1
+  #       min_matches: 1
+  #       html_patterns:
+  #         - 'brand name'
