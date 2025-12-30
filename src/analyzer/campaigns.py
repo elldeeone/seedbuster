@@ -10,6 +10,7 @@ Links related phishing sites together by analyzing:
 Enables tracking of threat actor campaigns over time.
 """
 
+import difflib
 import hashlib
 import json
 import logging
@@ -18,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
+
+import tldextract
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +156,19 @@ class ThreatCampaignManager:
 
     VISUAL_HASH_DISTANCE = 4
     VISUAL_MATCH_SCORE = 40
+    DOMAIN_SIMILARITY_SCORE = 20
+    DOMAIN_SIMILARITY_THRESHOLD = 0.82
+    DOMAIN_SIMILARITY_MIN_LEN = 6
+    MULTITENANT_SUFFIXES = (
+        "webflow.io",
+        "vercel.app",
+        "netlify.app",
+        "github.io",
+        "pages.dev",
+        "web.app",
+        "herokuapp.com",
+        "azurewebsites.net",
+    )
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -213,6 +229,44 @@ class ThreatCampaignManager:
             return host
         except Exception:
             return raw.split("/")[0].strip().lower()
+
+    def _strip_domain_label(self, label: str) -> str:
+        return "".join(ch for ch in label.lower() if ch.isalnum())
+
+    def _domain_similarity_key(self, domain: str) -> str:
+        host = self._normalize_domain_key(domain)
+        if not host:
+            return ""
+        for suffix in self.MULTITENANT_SUFFIXES:
+            suffix_dot = f".{suffix}"
+            if host == suffix:
+                return ""
+            if host.endswith(suffix_dot):
+                label = host[: -len(suffix_dot)]
+                return self._strip_domain_label(label)
+        extracted = tldextract.extract(host)
+        if extracted.domain:
+            return self._strip_domain_label(extracted.domain)
+        return self._strip_domain_label(host.split(".")[0])
+
+    def _best_domain_similarity(
+        self,
+        domain_label: str,
+        campaign: ThreatCampaign,
+    ) -> Tuple[float, Optional[str]]:
+        best_ratio = 0.0
+        best_domain = None
+        for member in campaign.members:
+            other_label = self._domain_similarity_key(member.domain)
+            if not other_label:
+                continue
+            if min(len(domain_label), len(other_label)) < self.DOMAIN_SIMILARITY_MIN_LEN:
+                continue
+            ratio = difflib.SequenceMatcher(None, domain_label, other_label).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_domain = member.domain
+        return best_ratio, best_domain
 
     def _load_campaigns(self):
         """Load campaigns from disk."""
@@ -347,6 +401,7 @@ class ThreatCampaignManager:
         match_reasons: Dict[str, List[str]] = {}  # campaign_id -> reasons
         # Track which indicator TYPES matched for each campaign (require multiple)
         indicator_types: Dict[str, Set[str]] = {}  # campaign_id -> set of types
+        visual_campaigns: Set[str] = set()
 
         # Generic kits are common across many phishing sites and shouldn't
         # be strong enough alone to link domains to a campaign
@@ -383,7 +438,7 @@ class ThreatCampaignManager:
                     candidate_scores[campaign_id] += points
                     kit_type = "generic kit" if is_generic else "specific kit"
                     match_reasons[campaign_id].append(f"Same {kit_type}: {kit}")
-                    indicator_types[campaign_id].add("kit")
+                    indicator_types[campaign_id].add("kit_generic" if is_generic else "kit")
 
         # Nameserver matching (30 points for privacy DNS, 10 for regular)
         privacy_ns_patterns = ["njalla", "1984", "orangewebsite"]
@@ -401,7 +456,7 @@ class ThreatCampaignManager:
                     candidate_scores[campaign_id] += points
                     ns_type = "privacy DNS" if is_privacy else "nameserver"
                     match_reasons[campaign_id].append(f"Shared {ns_type}: {ns}")
-                    indicator_types[campaign_id].add("dns")
+                    indicator_types[campaign_id].add("dns_privacy" if is_privacy else "dns")
 
         # ASN matching (20 points)
         if asn and asn in self._asn_index:
@@ -430,6 +485,7 @@ class ThreatCampaignManager:
                         break
                 if not matched:
                     continue
+                visual_campaigns.add(campaign_id)
                 if campaign_id not in candidate_scores:
                     candidate_scores[campaign_id] = 0
                     match_reasons[campaign_id] = []
@@ -440,17 +496,57 @@ class ThreatCampaignManager:
                 )
                 indicator_types[campaign_id].add("visual")
 
+        if visual_campaigns:
+            domain_label = self._domain_similarity_key(domain)
+            if domain_label:
+                for campaign_id in visual_campaigns:
+                    campaign = self.campaigns.get(campaign_id)
+                    if not campaign:
+                        continue
+                    similarity, similar_domain = self._best_domain_similarity(
+                        domain_label,
+                        campaign,
+                    )
+                    if similarity < self.DOMAIN_SIMILARITY_THRESHOLD:
+                        continue
+                    if campaign_id not in candidate_scores:
+                        candidate_scores[campaign_id] = 0
+                        match_reasons[campaign_id] = []
+                        indicator_types[campaign_id] = set()
+                    candidate_scores[campaign_id] += self.DOMAIN_SIMILARITY_SCORE
+                    reason = "Domain similarity"
+                    if similar_domain:
+                        reason += f" ({similarity:.0%} to {similar_domain})"
+                    match_reasons[campaign_id].append(reason)
+                    indicator_types[campaign_id].add("domain")
+
         # Find best matching campaign
         if candidate_scores:
             best_campaign_id = max(candidate_scores, key=candidate_scores.get)
             best_score = candidate_scores[best_campaign_id]
-            types_matched = len(indicator_types.get(best_campaign_id, set()))
+            types = indicator_types.get(best_campaign_id, set())
+            types_matched = len(types)
 
             # Require BOTH:
             # 1. Minimum score of 50 (up from 40)
             # 2. At least 2 different indicator types matched
             #    (prevents matching on just a generic kit or just ASN)
             if best_score >= 50 and types_matched >= 2:
+                if "visual" in types:
+                    strong_types = {"backend", "kit", "dns_privacy", "domain"}
+                    if not (types & strong_types):
+                        logger.debug(
+                            "Rejected visual-only campaign match for %s: "
+                            "score=%.0f types=%s",
+                            domain,
+                            best_score,
+                            sorted(types),
+                        )
+                        return CampaignMatch(
+                            campaign=None,
+                            match_reasons=[],
+                            match_score=0,
+                        )
                 return CampaignMatch(
                     campaign=self.campaigns[best_campaign_id],
                     match_reasons=match_reasons[best_campaign_id],
