@@ -55,6 +55,7 @@ type Route =
   | { name: "campaign"; id: string };
 
 type AllowlistEntry = { domain: string; locked: boolean };
+type DomainSimilarity = { left: string; right: string; similarity: number };
 
 const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
@@ -113,6 +114,12 @@ const formatDate = (value?: string | null) => {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString();
+};
+
+const truncateHash = (value?: string | null, length = 10) => {
+  if (!value) return "";
+  if (value.length <= length) return value;
+  return `${value.slice(0, length)}...`;
 };
 
 const formatSnapshotLabel = (snapshot: SnapshotSummary) => {
@@ -650,12 +657,34 @@ const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
   );
 };
 
+const renderDomainSimilarity = (pairs?: DomainSimilarity[]) => {
+  if (!pairs || pairs.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="sb-label">Domain Similarity</div>
+      <div className="sb-breakdown">
+        {pairs.map((pair) => (
+          <div key={`${pair.left}-${pair.right}`} className="sb-breakdown-item">
+            <span className="sb-breakdown-key">{`${pair.left} ~ ${pair.right}`}</span>
+            <span className="sb-muted">{Math.round((pair.similarity || 0) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const CampaignCard = ({ campaign, related }: { campaign: Campaign | null | undefined; related: Domain[] }) => {
   if (!campaign) return null;
+  const visualHashes = (campaign.shared_visual_hashes || []).map((hash) => `phash:${truncateHash(hash, 10)}`);
+  const asnValues = (campaign.shared_asns || []).map((asn) => `AS${asn}`);
+  const domainSimilarity = campaign.shared_domain_similarity as DomainSimilarity[] | undefined;
   const indicators = [
     { label: "Backends", values: campaign.shared_backends || [] },
     { label: "Kits", values: campaign.shared_kits || [] },
     { label: "Nameservers", values: campaign.shared_nameservers || [] },
+    { label: "ASNs", values: asnValues },
+    { label: "Visual Hashes", values: visualHashes },
   ];
   return (
     <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)" }}>
@@ -705,6 +734,7 @@ const CampaignCard = ({ campaign, related }: { campaign: Campaign | null | undef
           {indicators.every((i) => !i.values || i.values.length === 0) && <div className="sb-muted">No shared indicators.</div>}
         </div>
       </div>
+      {renderDomainSimilarity(domainSimilarity)}
     </div>
   );
 };
@@ -2012,10 +2042,15 @@ export default function App() {
       );
     }
 
+    const visualHashes = (campaign.shared_visual_hashes || []).map((hash) => `phash:${truncateHash(hash, 10)}`);
+    const asnValues = (campaign.shared_asns || []).map((asn) => `AS${asn}`);
+    const domainSimilarity = campaign.shared_domain_similarity as DomainSimilarity[] | undefined;
     const indicators = [
       { label: "Backends", values: campaign.shared_backends || [] },
       { label: "Kits", values: campaign.shared_kits || [] },
       { label: "Nameservers", values: campaign.shared_nameservers || [] },
+      { label: "ASNs", values: asnValues },
+      { label: "Visual Hashes", values: visualHashes },
     ];
 
     return (
@@ -2126,6 +2161,7 @@ export default function App() {
               {indicators.every((i) => !i.values || i.values.length === 0) && <div className="sb-muted">No shared indicators.</div>}
             </div>
           </div>
+          {renderDomainSimilarity(domainSimilarity)}
 
           {/* Related Domains */}
           <div>

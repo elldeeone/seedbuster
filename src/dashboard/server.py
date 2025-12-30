@@ -10,6 +10,7 @@ import aiohttp
 import tldextract
 import asyncio
 import base64
+import difflib
 import html
 import json
 import os
@@ -37,6 +38,20 @@ EVIDENCE_HTML_CSP = (
     "form-action 'none'"
 )
 
+DOMAIN_SIMILARITY_THRESHOLD = 0.82
+DOMAIN_SIMILARITY_MIN_LEN = 6
+DOMAIN_SIMILARITY_LIMIT = 6
+MULTITENANT_SUFFIXES = (
+    "webflow.io",
+    "vercel.app",
+    "netlify.app",
+    "github.io",
+    "pages.dev",
+    "web.app",
+    "herokuapp.com",
+    "azurewebsites.net",
+)
+
 
 def _escape(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
@@ -62,6 +77,56 @@ def _extract_hostname(value: str) -> str:
     parsed = urlparse(candidate)
     hostname = (parsed.hostname or raw.split("/")[0]).strip().lower()
     return hostname.strip(".")
+
+
+def _strip_domain_label(label: str) -> str:
+    return "".join(ch for ch in label.lower() if ch.isalnum())
+
+
+def _domain_similarity_key(domain: str) -> str:
+    host = _extract_hostname(domain)
+    if not host:
+        return ""
+    for suffix in MULTITENANT_SUFFIXES:
+        suffix_dot = f".{suffix}"
+        if host == suffix:
+            return ""
+        if host.endswith(suffix_dot):
+            label = host[: -len(suffix_dot)]
+            return _strip_domain_label(label)
+    extracted = tldextract.extract(host)
+    if extracted.domain:
+        return _strip_domain_label(extracted.domain)
+    return _strip_domain_label(host.split(".")[0])
+
+
+def _domain_similarity_pairs(members: Iterable[dict], *, limit: int = DOMAIN_SIMILARITY_LIMIT) -> list[dict]:
+    labels: list[tuple[str, str]] = []
+    for member in members:
+        domain = str(member.get("domain") or "")
+        if not domain:
+            continue
+        labels.append((domain, _domain_similarity_key(domain)))
+
+    pairs: list[dict] = []
+    for idx, (left_domain, left_label) in enumerate(labels):
+        if not left_label or len(left_label) < DOMAIN_SIMILARITY_MIN_LEN:
+            continue
+        for right_domain, right_label in labels[idx + 1:]:
+            if not right_label or min(len(left_label), len(right_label)) < DOMAIN_SIMILARITY_MIN_LEN:
+                continue
+            ratio = difflib.SequenceMatcher(None, left_label, right_label).ratio()
+            if ratio >= DOMAIN_SIMILARITY_THRESHOLD:
+                pairs.append({
+                    "left": left_domain,
+                    "right": right_domain,
+                    "similarity": round(ratio, 2),
+                })
+
+    if not pairs:
+        return []
+    pairs.sort(key=lambda item: (-item["similarity"], item["left"], item["right"]))
+    return pairs[:limit]
 
 
 def _try_relative_to(path: Path, base: Path) -> Path | None:
@@ -4513,7 +4578,11 @@ class DashboardServer:
             members = campaign.get("members", [])
             for member in members:
                 if member.get("domain") == domain:
-                    return campaign
+                    payload = dict(campaign)
+                    pairs = _domain_similarity_pairs(payload.get("members", []))
+                    if pairs:
+                        payload["shared_domain_similarity"] = pairs
+                    return payload
         return None
 
     def _get_related_domains(self, domain: str, campaign: dict | None) -> list[dict]:
@@ -6820,7 +6889,12 @@ class DashboardServer:
         if not campaign:
             raise web.HTTPNotFound(text="Campaign not found")
         enriched = await self._enrich_related_domains_with_ids(campaign.get("members", []))
-        return web.json_response({"campaign": campaign, "domains": enriched})
+        campaign_payload = dict(campaign)
+        campaign_payload["members"] = enriched
+        pairs = _domain_similarity_pairs(campaign_payload.get("members", []))
+        if pairs:
+            campaign_payload["shared_domain_similarity"] = pairs
+        return web.json_response({"campaign": campaign_payload, "domains": enriched})
 
     async def _admin_api_update_notes(self, request: web.Request) -> web.Response:
         """Update operator notes for a domain (PATCH /admin/api/domains/{domain_id}/notes)."""

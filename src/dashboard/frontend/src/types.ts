@@ -198,5 +198,7 @@ export interface Campaign {
   shared_nameservers?: string[];
   shared_kits?: string[];
   shared_asns?: string[];
+  shared_visual_hashes?: string[];
+  shared_domain_similarity?: Array<{ left: string; right: string; similarity: number }>;
   [key: string]: unknown;
 }
