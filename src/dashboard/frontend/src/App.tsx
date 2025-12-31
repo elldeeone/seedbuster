@@ -143,6 +143,60 @@ const timeAgo = (value?: string | null) => {
   return `${Math.floor(hours / 24)}d ago`;
 };
 
+// LocalStorage utility for tracking user's submitted domains
+const SUBMISSIONS_STORAGE_KEY = "seedbuster_my_submissions";
+type StoredSubmission = { domain: string; submittedAt: string };
+
+const getMySubmissions = (): StoredSubmission[] => {
+  try {
+    const raw = localStorage.getItem(SUBMISSIONS_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as StoredSubmission[];
+  } catch {
+    return [];
+  }
+};
+
+const saveSubmission = (domain: string) => {
+  const submissions = getMySubmissions();
+  const normalized = domain.toLowerCase();
+  const existing = submissions.find((s) => s.domain.toLowerCase() === normalized);
+  if (existing) {
+    existing.submittedAt = new Date().toISOString();
+  } else {
+    submissions.push({ domain: normalized, submittedAt: new Date().toISOString() });
+  }
+  // Keep only last 500 submissions to avoid localStorage bloat
+  const trimmed = submissions.slice(-500);
+  try {
+    localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Storage full or unavailable - silently ignore
+  }
+};
+
+const findMySubmission = (domain: string): StoredSubmission | undefined => {
+  const normalized = domain.toLowerCase();
+  return getMySubmissions().find((s) => s.domain.toLowerCase() === normalized);
+};
+
+const extractDomainFromInput = (input: string): string => {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return "";
+  try {
+    if (trimmed.includes("://")) {
+      return new URL(trimmed).hostname;
+    }
+    // Handle inputs like "example.com/path"
+    if (trimmed.includes("/")) {
+      return trimmed.split("/")[0];
+    }
+    return trimmed;
+  } catch {
+    return trimmed;
+  }
+};
+
 const badgeClass = (value: string | null | undefined, kind: "status" | "verdict" | "report") => {
   const v = (value || "unknown").toLowerCase();
   if (kind === "report") return `sb-badge sb-badge-${v}`;
@@ -1230,6 +1284,8 @@ export default function App() {
         const message = res.message || (res.duplicate ? "Already submitted by someone else" : "Submitted for review");
         showToast(message, res.duplicate ? "info" : "success");
         setSubmitResult(res);
+        // Remember this submission locally so user knows they reported it
+        saveSubmission(res.domain);
         setSubmitValue("");
         setSubmitSource("");
         setSubmitNotes("");
@@ -1811,6 +1867,15 @@ export default function App() {
               {submitting ? "Submitting…" : canEdit ? "Submit New" : "Submit for Review"}
             </button>
           </div>
+          {!canEdit && (() => {
+            const inputDomain = extractDomainFromInput(submitValue);
+            const prev = inputDomain ? findMySubmission(inputDomain) : undefined;
+            return prev ? (
+              <div className="sb-muted" style={{ marginTop: 8, fontSize: 13 }}>
+                You reported this domain on {formatDate(prev.submittedAt)}. You can still submit again with additional info.
+              </div>
+            ) : null;
+          })()}
           {!canEdit && (
             <>
               <div className="sb-row" style={{ marginTop: 10, gap: 12, flexWrap: "wrap" }}>
