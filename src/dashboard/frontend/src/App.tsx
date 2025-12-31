@@ -361,11 +361,13 @@ const DomainTable = ({
   };
   return (
     <div className="sb-panel">
-      <div className="sb-panel-header">
-        <div>
-          <span className="sb-panel-title">Tracked Domains</span>
-          <span className="sb-muted" style={{ marginLeft: 8 }}>
-            Showing {domains.length} / {total || domains.length} (page {pageDisplay} of {totalPages})
+      <div className="sb-panel-header" style={{ flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <span className="sb-panel-title">{canEdit ? "Tracked Domains" : "Active Threats"}</span>
+          <span className="sb-muted" style={{ marginLeft: 8, display: "block" }}>
+            {canEdit
+              ? `Showing ${domains.length} / ${total || domains.length} (page ${pageDisplay} of ${totalPages})`
+              : `${domains.length} domains being monitored`}
           </span>
         </div>
         {canEdit && (
@@ -380,18 +382,25 @@ const DomainTable = ({
       </div>
 
       <div className="sb-grid" style={{ marginBottom: 12 }}>
-        <div className="col-3">
-          <label className="sb-label">Status</label>
+        <div className={canEdit ? "col-3" : "col-4"}>
+          <label className="sb-label">{canEdit ? "Status" : "Filter"}</label>
           <select
             className="sb-select"
             value={filters.status}
             onChange={(e) => onFiltersChange({ status: e.target.value, page: 1 })}
           >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s || "any"} value={s}>
-                {s === "dangerous" ? "Dangerous Only" : s ? s.toUpperCase() : "All (except allowlisted)"}
-              </option>
-            ))}
+            {canEdit ? (
+              STATUS_OPTIONS.map((s) => (
+                <option key={s || "any"} value={s}>
+                  {s === "dangerous" ? "Dangerous Only" : s ? s.toUpperCase() : "All (except allowlisted)"}
+                </option>
+              ))
+            ) : (
+              <>
+                <option value="dangerous">Active Threats</option>
+                <option value="">All Domains</option>
+              </>
+            )}
           </select>
 
         </div>
@@ -480,21 +489,23 @@ const DomainTable = ({
           <thead>
             <tr>
               <th>Domain</th>
-              <th>Status</th>
+              {canEdit && <th>Status</th>}
               <th>Verdict</th>
-              <th>D-Score</th>
-              <th>A-Score</th>
-              <th>Source</th>
-              <th>First Seen</th>
-              <th>{canEdit ? "Actions" : "View"}</th>
+              {canEdit && <th>D-Score</th>}
+              {canEdit && <th>A-Score</th>}
+              {canEdit && <th>Source</th>}
+              <th>{canEdit ? "First Seen" : "Tracked"}</th>
+              <th>{canEdit ? "Actions" : ""}</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={8}><div className="skeleton" style={{ height: 14 }} /></td></tr>
+              <tr><td colSpan={canEdit ? 8 : 4}><div className="skeleton" style={{ height: 14 }} /></td></tr>
             )}
             {!loading && domains.length === 0 && (
-              <tr><td colSpan={8} className="sb-muted" style={{ textAlign: "center", padding: 20 }}>No domains match these filters.</td></tr>
+              <tr><td colSpan={canEdit ? 8 : 4} className="sb-muted" style={{ textAlign: "center", padding: 20 }}>
+                {canEdit ? "No domains match these filters." : "No active threats currently being tracked."}
+              </td></tr>
             )}
             {!loading && domains.map((d) => {
               const busy = d.id ? actionBusy[d.id] : null;
@@ -505,10 +516,10 @@ const DomainTable = ({
               const dScore = isAllowlisted ? "—" : (d as any).domain_score ?? (d as any).score ?? "—";
               const aScore = isAllowlisted ? "—" : (d as any).analysis_score ?? "—";
               return (
-                <tr key={d.id ?? d.domain}>
+                <tr key={d.id ?? d.domain} className={!canEdit ? "clickable" : ""} onClick={!canEdit && d.id ? () => onView(d.id!) : undefined}>
                   <td className="domain-cell" title={d.domain}>
                     {d.id ? (
-                      <a className="domain-link" onClick={() => onView(d.id!)} href={`#/domains/${d.id}`}>
+                      <a className="domain-link" onClick={(e) => { e.stopPropagation(); onView(d.id!); }} href={`#/domains/${d.id}`}>
                         {d.domain}
                       </a>
                     ) : (
@@ -516,11 +527,11 @@ const DomainTable = ({
                     )}
                     <div className="sb-muted" style={{ fontSize: 12 }}>{timeAgo(d.updated_at || d.created_at)}</div>
                   </td>
-                  <td><span className={badgeClass(d.status, "status")}>{(d.status || "unknown").toUpperCase()}</span></td>
+                  {canEdit && <td><span className={badgeClass(d.status, "status")}>{(d.status || "unknown").toUpperCase()}</span></td>}
                   <td><span className={badgeClass(verdictValue, verdictKind)}>{verdictLabel}</span></td>
-                  <td><span className="sb-score">{dScore}</span></td>
-                  <td><span className="sb-score">{aScore}</span></td>
-                  <td className="sb-muted">{d.source || "—"}</td>
+                  {canEdit && <td><span className="sb-score">{dScore}</span></td>}
+                  {canEdit && <td><span className="sb-score">{aScore}</span></td>}
+                  {canEdit && <td className="sb-muted">{d.source || "—"}</td>}
                   <td className="sb-muted">{d.first_seen || "—"}</td>
                   <td>
                     {canEdit ? (
@@ -547,7 +558,7 @@ const DomainTable = ({
                         </div>
                       </details>
                     ) : (
-                      <button className="sb-btn" disabled={!d.id} onClick={() => d.id && onView(d.id)}>Open</button>
+                      <button className="sb-btn sb-btn-primary" disabled={!d.id} onClick={(e) => { e.stopPropagation(); d.id && onView(d.id); }}>Report</button>
                     )}
                   </td>
                 </tr>
@@ -747,7 +758,13 @@ export default function App() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsUpdatedAt, setStatsUpdatedAt] = useState<Date | null>(null);
 
-  const [filters, setFilters] = useState({ status: "", verdict: "", q: "", limit: 100, page: 1 });
+  const [filters, setFilters] = useState(() => ({
+    status: isAdminMode() ? "" : "dangerous",
+    verdict: "",
+    q: "",
+    limit: isAdminMode() ? 100 : 50,
+    page: 1
+  }));
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainsTotal, setDomainsTotal] = useState(0);
   const [domainsLoading, setDomainsLoading] = useState(true);
@@ -808,6 +825,16 @@ export default function App() {
 
   // Settings Popup
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Theme Toggle
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sb-theme");
+      if (saved === "light" || saved === "dark") return saved;
+      if (window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light";
+    }
+    return "dark";
+  });
   const [allowlistEntries, setAllowlistEntries] = useState<AllowlistEntry[]>([]);
   const [allowlistLoading, setAllowlistLoading] = useState(false);
   const [allowlistError, setAllowlistError] = useState<string | null>(null);
@@ -877,6 +904,16 @@ export default function App() {
     return () => clearTimeout(id);
   }, [toast]);
 
+  // Sync theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("sb-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
+
   const showToast = useCallback((message: string, tone?: "success" | "error" | "info") => {
     setToast({ message, tone });
   }, []);
@@ -901,18 +938,31 @@ export default function App() {
     setDomainsError(null);
     try {
       // Handle special "dangerous" filter mode
-      const excludeStatuses = filters.status === "dangerous"
+      const isDangerousFilter = filters.status === "dangerous";
+      const excludeStatuses = isDangerousFilter
         ? EXCLUDED_STATUSES
         : !filters.status
           ? ["allowlisted"]
           : undefined;
       const apiParams = {
         ...filters,
-        status: filters.status === "dangerous" ? "" : filters.status,
+        status: isDangerousFilter ? "" : filters.status,
         excludeStatuses,
+        // For public view "Active Threats" mode, exclude taken-down domains
+        excludeTakedowns: !isAdmin && isDangerousFilter ? true : undefined,
       };
       const res = await fetchDomains(apiParams);
-      setDomains(res.domains);
+
+      // For public view "Active Threats" mode, also client-side filter taken-down domains
+      let filteredDomains = res.domains;
+      if (!isAdmin && isDangerousFilter) {
+        filteredDomains = res.domains.filter((d: Domain) => {
+          const takedownStatus = (d.takedown_status || "").toLowerCase();
+          return takedownStatus !== "confirmed_down";
+        });
+      }
+
+      setDomains(filteredDomains);
       const total = res.total ?? res.count ?? res.domains.length;
       setDomainsTotal(total);
       const maxPage = Math.max(1, Math.ceil(total / (filters.limit || 1)));
@@ -924,7 +974,7 @@ export default function App() {
     } finally {
       setDomainsLoading(false);
     }
-  }, [filters]);
+  }, [filters, isAdmin]);
 
   const loadDomainDetail = useCallback(async (id: number, snapshotId?: string | null) => {
     setDomainDetailLoading(true);
@@ -1030,14 +1080,16 @@ export default function App() {
   }, [canEdit]);
 
   const loadAnalytics = useCallback(async () => {
-    if (!canEdit) return;
     try {
       const res = await fetchAnalytics();
       setAnalytics(res);
       setAnalyticsError(null);
     } catch (err) {
+      // For public view, silently fail - stats will show 0
+      if (canEdit) {
+        setAnalyticsError((err as Error).message || "Failed to load analytics");
+      }
       setAnalytics(null);
-      setAnalyticsError((err as Error).message || "Failed to load analytics");
     }
   }, [canEdit]);
 
@@ -1052,12 +1104,12 @@ export default function App() {
   }, [loadDomains]);
 
   useEffect(() => {
+    // Load analytics for both views (hero stats for public, full dashboard for admin)
+    loadAnalytics();
     if (canEdit) {
       loadPublicSubmissions();
-      loadAnalytics();
     } else {
       setPublicSubmissions([]);
-      setAnalytics(null);
     }
   }, [canEdit, loadPublicSubmissions, loadAnalytics]);
 
@@ -1643,8 +1695,64 @@ export default function App() {
   const domainDownloadBase = canEdit ? "/admin/domains" : "/domains";
   const campaignDownloadBase = canEdit ? "/admin/campaigns" : "/campaigns";
 
+  // Calculate takedown stats for public display
+  const takedownCount = useMemo(() => {
+    if (!analytics?.takedown?.by_status) return 0;
+    const statuses = analytics.takedown.by_status;
+    return (statuses["confirmed_down"] ?? 0) + (statuses["detected"] ?? 0);
+  }, [analytics]);
+
+  const activeThreatsCount = useMemo(() => {
+    if (!stats?.by_verdict) return 0;
+    const verdicts = stats.by_verdict;
+    return (verdicts["high"] ?? 0) + (verdicts["medium"] ?? 0);
+  }, [stats]);
+
+  const communityReportsCount = useMemo(() => {
+    return analytics?.engagement?.total_engagements ?? 0;
+  }, [analytics]);
+
+  // Public Hero Section - Two-column layout for desktop, stacked for mobile
+  const publicHero = useMemo(() => {
+    if (canEdit) return null;
+    return (
+      <section className="sb-hero">
+        <div className="sb-hero-layout">
+          <div className="sb-hero-content">
+            <h1 className="sb-hero-title">
+              Community-Powered <span className="sb-hero-title-highlight">Scam Defense</span>
+            </h1>
+            <p className="sb-hero-subtitle">
+              Track, report, and take down malicious sites targeting the Kaspa community. Every report helps protect someone from losing their funds.
+            </p>
+          </div>
+
+          <div className="sb-hero-stats">
+            <div className="sb-stat-block">
+              <span className="sb-stat-number">{takedownCount}</span>
+              <span className="sb-stat-label">Sites Taken Down</span>
+            </div>
+            <div className="sb-stat-block danger">
+              <span className="sb-stat-number">{activeThreatsCount}</span>
+              <span className="sb-stat-label">Active Threats</span>
+            </div>
+            <div className="sb-stat-block">
+              <span className="sb-stat-number">{stats?.total ?? 0}</span>
+              <span className="sb-stat-label">Domains Tracked</span>
+            </div>
+            <div className="sb-stat-block">
+              <span className="sb-stat-number">{communityReportsCount}</span>
+              <span className="sb-stat-label">Community Reports</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }, [canEdit, takedownCount, activeThreatsCount, stats?.total, communityReportsCount]);
+
+  // Admin Stats Blocks
   const statsBlocks = useMemo(() => {
-    if (!stats) return null;
+    if (!stats || !canEdit) return null;
     const refreshed = statsUpdatedAt ? `Refreshed ${timeAgo(statsUpdatedAt.toISOString())}` : "Awaiting data";
     return (
       <>
@@ -1669,18 +1777,22 @@ export default function App() {
         <div className="sb-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 12 }}>{refreshed}</div>
       </>
     );
-  }, [stats, statsUpdatedAt, setFilters]);
+  }, [stats, statsUpdatedAt, setFilters, canEdit]);
 
 
 
   const dashboardView = (
     <>
+      {/* Public Hero Section */}
+      {publicHero}
+
+      {/* Admin Stats */}
       {statsBlocks}
 
-      {/* Manual Submission - admin only */}
-      <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
-        <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)" }}>
-          <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>
+      {/* Submission Panel */}
+      <div className="sb-panel" style={{ borderColor: canEdit ? "rgba(88, 166, 255, 0.3)" : "var(--brand-glow)", marginBottom: 16 }}>
+        <div className="sb-panel-header" style={{ borderColor: canEdit ? "rgba(88, 166, 255, 0.2)" : "var(--brand-glow)" }}>
+          <span className="sb-panel-title" style={{ color: canEdit ? "var(--accent-blue)" : "var(--brand-primary)" }}>
             {canEdit ? "Manual Submission" : "Report a Suspicious Site"}
           </span>
           {canEdit && (stats?.public_submissions_pending ?? 0) > 0 && (
@@ -1965,23 +2077,23 @@ export default function App() {
 
   const campaignsView = (
     <div className="sb-panel">
-      <div className="sb-panel-header">
+      <div className="sb-panel-header" style={{ flexWrap: "wrap" }}>
         <span className="sb-panel-title">Threat Campaigns</span>
-        <div className="sb-row" style={{ gap: 12 }}>
+        <div className="sb-row" style={{ gap: 12, flexWrap: "wrap" }}>
           <input
             className="sb-input"
             placeholder="Search campaigns"
             value={campaignSearch}
             onChange={(e) => setCampaignSearch(e.target.value)}
-            style={{ width: 280 }}
+            style={{ width: "100%", maxWidth: 280, minWidth: 180 }}
           />
-          <span className="sb-muted">{filteredCampaigns.length} campaigns</span>
+          <span className="sb-muted" style={{ whiteSpace: "nowrap" }}>{filteredCampaigns.length} campaigns</span>
         </div>
       </div>
       {campaignLoading && <div className="sb-muted">Loading campaigns…</div>}
       {!campaignLoading && filteredCampaigns.length === 0 && <div className="sb-muted">No campaigns yet.</div>}
       {!campaignLoading && filteredCampaigns.length > 0 && (
-        <div className="sb-grid" style={{ gap: 16 }}>
+        <div className="sb-campaign-grid">
           {filteredCampaigns.map((c) => {
             const indicators = [
               ...(c.shared_backends || []),
@@ -1989,29 +2101,27 @@ export default function App() {
               ...(c.shared_kits || []),
             ].slice(0, 3);
             return (
-              <div key={c.campaign_id} className="col-6">
-                <div className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", margin: 0 }}>
-                  <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)" }}>
-                    <div>
-                      <div className="sb-panel-title" style={{ color: "var(--accent-purple)" }}>{c.name || c.campaign_id}</div>
-                      <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
-                    </div>
-                    <a className="sb-btn" href={`#/campaigns/${c.campaign_id}`}>View</a>
+              <div key={c.campaign_id} className="sb-panel" style={{ borderColor: "rgba(163, 113, 247, 0.3)", margin: 0 }}>
+                <div className="sb-panel-header" style={{ borderColor: "rgba(163, 113, 247, 0.2)", flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="sb-panel-title" style={{ color: "var(--accent-purple)", wordBreak: "break-word" }}>{c.name || c.campaign_id}</div>
+                    <div className="sb-muted">Members: {c.members?.length ?? 0}</div>
                   </div>
-                  <div className="sb-breakdown">
-                    {(c.members || []).slice(0, 3).map((m) => (
-                      <div key={m.domain} className="sb-breakdown-item">
-                        <span className="sb-breakdown-key">{m.domain}</span>
-                        <span className="sb-muted">{m.added_at || ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {indicators.length > 0 && (
-                    <div className="sb-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                      {indicators.map((ind) => <code key={ind as string} className="sb-code">{ind as string}</code>)}
-                    </div>
-                  )}
+                  <a className="sb-btn" href={`#/campaigns/${c.campaign_id}`}>View</a>
                 </div>
+                <div className="sb-breakdown">
+                  {(c.members || []).slice(0, 3).map((m) => (
+                    <div key={m.domain} className="sb-breakdown-item" style={{ flexWrap: "wrap" }}>
+                      <span className="sb-breakdown-key" style={{ wordBreak: "break-all" }}>{m.domain}</span>
+                      <span className="sb-muted" style={{ fontSize: 11 }}>{m.added_at || ""}</span>
+                    </div>
+                  ))}
+                </div>
+                {indicators.length > 0 && (
+                  <div className="sb-row" style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    {indicators.map((ind) => <code key={ind as string} className="sb-code" style={{ wordBreak: "break-all" }}>{ind as string}</code>)}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2663,6 +2773,22 @@ export default function App() {
         <nav className="sb-nav">
           <a className="sb-btn" href="#/">Dashboard</a>
           <a className="sb-btn" href="#/campaigns">Threat Campaigns</a>
+
+          {/* Theme Toggle */}
+          <button
+            className="sb-theme-toggle"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle theme"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              {theme === "dark" ? (
+                <path d="M8 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0v-1A.5.5 0 0 1 8 1zm0 11a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-1 0v-1a.5.5 0 0 1 .5-.5zm7-4a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1 0-1h1a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-1a.5.5 0 0 1 0-1h1A.5.5 0 0 1 3 8zm9.354-3.354a.5.5 0 0 1 0 .708l-.708.707a.5.5 0 1 1-.707-.707l.707-.708a.5.5 0 0 1 .708 0zM5.06 10.94a.5.5 0 0 1 0 .707l-.707.708a.5.5 0 1 1-.708-.708l.708-.707a.5.5 0 0 1 .707 0zM12.354 11.354a.5.5 0 0 1-.708 0l-.707-.708a.5.5 0 0 1 .707-.707l.708.707a.5.5 0 0 1 0 .708zM5.06 5.06a.5.5 0 0 1-.707 0l-.708-.707a.5.5 0 1 1 .708-.708l.707.708a.5.5 0 0 1 0 .707zM8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/>
+              ) : (
+                <path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>
+              )}
+            </svg>
+          </button>
 
           {/* Settings Cog */}
           {canEdit && (

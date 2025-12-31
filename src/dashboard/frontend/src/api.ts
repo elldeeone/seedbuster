@@ -12,9 +12,12 @@ import type {
 } from "./types";
 
 // Detect admin vs public mode based solely on server-injected flag.
+// In dev mode, check URL hash for #/admin to enable admin mode for testing.
 export function isAdminMode(): boolean {
   const flag = (window as any).__SB_MODE;
   if (flag === "admin") return true;
+  // Dev mode: allow #/admin hash to enable admin view for testing
+  if (import.meta.env.DEV && window.location.hash.startsWith("#/admin")) return true;
   return false;
 }
 

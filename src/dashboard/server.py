@@ -4731,6 +4731,7 @@ class DashboardServer:
         self._app.router.add_get("/api/domains/{domain_id}/report-options", self._public_api_report_options)
         self._app.router.add_post("/api/domains/{domain_id}/report-engagement", self._public_api_report_engagement)
         self._app.router.add_post("/api/domains/{domain_id}/rescan-request", self._public_api_rescan_request)
+        self._app.router.add_get("/api/analytics", self._public_api_analytics)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -6647,6 +6648,12 @@ class DashboardServer:
                 "message": f"Thanks. We will rescan after {remaining} more request(s).",
             }
         )
+
+    async def _public_api_analytics(self, request: web.Request) -> web.Response:
+        """Return public-safe analytics (engagement + takedown stats)."""
+        engagement = await self.database.get_engagement_summary()
+        takedown = await self.database.get_takedown_metrics()
+        return web.json_response({"engagement": engagement, "takedown": takedown})
 
     # -------------------------------------------------------------------------
     # Admin submission review APIs
