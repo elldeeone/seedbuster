@@ -987,6 +987,7 @@ class Database:
         verdict: str | None = None,
         query: str | None = None,
         exclude_statuses: list[str] | None = None,
+        exclude_takedowns: bool = False,
     ) -> list[dict]:
         """List domains with optional filters and pagination.
 
@@ -1013,6 +1014,10 @@ class Database:
             like = f"%{query.strip().lower()}%"
             where.append("(domain LIKE ? OR canonical_domain LIKE ?)")
             params.extend([like, like])
+        if exclude_takedowns:
+            where.append(
+                "(takedown_status IS NULL OR takedown_status NOT IN ('confirmed_down', 'likely_down'))"
+            )
 
         sql = "SELECT * FROM domains"
         if where:
@@ -1032,6 +1037,7 @@ class Database:
         verdict: str | None = None,
         query: str | None = None,
         exclude_statuses: list[str] | None = None,
+        exclude_takedowns: bool = False,
     ) -> int:
         """Return total domains matching filters (for pagination).
 
@@ -1055,6 +1061,10 @@ class Database:
             like = f"%{query.strip().lower()}%"
             where.append("(domain LIKE ? OR canonical_domain LIKE ?)")
             params.extend([like, like])
+        if exclude_takedowns:
+            where.append(
+                "(takedown_status IS NULL OR takedown_status NOT IN ('confirmed_down', 'likely_down'))"
+            )
 
         sql = "SELECT COUNT(*) as count FROM domains"
         if where:
