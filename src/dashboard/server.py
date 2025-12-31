@@ -4731,6 +4731,7 @@ class DashboardServer:
         self._app.router.add_get("/api/domains/{domain_id}/report-options", self._public_api_report_options)
         self._app.router.add_post("/api/domains/{domain_id}/report-engagement", self._public_api_report_engagement)
         self._app.router.add_post("/api/domains/{domain_id}/rescan-request", self._public_api_rescan_request)
+        self._app.router.add_get("/api/analytics", self._public_api_analytics)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -4962,6 +4963,11 @@ class DashboardServer:
         status = status_raw if status_param_present else "dangerous"
         verdict = (request.query.get("verdict") or "").strip().lower()
         q = (request.query.get("q") or "").strip().lower()
+        exclude_takedowns_raw = (request.query.get("exclude_takedowns") or "").strip().lower()
+        exclude_takedowns = exclude_takedowns_raw in {"1", "true", "yes"}
+        # Default public "Active Threats" view should hide taken-down domains
+        if not exclude_takedowns_raw and not status_param_present:
+            exclude_takedowns = True
         limit = _coerce_int(request.query.get("limit"), default=100, min_value=1, max_value=500)
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
@@ -4976,6 +4982,7 @@ class DashboardServer:
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
         await self._fetch_health_status()
         domains = await self.database.list_domains(
@@ -4985,6 +4992,7 @@ class DashboardServer:
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
 
         body = (
@@ -5111,6 +5119,7 @@ class DashboardServer:
         status = (request.query.get("status") or "").strip().lower()
         verdict = (request.query.get("verdict") or "").strip().lower()
         q = (request.query.get("q") or "").strip().lower()
+        exclude_takedowns = (request.query.get("exclude_takedowns") or "").strip().lower() in {"1", "true", "yes"}
         limit = _coerce_int(request.query.get("limit"), default=100, min_value=1, max_value=500)
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
@@ -5126,6 +5135,7 @@ class DashboardServer:
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
         domains = await self.database.list_domains(
             limit=limit,
@@ -5134,6 +5144,7 @@ class DashboardServer:
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
         pending_reports = await self.database.get_pending_reports()
 
@@ -5881,6 +5892,7 @@ class DashboardServer:
         verdict = (request.query.get("verdict") or "").strip().lower()
         q = (request.query.get("q") or "").strip().lower()
         exclude_statuses_raw = (request.query.get("exclude_statuses") or "").strip().lower()
+        exclude_takedowns = (request.query.get("exclude_takedowns") or "").strip().lower() in {"1", "true", "yes"}
         limit = _coerce_int(request.query.get("limit"), default=50, min_value=1, max_value=500)
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
@@ -5897,12 +5909,14 @@ class DashboardServer:
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
         total = await self.database.count_domains(
             status=status or None,
             verdict=verdict or None,
             query=q or None,
             exclude_statuses=exclude_statuses,
+            exclude_takedowns=exclude_takedowns,
         )
         return web.json_response(
             {
@@ -6647,6 +6661,12 @@ class DashboardServer:
                 "message": f"Thanks. We will rescan after {remaining} more request(s).",
             }
         )
+
+    async def _public_api_analytics(self, request: web.Request) -> web.Response:
+        """Return public-safe analytics (engagement + takedown stats)."""
+        engagement = await self.database.get_engagement_summary()
+        takedown = await self.database.get_takedown_metrics()
+        return web.json_response({"engagement": engagement, "takedown": takedown})
 
     # -------------------------------------------------------------------------
     # Admin submission review APIs

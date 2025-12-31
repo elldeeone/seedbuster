@@ -12,9 +12,12 @@ import type {
 } from "./types";
 
 // Detect admin vs public mode based solely on server-injected flag.
+// In dev mode, check URL hash for #/admin to enable admin mode for testing.
 export function isAdminMode(): boolean {
   const flag = (window as any).__SB_MODE;
   if (flag === "admin") return true;
+  // Dev mode: allow #/admin hash to enable admin view for testing
+  if (import.meta.env.DEV && window.location.hash.startsWith("#/admin")) return true;
   return false;
 }
 
@@ -86,6 +89,7 @@ export async function fetchDomains(params: {
   page?: number;
   limit?: number;
   excludeStatuses?: string[];
+  excludeTakedowns?: boolean;
 }): Promise<DomainsResponse> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
@@ -94,6 +98,7 @@ export async function fetchDomains(params: {
   if (params.excludeStatuses && params.excludeStatuses.length > 0) {
     qs.set("exclude_statuses", params.excludeStatuses.join(","));
   }
+  if (params.excludeTakedowns) qs.set("exclude_takedowns", "true");
   qs.set("page", String(params.page || 1));
   qs.set("limit", String(params.limit || 100));
   return request<DomainsResponse>(`/domains?${qs.toString()}`);
