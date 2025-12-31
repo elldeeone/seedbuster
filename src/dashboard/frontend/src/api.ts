@@ -89,6 +89,7 @@ export async function fetchDomains(params: {
   page?: number;
   limit?: number;
   excludeStatuses?: string[];
+  excludeTakedowns?: boolean;
 }): Promise<DomainsResponse> {
   const qs = new URLSearchParams();
   if (params.status) qs.set("status", params.status);
@@ -97,6 +98,7 @@ export async function fetchDomains(params: {
   if (params.excludeStatuses && params.excludeStatuses.length > 0) {
     qs.set("exclude_statuses", params.excludeStatuses.join(","));
   }
+  if (params.excludeTakedowns) qs.set("exclude_takedowns", "true");
   qs.set("page", String(params.page || 1));
   qs.set("limit", String(params.limit || 100));
   return request<DomainsResponse>(`/domains?${qs.toString()}`);
