@@ -34,6 +34,7 @@ class DomainReportData:
     backend_domains: List[str]
     api_keys_found: List[str]
     hosting_provider: Optional[str]
+    edge_provider: Optional[str]
     screenshots: List[Path]
     analysis_json: dict
     # Campaign context (if part of a campaign)
@@ -116,6 +117,7 @@ class ReportGenerator:
         """Gather all data needed for a domain report."""
         # Load analysis data
         analysis = self.evidence_store.load_analysis(domain) or {}
+        infra = analysis.get("infrastructure") or {}
 
         # Get screenshots
         screenshots = self.evidence_store.get_all_screenshot_paths(domain)
@@ -144,7 +146,8 @@ class ReportGenerator:
             suspicious_endpoints=analysis.get("suspicious_endpoints") or [],
             backend_domains=analysis.get("backend_domains") or [],
             api_keys_found=analysis.get("api_keys_found") or [],
-            hosting_provider=analysis.get("hosting_provider"),
+            hosting_provider=analysis.get("hosting_provider") or infra.get("hosting_provider"),
+            edge_provider=analysis.get("edge_provider") or infra.get("edge_provider"),
             screenshots=screenshots,
             analysis_json=analysis,
             campaign_id=campaign_id,
@@ -226,7 +229,8 @@ class ReportGenerator:
             <tr><td><strong>URL:</strong></td><td><a href="{data.url}">{data.url}</a></td></tr>
             <tr><td><strong>Detected:</strong></td><td>{data.detected_at.strftime('%Y-%m-%d %H:%M UTC')}</td></tr>
             <tr><td><strong>Confidence:</strong></td><td><span class="score score-{self._score_class(data.confidence_score)}">{data.confidence_score}%</span></td></tr>
-            <tr><td><strong>Hosting:</strong></td><td>{data.hosting_provider or 'Unknown'}</td></tr>
+            <tr><td><strong>Origin Hosting:</strong></td><td>{data.hosting_provider or 'Unknown'}</td></tr>
+            <tr><td><strong>Edge/CDN:</strong></td><td>{data.edge_provider or 'Unknown'}</td></tr>
         </table>
     </div>
 
@@ -445,7 +449,7 @@ class ReportGenerator:
                     <th>Domain</th>
                     <th>First Seen</th>
                     <th>Score</th>
-                    <th>Hosting</th>
+                    <th>Origin Hosting</th>
                     <th>Backends</th>
                 </tr>
             </thead>

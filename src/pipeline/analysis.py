@@ -323,6 +323,17 @@ class AnalysisEngine:
                         infra_ip_addresses.append(infra_result.hosting.ip_address)
                     infra_ip_addresses = sorted({ip for ip in infra_ip_addresses if ip})
 
+                    origin_provider = (
+                        infra_result.hosting.hosting_provider
+                        if infra_result and infra_result.hosting
+                        else None
+                    )
+                    edge_provider = (
+                        infra_result.hosting.edge_provider
+                        if infra_result and infra_result.hosting
+                        else None
+                    )
+
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
                         "score": analysis_score,
@@ -331,12 +342,11 @@ class AnalysisEngine:
                         "dns_resolves": True,
                         "resolved_ips": resolved_ip_list,
                         "analysis_error": error,
+                        "hosting_provider": origin_provider,
+                        "edge_provider": edge_provider,
                         "infrastructure": {
-                            "hosting_provider": (
-                                infra_result.hosting.hosting_provider
-                                if infra_result and infra_result.hosting
-                                else None
-                            ),
+                            "hosting_provider": origin_provider,
+                            "edge_provider": edge_provider,
                             "ip_addresses": infra_ip_addresses if infra_ip_addresses else None,
                             "tls_age_days": infra_result.tls.age_days if infra_result and infra_result.tls else None,
                             "domain_age_days": (
@@ -543,6 +553,9 @@ class AnalysisEngine:
                     hosting_provider = (
                         infra_result.hosting.hosting_provider if infra_result and infra_result.hosting else None
                     )
+                    edge_provider = (
+                        infra_result.hosting.edge_provider if infra_result and infra_result.hosting else None
+                    )
 
                     backend_domains: list[str] = []
                     seen_backend_hosts: set[str] = set()
@@ -577,6 +590,7 @@ class AnalysisEngine:
                         "domain": domain,
                         "final_url": getattr(browser_result, "final_url", None),
                         "hosting_provider": hosting_provider,
+                        "edge_provider": edge_provider,
                         "resolved_ips": resolved_ip_list,
                         "backend_domains": backend_domains,
                         "api_keys_found": api_keys_found,
@@ -595,11 +609,8 @@ class AnalysisEngine:
                                 if infra_result and infra_result.domain_info
                                 else None
                             ),
-                            "hosting_provider": (
-                                infra_result.hosting.hosting_provider
-                                if infra_result and infra_result.hosting
-                                else None
-                            ),
+                            "hosting_provider": hosting_provider,
+                            "edge_provider": edge_provider,
                             "ip_addresses": infra_ip_addresses if infra_ip_addresses else None,
                             "uses_privacy_dns": (
                                 infra_result.domain_info.uses_privacy_dns

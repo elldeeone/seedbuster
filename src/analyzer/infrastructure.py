@@ -22,6 +22,43 @@ from ..cache import create_asn_cache
 
 logger = logging.getLogger(__name__)
 
+EDGE_PROXY_PROVIDERS = {
+    "cloudflare",
+    "fastly",
+    "akamai",
+    "sucuri",
+    "cloudfront",
+}
+
+ORIGIN_PROVIDER_HINTS = [
+    ("cloudflare", ["pages.dev", "workers.dev"]),
+    ("digitalocean", ["ondigitalocean.app", "digitaloceanspaces.com"]),
+    ("vercel", ["vercel.app", ".vercel.com", "vercel-dns.com"]),
+    ("netlify", ["netlify.app", ".netlify.com", "netlifydns.net"]),
+    ("render", ["onrender.com", ".render.com"]),
+    ("fly_io", ["fly.dev", ".fly.dev"]),
+    ("railway", ["railway.app", ".railway.app"]),
+    ("aws", ["amazonaws.com", "cloudfront.net", ".awsstatic", "s3.amazonaws.com"]),
+    (
+        "google",
+        [
+            "appspot.com",
+            "cloudfunctions.net",
+            "googleusercontent.com",
+            "firebaseapp.com",
+            ".web.app",
+        ],
+    ),
+    ("azure", ["azurewebsites.net", "azureedge.net", "cloudapp.azure.com"]),
+    ("heroku", ["herokuapp.com", "herokudns.com"]),
+    ("fastly", ["fastly.net", ".fastly", "fastlylb.net"]),
+    ("akamai", ["akamai.net", ".akamai", "akadns.net"]),
+    ("sucuri", ["sucuri.net"]),
+    ("wix", ["wixsite.com", ".wixdns.net"]),
+    ("squarespace", ["squarespace.com", "squarespace-cdn.com"]),
+    ("shopify", ["myshopify.com", "shopify"]),
+]
+
 
 @dataclass
 class TLSCertInfo:
@@ -71,7 +108,9 @@ class HostingInfo:
     asn_name: str = ""
     asn_country: str = ""
     hosting_provider: str = ""
+    edge_provider: str = ""
     is_cloud_provider: bool = False
+    is_edge_proxy: bool = False
     is_bulletproof: bool = False
     datacenter: str = ""
     reverse_dns: str = ""
@@ -128,6 +167,7 @@ class DomainInfo:
     nameservers: list[str] = field(default_factory=list)
     mx_records: list[str] = field(default_factory=list)
     a_records: list[str] = field(default_factory=list)
+    cname_records: list[str] = field(default_factory=list)
 
     # Privacy-focused / abuse-friendly registrars and DNS providers
     SUSPICIOUS_NS_PROVIDERS = [
@@ -303,6 +343,16 @@ class InfrastructureAnalyzer:
         except Exception as e:
             logger.debug(f"Domain analysis failed for {domain}: {e}")
 
+        if result.hosting:
+            try:
+                await self._apply_origin_provider_hints(
+                    result.domain,
+                    result.hosting,
+                    result.domain_info,
+                )
+            except Exception as e:
+                logger.debug(f"Origin provider inference failed for {domain}: {e}")
+
         # Find related domains if we have IP
         if result.hosting and result.hosting.ip_address:
             try:
@@ -435,8 +485,19 @@ class InfrastructureAnalyzer:
                     result.datacenter = lookup.datacenter
                     self._asn_cache.set(ip_address, lookup)
 
-            # Identify hosting provider
-            self._identify_hosting_provider(result)
+            # Identify edge vs origin providers from ASN info
+            provider = self._identify_edge_provider(result)
+            if provider:
+                if provider in EDGE_PROXY_PROVIDERS:
+                    result.edge_provider = provider
+                    result.is_edge_proxy = True
+                else:
+                    result.hosting_provider = provider
+                    result.is_cloud_provider = True
+
+            if not result.is_edge_proxy and not result.hosting_provider:
+                result.hosting_provider = result.asn_name or result.datacenter
+            self._refresh_cloud_provider_flags(result)
 
             return result
 
@@ -508,23 +569,64 @@ class InfrastructureAnalyzer:
                 logger.debug(f"Fallback IP API lookup failed for {ip_address}: {inner}")
         return None
 
-    def _identify_hosting_provider(self, hosting: HostingInfo):
-        """Identify the hosting provider from ASN/name."""
+    def _identify_edge_provider(self, hosting: HostingInfo) -> str:
+        """Identify the likely edge/hosting provider from ASN/name."""
         combined = f"{hosting.asn_name} {hosting.datacenter} {hosting.reverse_dns}".lower()
 
         for provider, keywords in HostingInfo.CLOUD_PROVIDERS.items():
             if any(kw.lower() in combined for kw in keywords):
-                hosting.hosting_provider = provider
-                hosting.is_cloud_provider = True
-                break
+                return provider
 
-        # Check for bulletproof hosting
-        if hosting.asn in HostingInfo.BULLETPROOF_ASNS:
-            hosting.is_bulletproof = True
+        return ""
 
-        # Fallback: use ASN org if no provider identified
-        if not hosting.hosting_provider:
-            hosting.hosting_provider = hosting.asn_name or hosting.datacenter
+    @staticmethod
+    def _refresh_cloud_provider_flags(hosting: HostingInfo) -> None:
+        """Set cloud provider flags based on origin provider classification."""
+        provider = (hosting.hosting_provider or "").strip().lower()
+        hosting.is_cloud_provider = bool(provider and provider in HostingInfo.CLOUD_PROVIDERS)
+        hosting.is_bulletproof = hosting.asn in HostingInfo.BULLETPROOF_ASNS
+
+    @staticmethod
+    def _infer_provider_from_hostnames(hostnames: list[str]) -> str:
+        """Infer provider name from CNAME/host hints."""
+        haystack = " ".join([h.lower() for h in hostnames if h])
+        if not haystack:
+            return ""
+        for provider, needles in ORIGIN_PROVIDER_HINTS:
+            if any(needle in haystack for needle in needles):
+                return provider
+        return ""
+
+    async def _apply_origin_provider_hints(
+        self,
+        domain: str,
+        hosting: HostingInfo,
+        domain_info: Optional[DomainInfo],
+    ) -> None:
+        """Infer origin provider when an edge proxy is detected or origin is unknown."""
+        hostnames: list[str] = []
+        if domain_info and domain_info.cname_records:
+            hostnames.extend(domain_info.cname_records)
+
+        if not hostnames:
+            try:
+                extracted = tldextract.extract(domain)
+                registered = extracted.top_domain_under_public_suffix or domain
+                if registered and domain == registered:
+                    hostnames = await self._fetch_cname_doh(f"www.{registered}")
+            except Exception:
+                hostnames = []
+
+        origin_provider = self._infer_provider_from_hostnames(hostnames)
+        if not origin_provider:
+            self._refresh_cloud_provider_flags(hosting)
+            return
+
+        existing = (hosting.hosting_provider or "").strip().lower()
+        existing_known = existing in HostingInfo.CLOUD_PROVIDERS
+        if hosting.is_edge_proxy or not existing_known:
+            hosting.hosting_provider = origin_provider
+        self._refresh_cloud_provider_flags(hosting)
 
     async def _fetch_nameservers_doh(self, domain: str) -> list[str]:
         """Fetch nameservers via DNS-over-HTTPS (Google resolver)."""
@@ -546,6 +648,28 @@ class InfrastructureAnalyzer:
             if not raw:
                 continue
             names.append(raw.rstrip("."))
+        return names
+
+    async def _fetch_cname_doh(self, domain: str) -> list[str]:
+        """Fetch CNAME records via DNS-over-HTTPS (Google resolver)."""
+        session = await self._get_session()
+        params = {"name": domain, "type": "CNAME"}
+        async with session.get("https://dns.google/resolve", params=params) as resp:
+            if resp.status != 200:
+                return []
+            try:
+                data = await resp.json()
+            except Exception:
+                return []
+
+        answers = data.get("Answer") or []
+        names = []
+        for ans in answers:
+            if ans.get("type") != 5:
+                continue
+            raw = str(ans.get("data", "")).strip()
+            if raw:
+                names.append(raw.rstrip("."))
         return names
 
     async def _fetch_addresses_doh(self, domain: str) -> list[str]:
@@ -586,6 +710,12 @@ class InfrastructureAnalyzer:
                     result.a_records = await self._fetch_addresses_doh(domain)
                 except Exception:
                     pass
+
+            # Get CNAME records
+            try:
+                result.cname_records = await self._fetch_cname_doh(domain)
+            except Exception:
+                pass
 
             # Get MX records via DNS query
             # Note: For full implementation, use dnspython library

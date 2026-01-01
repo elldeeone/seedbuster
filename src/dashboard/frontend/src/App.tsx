@@ -2756,10 +2756,12 @@ export default function App() {
               {domainDetail.infrastructure ? (
                 <div className="sb-grid" style={{ gap: 12 }}>
                   <div className="col-4">
-                    <div className="sb-label">Hosting Provider</div>
+                    <div className="sb-label">Origin Hosting</div>
                     <div className="sb-muted" style={{ fontWeight: 600 }}>
                       {domainDetail.infrastructure.hosting_provider || "\u2014"}
                     </div>
+                    <div className="sb-label" style={{ marginTop: 6 }}>Edge/CDN</div>
+                    <div className="sb-muted">{domainDetail.infrastructure.edge_provider || "\u2014"}</div>
                     <div style={{ marginTop: 4, fontSize: 13 }}>
                       <span className="sb-label" style={{ display: "inline-block", marginRight: 6 }}>IP</span>
                       {renderInfraList(domainDetail.infrastructure.ip_addresses)}

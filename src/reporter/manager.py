@@ -747,10 +747,12 @@ class ReportManager:
         candidates = [
             evidence.hosting_provider,
             (evidence.analysis_json or {}).get("hosting_provider"),
+            (evidence.analysis_json or {}).get("edge_provider"),
         ]
         try:
             infra = (evidence.analysis_json or {}).get("infrastructure") or {}
             candidates.append(infra.get("hosting_provider"))
+            candidates.append(infra.get("edge_provider"))
             ns = infra.get("nameservers") or []
             ns_combined = " ".join(ns).lower() if isinstance(ns, list) else ""
             if ns_combined:

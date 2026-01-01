@@ -104,6 +104,7 @@ export interface DomainDetailResponse {
   snapshot?: SnapshotDetail | null;
   infrastructure?: {
     hosting_provider?: string | null;
+    edge_provider?: string | null;
     registrar?: string | null;
     nameservers?: string[] | null;
     ip_addresses?: string[] | null;

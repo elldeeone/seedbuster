@@ -3,7 +3,7 @@ Refresh infrastructure/registrar intel for all domains without full browser resc
 
 This script:
 - Loads existing analysis.json (if present) for each domain
-- Runs InfrastructureAnalyzer to enrich hosting provider, ASN, registrar, nameservers
+- Runs InfrastructureAnalyzer to enrich hosting provider, edge/CDN, ASN, registrar, nameservers
 - Writes updated analysis.json (preserving existing fields)
 
 Usage:
@@ -37,16 +37,20 @@ async def refresh_domain(
 
     try:
         existing = evidence.load_analysis(domain) or {"domain": domain}
-        existing["hosting_provider"] = (
+        origin_provider = (
             infra_result.hosting.hosting_provider if infra_result.hosting else existing.get("hosting_provider")
         )
+        edge_provider = (
+            infra_result.hosting.edge_provider if infra_result.hosting else existing.get("edge_provider")
+        )
+        existing["hosting_provider"] = origin_provider
+        existing["edge_provider"] = edge_provider
 
         infra_block = existing.get("infrastructure") or {}
         infra_block.update(
             {
-                "hosting_provider": infra_result.hosting.hosting_provider
-                if infra_result.hosting
-                else infra_block.get("hosting_provider"),
+                "hosting_provider": origin_provider,
+                "edge_provider": edge_provider,
                 "tls_age_days": infra_result.tls.age_days if infra_result.tls else infra_block.get("tls_age_days"),
                 "domain_age_days": infra_result.domain_info.age_days
                 if infra_result.domain_info

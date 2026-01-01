@@ -6008,8 +6008,11 @@ class DashboardServer:
                         ip_addresses = infra.get("ip_addresses") or data.get("resolved_ips") or []
                         if isinstance(ip_addresses, str):
                             ip_addresses = [ip_addresses] if ip_addresses else []
+                        origin_provider = infra.get("hosting_provider") or data.get("hosting_provider")
+                        edge_provider = infra.get("edge_provider") or data.get("edge_provider")
                         infrastructure = {
-                            "hosting_provider": data.get("hosting_provider") or infra.get("hosting_provider"),
+                            "hosting_provider": origin_provider,
+                            "edge_provider": edge_provider,
                             "registrar": infra.get("registrar") or data.get("registrar"),
                             "nameservers": nameservers,
                             "ip_addresses": ip_addresses,
