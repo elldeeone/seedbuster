@@ -167,6 +167,10 @@ class ReportManager:
     def _public_placeholder_for_field(name: str, label: str) -> Optional[str]:
         """Return placeholder text for identity fields in public mode."""
         key = f"{name} {label}".lower()
+        if "send email to" in key or name.strip().lower() == "to":
+            return None
+        if "email body" in key or "message" in key or "subject" in key or name.strip().lower() == "body":
+            return None
         if "email" in key:
             return "(your email)"
         if "name" in key:
