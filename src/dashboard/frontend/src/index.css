@@ -748,6 +748,7 @@ button {
   font-family: var(--font-mono);
   font-size: 28px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
   line-height: 1;
   margin-bottom: var(--space-1);

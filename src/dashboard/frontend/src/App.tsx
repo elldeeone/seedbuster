@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import "./index.css";
 import {
@@ -266,6 +266,72 @@ const Breakdown = ({ items, onSelect }: { items: Record<string, number>; onSelec
       })}
     </div>
   );
+};
+
+const AnimatedNumber = ({
+  value,
+  className,
+  durationMs = 900,
+}: {
+  value: number;
+  className?: string;
+  durationMs?: number;
+}) => {
+  const [display, setDisplay] = useState(0);
+  const displayRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const startRef = useRef<number | null>(null);
+
+  const setDisplaySafe = (next: number) => {
+    displayRef.current = next;
+    setDisplay(next);
+  };
+
+  useEffect(() => {
+    const targetRaw = Number.isFinite(value) ? value : 0;
+    const target = Math.max(0, Math.round(targetRaw));
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      setDisplaySafe(target);
+      return;
+    }
+
+    const from = displayRef.current;
+    if (from === target) {
+      setDisplaySafe(target);
+      return;
+    }
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
+    startRef.current = null;
+
+    const step = (timestamp: number) => {
+      if (startRef.current === null) startRef.current = timestamp;
+      const elapsed = timestamp - startRef.current;
+      const progress = Math.min(elapsed / durationMs, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = Math.round(from + (target - from) * eased);
+      setDisplaySafe(next);
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        rafRef.current = null;
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [value, durationMs]);
+
+  return <span className={className}>{display}</span>;
 };
 
 // Category prefixes for verdict reasons
@@ -1863,19 +1929,19 @@ export default function App() {
 
           <div className="sb-hero-stats">
             <div className="sb-stat-block">
-              <span className="sb-stat-number">{takedownCount}</span>
+              <AnimatedNumber className="sb-stat-number" value={takedownCount} />
               <span className="sb-stat-label">Sites Taken Down</span>
             </div>
             <div className="sb-stat-block danger">
-              <span className="sb-stat-number">{activeThreatsCount}</span>
+              <AnimatedNumber className="sb-stat-number" value={activeThreatsCount} />
               <span className="sb-stat-label">Active Threats</span>
             </div>
             <div className="sb-stat-block">
-              <span className="sb-stat-number">{stats?.total ?? 0}</span>
+              <AnimatedNumber className="sb-stat-number" value={stats?.total ?? 0} />
               <span className="sb-stat-label">Domains Tracked</span>
             </div>
             <div className="sb-stat-block">
-              <span className="sb-stat-number">{communityReportsCount}</span>
+              <AnimatedNumber className="sb-stat-number" value={communityReportsCount} />
               <span className="sb-stat-label">Community Reports</span>
             </div>
           </div>
