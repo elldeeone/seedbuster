@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..utils.domains import registered_domain
+
 logger = logging.getLogger(__name__)
 
 
@@ -255,7 +257,10 @@ def _rdap_endpoints_for(domain: str) -> list[str]:
 
 async def lookup_registrar_via_rdap(domain: str, *, timeout: float = 30.0, force_refresh: bool = False) -> RdapLookupResult:
     """Fetch RDAP record for a domain and extract registrar + abuse email (cached)."""
-    normalized = (domain or "").strip().lower()
+    raw = (domain or "").strip()
+    normalized = registered_domain(raw)
+    if not normalized:
+        normalized = raw.lower()
     if not normalized:
         rdap_url = "https://rdap.org/domain/"
         return RdapLookupResult(

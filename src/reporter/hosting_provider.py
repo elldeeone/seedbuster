@@ -33,7 +33,7 @@ ABUSE_FORMS: dict[str, str] = {
     "vercel": "https://vercel.com/abuse",
     "netlify": "https://www.netlify.com/abuse/",
     "heroku": "https://www.heroku.com/policy/aup-reporting",
-    "contabo": "https://contabo.com/en/company/contact/",
+    "contabo": "https://contabo.com/en/abuse/",
     "dreamhost": "https://www.dreamhost.com/company/contact/",
     "njalla": "https://njal.la/contact/",
 }
