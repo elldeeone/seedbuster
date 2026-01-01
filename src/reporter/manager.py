@@ -487,7 +487,6 @@ class ReportManager:
         from .netcraft import NetcraftReporter
         from .hosting_provider import HostingProviderReporter
         from .registrar import RegistrarReporter
-        from .apwg import APWGReporter
         from .microsoft import MicrosoftReporter
         from .resend_reporter import ResendReporter
         from .digitalocean import DigitalOceanReporter
@@ -500,10 +499,8 @@ class ReportManager:
             NamecheapReporter,
             NetlifyReporter,
             PorkbunReporter,
-            Quad9Reporter,
             TelegramReporter,
             VercelReporter,
-            OpenDNSReporter,
             GoogleDomainsReporter,
             TucowsReporter,
             NjallaReporter,
@@ -526,10 +523,6 @@ class ReportManager:
             reporter_email=self.resend_from_email or self.reporter_email or ""
         )
         logger.info("Initialized Netcraft reporter")
-
-        # APWG manual helper (opt-in via REPORT_PLATFORMS)
-        self.reporters["apwg"] = APWGReporter()
-        logger.info("Initialized APWG manual reporter")
 
         # Microsoft manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["microsoft"] = MicrosoftReporter()
@@ -579,8 +572,6 @@ class ReportManager:
         self.reporters["porkbun"] = PorkbunReporter()
         self.reporters["telegram"] = TelegramReporter()
         self.reporters["discord"] = DiscordReporter()
-        self.reporters["quad9"] = Quad9Reporter()
-        self.reporters["opendns"] = OpenDNSReporter()
         self.reporters["google_domains"] = GoogleDomainsReporter()
         self.reporters["tucows"] = TucowsReporter()
         self.reporters["njalla"] = NjallaReporter()

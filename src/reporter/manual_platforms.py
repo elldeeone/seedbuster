@@ -490,32 +490,6 @@ class DiscordReporter(_SimpleFormReporter):
         )
 
 
-class Quad9Reporter(_SimpleFormReporter):
-    def __init__(self):
-        super().__init__(
-            platform_name="quad9",
-            form_url="https://quad9.net/contact/",
-            reason="Quad9 threat blocking request",
-            notes=[
-                "Quad9 blocks malicious domains at the DNS layer; include the full domain.",
-                "Describe the threat type as phishing; add any supporting evidence.",
-            ],
-        )
-
-
-class OpenDNSReporter(_SimpleEmailReporter):
-    def __init__(self):
-        super().__init__(
-            platform_name="opendns",
-            email="support@opendns.com",
-            subject_prefix="Phishing report:",
-            notes=[
-                "OpenDNS/Cisco Umbrella blocks domains/IPs at the resolver layer.",
-                "Include full domain/URL and any observed hosting details.",
-            ],
-        )
-
-
 class GoogleDomainsReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(

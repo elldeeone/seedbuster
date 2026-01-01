@@ -24,7 +24,6 @@ from .digitalocean import DigitalOceanReporter
 from .google_safebrowsing import GoogleSafeBrowsingReporter
 from .hosting_provider import HostingProviderReporter
 from .registrar import RegistrarReporter
-from .apwg import APWGReporter
 from .microsoft import MicrosoftReporter
 from .manual_platforms import (
     AWSReporter,
@@ -36,9 +35,7 @@ from .manual_platforms import (
     GoDaddyReporter,
     NamecheapReporter,
     NetlifyReporter,
-    OpenDNSReporter,
     PorkbunReporter,
-    Quad9Reporter,
     RailwayReporter,
     RenderReporter,
     TelegramReporter,
@@ -72,7 +69,6 @@ __all__ = [
     "GoogleSafeBrowsingReporter",
     "HostingProviderReporter",
     "RegistrarReporter",
-    "APWGReporter",
     "MicrosoftReporter",
     "AWSReporter",
     "AzureReporter",
@@ -83,9 +79,7 @@ __all__ = [
     "GoDaddyReporter",
     "NamecheapReporter",
     "NetlifyReporter",
-    "OpenDNSReporter",
     "PorkbunReporter",
-    "Quad9Reporter",
     "RailwayReporter",
     "RenderReporter",
     "TelegramReporter",
