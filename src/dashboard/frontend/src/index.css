@@ -1224,6 +1224,16 @@ button {
   color: var(--color-cyan);
 }
 
+.sb-badge-confirmed_down {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.sb-badge-likely_down {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
 .sb-badge-dangerous,
 .sb-badge-failed {
   background: var(--color-danger-subtle);

@@ -241,6 +241,17 @@ const badgeClass = (value: string | null | undefined, kind: "status" | "verdict"
   return `sb-badge sb-badge-${v}`;
 };
 
+const renderTakedownBadge = (domain: Domain) => {
+  const takedown = (domain.takedown_status || "").toLowerCase();
+  if (takedown === "confirmed_down") {
+    return <span className={badgeClass("confirmed_down", "status")}>DOWN</span>;
+  }
+  if (takedown === "likely_down") {
+    return <span className={badgeClass("likely_down", "status")}>LIKELY DOWN</span>;
+  }
+  return null;
+};
+
 const Toast = ({ message, tone }: { message: string; tone?: "success" | "error" | "info" }) => (
   <div className={`sb-toast ${tone || "info"}`}>{message}</div>
 );
@@ -881,7 +892,10 @@ const CampaignCard = ({ campaign, related }: { campaign: Campaign | null | undef
             <div key={rd.id || rd.domain} className="sb-breakdown-item" style={{ cursor: rd.id ? "pointer" : "default" }}
               onClick={() => rd.id && (window.location.hash = `#/domains/${rd.id}`)}>
               <span className="sb-breakdown-key">{rd.domain}</span>
-              <span className="sb-score">{(rd as any).score ?? ""}</span>
+              <div className="sb-row" style={{ gap: 8 }}>
+                {renderTakedownBadge(rd)}
+                <span className="sb-score">{(rd as any).score ?? ""}</span>
+              </div>
             </div>
           ))}
           {(!related || related.length === 0) && <div className="sb-muted">No other domains yet.</div>}
@@ -2494,6 +2508,7 @@ export default function App() {
                   onClick={() => rd.id && (window.location.hash = `#/domains/${rd.id}`)}>
                   <span className="sb-breakdown-key">{rd.domain}</span>
                   <div className="sb-row" style={{ gap: 8 }}>
+                    {renderTakedownBadge(rd)}
                     <span className={badgeClass(rd.status, "status")}>{(rd.status || "").toUpperCase()}</span>
                     <span className="sb-score">{(rd as any).score ?? ""}</span>
                   </div>
