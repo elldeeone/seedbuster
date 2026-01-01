@@ -87,6 +87,27 @@ class EvidenceStore:
             return "unknown"
         return "".join(c if c.isalnum() or c in "._-" else "_" for c in raw)
 
+    @staticmethod
+    def _sanitize_snapshot_id(snapshot_id: str | None) -> str | None:
+        raw = (snapshot_id or "").strip()
+        if not raw:
+            return None
+        safe = "".join(c for c in raw if c.isalnum() or c in "._-")
+        if safe != raw:
+            return None
+        return safe
+
+    def _resolve_snapshot_dir(self, domain_dir: Path, snapshot_id: str | None) -> Path:
+        safe_snapshot = self._sanitize_snapshot_id(snapshot_id)
+        if not safe_snapshot or safe_snapshot == "latest":
+            return domain_dir
+        analysis_path = domain_dir / "analysis.json"
+        if analysis_path.exists():
+            current_id = self._read_scan_id(analysis_path)
+            if current_id and safe_snapshot == current_id:
+                return domain_dir
+        return domain_dir / "runs" / safe_snapshot
+
     def get_report_instructions_path(self, domain: str, platform: str) -> Path:
         """Get path for a manual report instruction file for a platform."""
         domain_dir = self.get_domain_dir(domain)
@@ -209,18 +230,22 @@ class EvidenceStore:
         try:
             data = json.loads(analysis_path.read_text(encoding="utf-8"))
         except Exception:
-            return None
+            data = {}
         scan_id = (data.get("scan_id") or "").strip()
         if scan_id:
             return self._safe_filename_component(scan_id)
         saved_at = (data.get("saved_at") or "").strip()
-        if not saved_at:
-            return None
-        try:
-            parsed = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        return self._format_scan_id(parsed)
+        if saved_at:
+            try:
+                parsed = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
+                return self._format_scan_id(parsed)
+            except ValueError:
+                pass
+        if analysis_path.exists():
+            return self._format_scan_id(
+                datetime.fromtimestamp(analysis_path.stat().st_mtime, tz=timezone.utc)
+            )
+        return None
 
     @staticmethod
     def _ensure_unique_scan_id(base_dir: Path, scan_id: str) -> str:
@@ -231,18 +256,21 @@ class EvidenceStore:
             counter += 1
         return candidate
 
-    def get_evidence_path(self, domain: str) -> Path:
-        """Get the evidence directory path for a domain."""
-        return self.get_domain_dir(domain)
+    def get_evidence_path(self, domain: str, snapshot_id: Optional[str] = None) -> Path:
+        """Get the evidence directory path for a domain (optionally for a snapshot)."""
+        domain_dir = self.get_domain_dir(domain)
+        return self._resolve_snapshot_dir(domain_dir, snapshot_id)
 
-    def get_screenshot_path(self, domain: str) -> Optional[Path]:
+    def get_screenshot_path(self, domain: str, snapshot_id: Optional[str] = None) -> Optional[Path]:
         """Get screenshot path if it exists."""
-        path = self.get_domain_dir(domain) / "screenshot.png"
+        path = self.get_evidence_path(domain, snapshot_id) / "screenshot.png"
         return path if path.exists() else None
 
-    def get_all_screenshot_paths(self, domain: str) -> list[Path]:
+    def get_all_screenshot_paths(
+        self, domain: str, snapshot_id: Optional[str] = None
+    ) -> list[Path]:
         """Get all screenshot paths for a domain, prioritizing suspicious findings."""
-        domain_dir = self.get_domain_dir(domain)
+        domain_dir = self.get_evidence_path(domain, snapshot_id)
         screenshots = []
 
         # Priority order: seedform > suspicious > early > main > other exploration
@@ -275,14 +303,14 @@ class EvidenceStore:
 
         return screenshots
 
-    def get_analysis_path(self, domain: str) -> Optional[Path]:
+    def get_analysis_path(self, domain: str, snapshot_id: Optional[str] = None) -> Optional[Path]:
         """Get analysis JSON path if it exists."""
-        path = self.get_domain_dir(domain) / "analysis.json"
+        path = self.get_evidence_path(domain, snapshot_id) / "analysis.json"
         return path if path.exists() else None
 
-    def load_analysis(self, domain: str) -> Optional[dict]:
+    def load_analysis(self, domain: str, snapshot_id: Optional[str] = None) -> Optional[dict]:
         """Load analysis results for a domain."""
-        path = self.get_analysis_path(domain)
+        path = self.get_analysis_path(domain, snapshot_id)
         if path:
             return json.loads(path.read_text(encoding="utf-8"))
         return None

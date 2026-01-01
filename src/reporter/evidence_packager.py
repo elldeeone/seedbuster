@@ -85,7 +85,10 @@ class EvidencePackager:
     # -------------------------------------------------------------------------
 
     async def prepare_domain_submission(
-        self, domain: str, domain_id: Optional[int] = None
+        self,
+        domain: str,
+        domain_id: Optional[int] = None,
+        snapshot_id: Optional[str] = None,
     ) -> SubmissionAttachments:
         """
         Prepare attachments for submitting a single domain report.
@@ -94,17 +97,21 @@ class EvidencePackager:
         Does NOT create a ZIP file.
         """
         # Generate HTML report (always)
-        html_path = await self.report_generator.generate_domain_html(domain, domain_id)
+        html_path = await self.report_generator.generate_domain_html(
+            domain, domain_id, snapshot_id
+        )
 
         # Try to generate PDF (may fail if weasyprint not installed)
         pdf_path = None
         try:
-            pdf_path = await self.report_generator.generate_domain_pdf(domain, domain_id)
+            pdf_path = await self.report_generator.generate_domain_pdf(
+                domain, domain_id, snapshot_id
+            )
         except ImportError:
             logger.info("PDF generation unavailable - using HTML only")
 
         # Get screenshots
-        screenshots = self.evidence_store.get_all_screenshot_paths(domain)
+        screenshots = self.evidence_store.get_all_screenshot_paths(domain, snapshot_id)
         best_screenshot = screenshots[0] if screenshots else None
 
         # Get campaign context
@@ -180,6 +187,7 @@ class EvidencePackager:
         domain: str,
         domain_id: Optional[int] = None,
         include_report: bool = True,
+        snapshot_id: Optional[str] = None,
     ) -> Path:
         """
         Create a ZIP archive of all evidence for a single domain.
@@ -193,7 +201,7 @@ class EvidencePackager:
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy evidence files
-        evidence_dir = self.evidence_store.get_evidence_path(domain)
+        evidence_dir = self.evidence_store.get_evidence_path(domain, snapshot_id)
         if evidence_dir.exists():
             # Copy screenshots
             screenshots_dir = archive_dir / "screenshots"
@@ -224,11 +232,15 @@ class EvidencePackager:
         # Generate and include report
         if include_report:
             try:
-                html_path = await self.report_generator.generate_domain_html(domain, domain_id)
+                html_path = await self.report_generator.generate_domain_html(
+                    domain, domain_id, snapshot_id
+                )
                 shutil.copy2(html_path, archive_dir / "report.html")
 
                 try:
-                    pdf_path = await self.report_generator.generate_domain_pdf(domain, domain_id)
+                    pdf_path = await self.report_generator.generate_domain_pdf(
+                        domain, domain_id, snapshot_id
+                    )
                     shutil.copy2(pdf_path, archive_dir / "report.pdf")
                 except ImportError:
                     pass

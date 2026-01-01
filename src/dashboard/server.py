@@ -4290,8 +4290,8 @@ class DashboardServer:
         get_platform_info: Callable[[], dict[str, dict]] | None = None,
         get_manual_report_options: Callable[[int, str, Optional[list[str]]], object] | None = None,
         # New callbacks for enhanced reporting
-        generate_domain_pdf_callback: Callable[[str, int | None], Path | None] | None = None,
-        generate_domain_package_callback: Callable[[str, int | None], Path | None] | None = None,
+        generate_domain_pdf_callback: Callable[[str, int | None, str | None], Path | None] | None = None,
+        generate_domain_package_callback: Callable[[str, int | None, str | None], Path | None] | None = None,
         preview_domain_report_callback: Callable[[int, str], dict] | None = None,
         generate_campaign_pdf_callback: Callable[[str], Path | None] | None = None,
         generate_campaign_package_callback: Callable[[str], Path | None] | None = None,
@@ -5037,7 +5037,7 @@ class DashboardServer:
         screenshots: list[Path] = []
         instruction_files: list[Path] = []
         if not is_allowlisted:
-            snapshots, latest_id = self._list_snapshots(domain_dir)
+            _snapshots, latest_id = self._list_snapshots(domain_dir)
             snapshot_dir, resolved_snapshot_id, is_latest = self._resolve_snapshot_dir(
                 domain_dir, snapshot_param, latest_id
             )
@@ -7000,8 +7000,19 @@ class DashboardServer:
             raise web.HTTPServiceUnavailable(text="PDF generation not configured.")
 
         domain_name = str(domain.get("domain") or "")
+        snapshot_id = None
+        snapshot_param = (request.query.get("snapshot") or "").strip()
+        if snapshot_param:
+            domain_dir = self.evidence_dir / _domain_dir_name(domain_name)
+            _snapshots, latest_id = self._list_snapshots(domain_dir)
+            snapshot_dir, resolved_snapshot_id, _is_latest = self._resolve_snapshot_dir(
+                domain_dir, snapshot_param, latest_id
+            )
+            if snapshot_param and not snapshot_dir:
+                raise web.HTTPNotFound(text="Snapshot not found.")
+            snapshot_id = resolved_snapshot_id or latest_id
         try:
-            report_path = await self.generate_domain_pdf_callback(domain_name, did)
+            report_path = await self.generate_domain_pdf_callback(domain_name, did, snapshot_id)
             if not report_path or not report_path.exists():
                 raise web.HTTPServiceUnavailable(text="PDF generation failed or unavailable.")
 
@@ -7027,8 +7038,19 @@ class DashboardServer:
             raise web.HTTPServiceUnavailable(text="Package generation not configured.")
 
         domain_name = str(domain.get("domain") or "")
+        snapshot_id = None
+        snapshot_param = (request.query.get("snapshot") or "").strip()
+        if snapshot_param:
+            domain_dir = self.evidence_dir / _domain_dir_name(domain_name)
+            snapshots, latest_id = self._list_snapshots(domain_dir)
+            snapshot_dir, resolved_snapshot_id, _is_latest = self._resolve_snapshot_dir(
+                domain_dir, snapshot_param, latest_id
+            )
+            if snapshot_param and not snapshot_dir:
+                raise web.HTTPNotFound(text="Snapshot not found.")
+            snapshot_id = resolved_snapshot_id or latest_id
         try:
-            archive_path = await self.generate_domain_package_callback(domain_name, did)
+            archive_path = await self.generate_domain_package_callback(domain_name, did, snapshot_id)
             if not archive_path or not archive_path.exists():
                 raise web.HTTPServiceUnavailable(text="Archive generation failed.")
 

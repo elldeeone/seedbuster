@@ -960,6 +960,9 @@ export default function App() {
   const resolvedSnapshotId = snapshotSelection && snapshotList.some((s) => s.id === snapshotSelection)
     ? snapshotSelection
     : snapshotDetail?.id || snapshotList.find((s) => s.is_latest)?.id || snapshotList[0]?.id || null;
+  const downloadSnapshotQuery = resolvedSnapshotId
+    ? `?snapshot=${encodeURIComponent(resolvedSnapshotId)}`
+    : "";
   const resolvedSnapshot = snapshotList.find((s) => s.id === resolvedSnapshotId) || snapshotDetail || null;
   const snapshotIsLatest = snapshotDetail?.is_latest ?? resolvedSnapshot?.is_latest ?? true;
   const snapshotScore = snapshotDetail?.score ?? domainDetail?.domain.analysis_score ?? (domainDetail?.domain as any)?.score ?? null;
@@ -2620,15 +2623,15 @@ export default function App() {
               <div className="sb-row" style={{ flexWrap: "wrap", marginTop: 16, gap: 8 }}>
                 {domainDetail.domain.id && (
                   <>
-                  <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/pdf`} target="_blank" rel="noreferrer">Download PDF</a>
-                  <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/package`} target="_blank" rel="noreferrer">Download Package</a>
+                    <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/pdf${downloadSnapshotQuery}`} target="_blank" rel="noreferrer">Download PDF</a>
+                    <a className="sb-btn" href={`${domainDownloadBase}/${domainDetail.domain.id}/package${downloadSnapshotQuery}`} target="_blank" rel="noreferrer">Download Package</a>
                   </>
                 )}
                 {domainDetail.reports && domainDetail.reports.length > 0 && (
                   <span className="sb-muted">
                     Next report attempt: {nextReportAttempt || "\u2014"}
-                </span>
-              )}
+                  </span>
+                )}
             </div>
           </div>
 

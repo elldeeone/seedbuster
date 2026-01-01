@@ -129,14 +129,26 @@ async def run_dashboard() -> None:
     # New callbacks for PDF/evidence generation
     # -------------------------------------------------------------------------
 
-    async def generate_domain_pdf_callback(domain: str, domain_id: int | None) -> Path | None:
+    async def generate_domain_pdf_callback(
+        domain: str,
+        domain_id: int | None,
+        snapshot_id: str | None = None,
+    ) -> Path | None:
         """Generate PDF report for a domain."""
-        attachments = await evidence_packager.prepare_domain_submission(domain, domain_id)
+        attachments = await evidence_packager.prepare_domain_submission(
+            domain, domain_id, snapshot_id
+        )
         return attachments.pdf_path or attachments.html_path
 
-    async def generate_domain_package_callback(domain: str, domain_id: int | None) -> Path | None:
+    async def generate_domain_package_callback(
+        domain: str,
+        domain_id: int | None,
+        snapshot_id: str | None = None,
+    ) -> Path | None:
         """Generate evidence archive for a domain."""
-        return await evidence_packager.create_domain_archive(domain, domain_id)
+        return await evidence_packager.create_domain_archive(
+            domain, domain_id, snapshot_id=snapshot_id
+        )
 
     async def preview_domain_report_callback(domain_id: int, domain: str) -> dict:
         """Send dry-run reports to operator's email."""

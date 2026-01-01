@@ -84,9 +84,14 @@ class ReportGenerator:
     # Single Domain Reports
     # -------------------------------------------------------------------------
 
-    async def generate_domain_html(self, domain: str, domain_id: Optional[int] = None) -> Path:
+    async def generate_domain_html(
+        self,
+        domain: str,
+        domain_id: Optional[int] = None,
+        snapshot_id: Optional[str] = None,
+    ) -> Path:
         """Generate HTML report for a single domain."""
-        data = await self._gather_domain_data(domain, domain_id)
+        data = await self._gather_domain_data(domain, domain_id, snapshot_id)
         html = self._render_domain_html(data)
 
         output_path = self.output_dir / f"report_{self._safe_filename(domain)}.html"
@@ -94,9 +99,14 @@ class ReportGenerator:
         logger.info(f"Generated HTML report: {output_path}")
         return output_path
 
-    async def generate_domain_pdf(self, domain: str, domain_id: Optional[int] = None) -> Path:
+    async def generate_domain_pdf(
+        self,
+        domain: str,
+        domain_id: Optional[int] = None,
+        snapshot_id: Optional[str] = None,
+    ) -> Path:
         """Generate PDF report for a single domain."""
-        html_path = await self.generate_domain_html(domain, domain_id)
+        html_path = await self.generate_domain_html(domain, domain_id, snapshot_id)
         pdf_path = html_path.with_suffix(".pdf")
 
         try:
@@ -112,15 +122,18 @@ class ReportGenerator:
             )
 
     async def _gather_domain_data(
-        self, domain: str, domain_id: Optional[int] = None
+        self,
+        domain: str,
+        domain_id: Optional[int] = None,
+        snapshot_id: Optional[str] = None,
     ) -> DomainReportData:
         """Gather all data needed for a domain report."""
         # Load analysis data
-        analysis = self.evidence_store.load_analysis(domain) or {}
+        analysis = self.evidence_store.load_analysis(domain, snapshot_id) or {}
         infra = analysis.get("infrastructure") or {}
 
         # Get screenshots
-        screenshots = self.evidence_store.get_all_screenshot_paths(domain)
+        screenshots = self.evidence_store.get_all_screenshot_paths(domain, snapshot_id)
 
         # Get campaign context
         campaign = self.campaign_manager.get_campaign_for_domain(domain)
