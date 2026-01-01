@@ -1835,7 +1835,9 @@ export default function App() {
   }, [analytics]);
 
   const activeThreatsCount = useMemo(() => {
-    if (!stats?.by_verdict) return 0;
+    if (!stats) return 0;
+    if (typeof stats.active_threats === "number") return stats.active_threats;
+    if (!stats.by_verdict) return 0;
     const verdicts = stats.by_verdict;
     return (verdicts["high"] ?? 0) + (verdicts["medium"] ?? 0);
   }, [stats]);

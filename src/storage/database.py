@@ -1315,6 +1315,17 @@ class Database:
             verdict_counts = {row["verdict"]: row["count"] for row in await cursor.fetchall()}
             stats["by_verdict"] = verdict_counts
 
+            # Public "active threats" count (matches dangerous filter)
+            cursor = await self._connection.execute(
+                """
+                SELECT COUNT(*) as count
+                FROM domains
+                WHERE status NOT IN ('watchlist', 'false_positive', 'allowlisted')
+                  AND (takedown_status IS NULL OR takedown_status NOT IN ('confirmed_down', 'likely_down'))
+                """
+            )
+            stats["active_threats"] = (await cursor.fetchone())["count"]
+
             # Total domains
             cursor = await self._connection.execute("SELECT COUNT(*) as count FROM domains")
             stats["total"] = (await cursor.fetchone())["count"]
