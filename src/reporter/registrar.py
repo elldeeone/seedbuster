@@ -8,6 +8,8 @@ and a copy/paste-ready email template.
 import logging
 from typing import Optional
 
+from ..utils.domains import registered_domain
+
 from .base import (
     BaseReporter,
     ManualSubmissionData,
@@ -42,7 +44,7 @@ REGISTRAR_ABUSE_EMAILS: dict[str, str] = {
 }
 
 REGISTRAR_ABUSE_FORMS: dict[str, str] = {
-    # Some registrars prefer web forms; keep this sparse unless confirmed.
+    "dynadot": "https://www.dynadot.com/report-abuse",
 }
 
 
@@ -76,6 +78,106 @@ class RegistrarReporter(BaseReporter):
                 return dest
         return None
 
+    def _reporter_email_address(self) -> str:
+        raw = (self.reporter_email or "").strip()
+        if "<" in raw and ">" in raw:
+            raw = raw.split("<", 1)[1].split(">", 1)[0].strip()
+        return raw
+
+    def _reporter_name(self) -> str:
+        raw = (self.reporter_email or "").strip()
+        if "<" in raw and ">" in raw:
+            return raw.split("<", 1)[0].strip().strip('"')
+        return ""
+
+    @staticmethod
+    def _is_dynadot(registrar_name: Optional[str], abuse_form: Optional[str]) -> bool:
+        if abuse_form and "dynadot.com/report-abuse" in abuse_form:
+            return True
+        return "dynadot" in (registrar_name or "").lower()
+
+    def _build_dynadot_submission(
+        self,
+        evidence: ReportEvidence,
+        *,
+        registrar_name: Optional[str],
+        abuse_form: str,
+    ) -> ManualSubmissionData:
+        reporter_email = self._reporter_email_address() or "(fill manually)"
+        reporter_name = self._reporter_name() or "(fill manually)"
+        domain_value = registered_domain(evidence.domain) or (evidence.domain or "").strip().lower()
+        comments = evidence.to_summary().strip()
+
+        fields: list[ManualSubmissionField] = [
+            ManualSubmissionField(
+                name="abuse_type",
+                label="Abuse Type",
+                value="Phishing",
+            ),
+            ManualSubmissionField(
+                name="full_name",
+                label="Full Name",
+                value=reporter_name,
+            ),
+            ManualSubmissionField(
+                name="email",
+                label="Email Address",
+                value=reporter_email,
+            ),
+            ManualSubmissionField(
+                name="confirm_email",
+                label="Confirm Email Address",
+                value=reporter_email,
+            ),
+            ManualSubmissionField(
+                name="phone",
+                label="Phone Number (Optional)",
+                value="",
+            ),
+            ManualSubmissionField(
+                name="domain",
+                label="Domain Name Involved",
+                value=domain_value,
+            ),
+            ManualSubmissionField(
+                name="official_site",
+                label="Official Website",
+                value="N/A",
+            ),
+            ManualSubmissionField(
+                name="vpn_proxy",
+                label="VPN/Proxy location(s) or user-agent(s)",
+                value="N/A",
+            ),
+            ManualSubmissionField(
+                name="full_path",
+                label="Full Domain Path",
+                value=evidence.url,
+            ),
+            ManualSubmissionField(
+                name="comments",
+                label="Comments",
+                value=comments,
+                multiline=True,
+            ),
+        ]
+
+        notes = [
+            "Select 'Phishing' as the abuse type (use 'Spam Abuse' if the report is email-based).",
+            "Only one domain allowed; use the registrable domain.",
+            "Enter 'N/A' for fields that do not apply.",
+            "Attach screenshots/HTML evidence if available.",
+        ]
+        if registrar_name:
+            notes.insert(0, f"Registrar: {registrar_name}")
+
+        return ManualSubmissionData(
+            form_url=abuse_form,
+            reason=f"Registrar: {registrar_name or 'Dynadot'}",
+            fields=fields,
+            notes=notes,
+        )
+
     def _build_manual_submission(
         self,
         evidence: ReportEvidence,
@@ -84,6 +186,13 @@ class RegistrarReporter(BaseReporter):
         abuse_email: Optional[str],
         abuse_form: Optional[str],
     ) -> ManualSubmissionData:
+        if abuse_form and self._is_dynadot(registrar_name, abuse_form):
+            return self._build_dynadot_submission(
+                evidence,
+                registrar_name=registrar_name,
+                abuse_form=abuse_form,
+            )
+
         template = ReportTemplates.registrar(
             evidence,
             reporter_email=self.reporter_email or "your-email@example.com",
