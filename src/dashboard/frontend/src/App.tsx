@@ -1823,7 +1823,7 @@ export default function App() {
               Community-Powered <span className="sb-hero-title-highlight">Scam Defense</span>
             </h1>
             <p className="sb-hero-subtitle">
-              Track, report, and take down malicious sites targeting the Kaspa community. Every report helps protect someone from losing their funds.
+              Track, report, and take down malicious sites targeting the crypto community. Every report helps protect someone from losing their funds.
             </p>
           </div>
 
@@ -3036,7 +3036,7 @@ export default function App() {
       {content}
 
       <footer className="sb-footer">
-        <span>SeedBuster Phishing Detection Pipeline</span>
+        <span>SeedBuster</span>
         <span>{isAdmin ? "Admin view" : ""}</span>
       </footer>
 
