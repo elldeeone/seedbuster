@@ -1329,9 +1329,14 @@ button {
   flex: 1;
 }
 
-.sb-row .sb-input {
+.sb-row input.sb-input {
   width: auto;
   flex: 0 0 60px;
+}
+
+.sb-row textarea.sb-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .sb-textarea {
