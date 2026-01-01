@@ -650,10 +650,12 @@ class ReportGenerator:
         .backends, .api-keys {
             border-left: 4px solid #f39c12;
         }
-        .screenshot-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
+        @media screen {
+            .screenshot-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+            }
         }
         .screenshot img {
             width: 100%;
@@ -685,17 +687,26 @@ class ReportGenerator:
                 box-shadow: none;
                 border: 1px solid #ddd;
             }
+            .screenshot-grid {
+                display: block;
+            }
+            .screenshot {
+                break-inside: avoid;
+                margin-bottom: 16px;
+            }
         }
         """
 
     def _get_campaign_css(self) -> str:
         """Get additional CSS for campaign reports."""
         return """
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            margin-bottom: 20px;
+        @media screen {
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 20px;
+                margin-bottom: 20px;
+            }
         }
         .stat {
             text-align: center;
@@ -746,10 +757,12 @@ class ReportGenerator:
             border-radius: 5px;
             margin-top: 15px;
         }
-        .gallery-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+        @media screen {
+            .gallery-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
         }
         .gallery-item {
             text-align: center;
@@ -771,5 +784,16 @@ class ReportGenerator:
         }
         .recommended-actions li {
             margin-bottom: 15px;
+        }
+        @media print {
+            .stats-grid,
+            .gallery-grid {
+                display: block;
+            }
+            .stat,
+            .gallery-item {
+                break-inside: avoid;
+                margin-bottom: 16px;
+            }
         }
         """
