@@ -197,6 +197,43 @@ const extractDomainFromInput = (input: string): string => {
   }
 };
 
+// LocalStorage for tracking "I Reported This" engagements
+const ENGAGEMENTS_STORAGE_KEY = "seedbuster_my_engagements";
+type StoredEngagement = { domain: string; platform: string; reportedAt: string };
+
+const getMyEngagements = (): StoredEngagement[] => {
+  try {
+    const raw = localStorage.getItem(ENGAGEMENTS_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as StoredEngagement[];
+  } catch {
+    return [];
+  }
+};
+
+const saveEngagement = (domain: string, platform: string) => {
+  const engagements = getMyEngagements();
+  const key = `${domain.toLowerCase()}:${platform}`;
+  const existing = engagements.find((e) => `${e.domain.toLowerCase()}:${e.platform}` === key);
+  if (existing) {
+    existing.reportedAt = new Date().toISOString();
+  } else {
+    engagements.push({ domain: domain.toLowerCase(), platform, reportedAt: new Date().toISOString() });
+  }
+  // Keep only last 1000 engagements
+  const trimmed = engagements.slice(-1000);
+  try {
+    localStorage.setItem(ENGAGEMENTS_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Storage full or unavailable
+  }
+};
+
+const hasEngagement = (domain: string, platform: string): boolean => {
+  const key = `${domain.toLowerCase()}:${platform}`;
+  return getMyEngagements().some((e) => `${e.domain.toLowerCase()}:${e.platform}` === key);
+};
+
 const badgeClass = (value: string | null | undefined, kind: "status" | "verdict" | "report") => {
   const v = (value || "unknown").toLowerCase();
   if (kind === "report") return `sb-badge sb-badge-${v}`;
@@ -1373,6 +1410,10 @@ export default function App() {
         const nextTotal = nextPlatforms.reduce((sum, p) => sum + (p.engagement_count || 0), 0);
         return { ...prev, platforms: nextPlatforms, total_engagements: nextTotal };
       });
+      // Remember this engagement locally
+      if (domainDetail.domain.domain) {
+        saveEngagement(domainDetail.domain.domain, platformId);
+      }
       showToast(res.message || (res.status === "cooldown" ? "You've already reported recently." : "Thanks for reporting!"), res.status === "cooldown" ? "info" : "success");
     } catch (err) {
       showToast((err as Error).message || "Failed to record engagement", "error");
@@ -2638,6 +2679,7 @@ export default function App() {
               )}
               {reportOptions && reportOptions.platforms.map((opt) => {
                 const open = openReportPlatforms.has(opt.id);
+                const alreadyReported = domainDetail?.domain.domain ? hasEngagement(domainDetail.domain.domain, opt.id) : false;
                 return (
                   <div key={opt.id} className="sb-card" style={{ border: "1px solid var(--border-subtle)", borderRadius: 8, padding: 12, marginBottom: 10 }}>
                     <div className="sb-row sb-space-between" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2650,12 +2692,13 @@ export default function App() {
                           {open ? "Hide Instructions" : "View Instructions"}
                         </button>
                         <button
-                          className="sb-btn sb-btn-primary"
+                          className={alreadyReported ? "sb-btn" : "sb-btn sb-btn-primary"}
                           type="button"
                           disabled={reportEngagementBusy[opt.id]}
                           onClick={() => handleReportEngagement(opt.id)}
+                          style={alreadyReported ? { borderColor: "var(--accent-green)", color: "var(--accent-green)" } : undefined}
                         >
-                          {reportEngagementBusy[opt.id] ? "Recording…" : "I Reported This"}
+                          {reportEngagementBusy[opt.id] ? "Recording…" : alreadyReported ? "Reported" : "I Reported This"}
                         </button>
                       </div>
                     </div>
