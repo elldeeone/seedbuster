@@ -8,10 +8,13 @@ This script:
 
 Usage:
     python scripts/refresh_infra.py
+    python scripts/refresh_infra.py --env-file /etc/seedbuster/seedbuster.env
 """
 
 import asyncio
+import argparse
 import logging
+import os
 from pathlib import Path
 
 from src.config import load_config
@@ -21,6 +24,20 @@ from src.storage import Database, EvidenceStore
 
 logger = logging.getLogger("refresh_infra")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+def _load_env_file(path: str) -> None:
+    """Load environment variables from a .env-style file."""
+    try:
+        from dotenv import dotenv_values
+    except Exception as exc:
+        raise RuntimeError("python-dotenv is required for --env-file") from exc
+
+    values = dotenv_values(path)
+    for key, value in values.items():
+        if value is None:
+            continue
+        os.environ[key] = value
 
 
 async def refresh_domain(
@@ -84,6 +101,13 @@ async def refresh_domain(
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="Refresh infrastructure/registrar intel.")
+    parser.add_argument("--env-file", help="Load environment variables from a file before running.")
+    args = parser.parse_args()
+
+    if args.env_file:
+        _load_env_file(args.env_file)
+
     config = load_config()
     db = Database(config.data_dir / "seedbuster.db")
     await db.connect()
