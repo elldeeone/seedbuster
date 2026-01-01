@@ -34,6 +34,11 @@ REGISTRAR_ABUSE_EMAILS: dict[str, str] = {
     "instra": "abuse@instra.com",
     "abovedomains": "abuse@abovedomains.com",
     "ultahost": "abuse@ultahost.com",
+    "namesilo": "abuse@namesilo.com",
+    "own web solution": "corp@ownregistrar.com",
+    "synergy wholesale": "abuse@synergywholesale.com",
+    "squarespace domains": "abuse-complaints@squarespace.com",
+    "cloudflare": "abuse@cloudflare.com",
 }
 
 REGISTRAR_ABUSE_FORMS: dict[str, str] = {
