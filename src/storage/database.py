@@ -1326,6 +1326,15 @@ class Database:
             )
             stats["active_threats"] = (await cursor.fetchone())["count"]
 
+            cursor = await self._connection.execute(
+                """
+                SELECT COUNT(*) as count
+                FROM domains
+                WHERE status != 'allowlisted'
+                """
+            )
+            stats["tracked_domains"] = (await cursor.fetchone())["count"]
+
             # Total domains
             cursor = await self._connection.execute("SELECT COUNT(*) as count FROM domains")
             stats["total"] = (await cursor.fetchone())["count"]

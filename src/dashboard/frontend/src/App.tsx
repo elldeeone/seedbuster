@@ -1937,7 +1937,10 @@ export default function App() {
               <span className="sb-stat-label">Active Threats</span>
             </div>
             <div className="sb-stat-block">
-              <AnimatedNumber className="sb-stat-number" value={stats?.total ?? 0} />
+              <AnimatedNumber
+                className="sb-stat-number"
+                value={stats?.tracked_domains ?? stats?.total ?? 0}
+              />
               <span className="sb-stat-label">Domains Tracked</span>
             </div>
             <div className="sb-stat-block">

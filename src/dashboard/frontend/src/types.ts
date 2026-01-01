@@ -4,6 +4,7 @@ export interface Stats {
   evidence_bytes?: number;
   public_submissions_pending?: number;
   active_threats?: number;
+  tracked_domains?: number;
   by_status: Record<string, number>;
   by_verdict: Record<string, number>;
   reports?: Record<string, number>;
