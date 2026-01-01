@@ -21,6 +21,7 @@ import {
   submitPublicTarget,
   submitTarget,
   updateDomainStatus,
+  updateTakedownStatus,
   updateOperatorNotes,
   updateCampaignName,
   fetchReportOptions,
@@ -1690,6 +1691,37 @@ export default function App() {
     }
   };
 
+  const changeTakedownStatus = async (domain: Domain, newStatus: string) => {
+    if (!canEdit) {
+      showToast("Read-only mode: takedown changes are disabled.", "info");
+      return;
+    }
+    const id = domain.id;
+    if (!id) {
+      showToast("Domain id is missing for this record", "error");
+      return;
+    }
+
+    const statusLabels: Record<string, string> = {
+      confirmed_down: "confirmed down",
+      likely_down: "likely down",
+      active: "active",
+    };
+
+    const label = statusLabels[newStatus] || newStatus;
+    setActionBusy((prev) => ({ ...prev, [id]: "takedown_change" }));
+    try {
+      await updateTakedownStatus(id, newStatus);
+      showToast(`Set takedown status for ${domain.domain} to ${label}`, "success");
+      loadDomains();
+      if (route.name === "domain") loadDomainDetail(id, snapshotSelection || null);
+    } catch (err) {
+      showToast((err as Error).message || "Takedown update failed", "error");
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
   const bulkTriggerCampaign = async (type: "rescan" | "report") => {
     if (!canEdit) {
       showToast("Read-only mode: actions are disabled.", "info");
@@ -2516,6 +2548,43 @@ export default function App() {
                           {isBusy ? "Adding…" : "✓ Allowlist"}
                         </button>
                       )}
+                    </div>
+                  );
+                })()}
+                {canEdit && (() => {
+                  const currentStatus = (domainDetail.domain.status || "").toLowerCase();
+                  if (["allowlisted", "false_positive"].includes(currentStatus)) return null;
+                  const takedownStatus = (domainDetail.domain.takedown_status || "active").toLowerCase();
+                  const busyState = actionBusy[domainDetail.domain.id || 0];
+                  const isBusy = !!busyState;
+                  const isUpdating = busyState === "takedown_change";
+
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                      <div className="sb-label" style={{ fontSize: 12 }}>Manual takedown</div>
+                      <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                        {takedownStatus !== "confirmed_down" && (
+                          <button
+                            className="sb-btn sb-btn-danger"
+                            disabled={!domainDetail.domain.id || isBusy}
+                            onClick={() => changeTakedownStatus(domainDetail.domain, "confirmed_down")}
+                          >
+                            {isUpdating ? "Updating…" : "Mark Down"}
+                          </button>
+                        )}
+                        {takedownStatus === "confirmed_down" && (
+                          <button
+                            className="sb-btn sb-btn-success"
+                            disabled={!domainDetail.domain.id || isBusy}
+                            onClick={() => changeTakedownStatus(domainDetail.domain, "active")}
+                          >
+                            {isUpdating ? "Updating…" : "Mark Active"}
+                          </button>
+                        )}
+                      </div>
+                      <div className="sb-muted" style={{ fontSize: 11 }}>
+                        Auto checks continue and will update this status.
+                      </div>
                     </div>
                   );
                 })()}

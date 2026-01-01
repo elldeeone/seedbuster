@@ -26,6 +26,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 from aiohttp import web
 
+from ..analyzer.takedown_checker import TakedownStatus
 from ..storage.database import Database, DomainStatus, Verdict
 from ..utils.domains import allowlist_contains, canonicalize_domain, normalize_allowlist_domain
 
@@ -4754,6 +4755,10 @@ class DashboardServer:
         self._app.router.add_post("/admin/api/report", self._admin_api_report)
         self._app.router.add_post("/admin/api/domains/{domain_id}/false_positive", self._admin_api_false_positive)
         self._app.router.add_patch("/admin/api/domains/{domain_id}/status", self._admin_api_update_domain_status)
+        self._app.router.add_patch(
+            "/admin/api/domains/{domain_id}/takedown",
+            self._admin_api_update_domain_takedown_status,
+        )
         self._app.router.add_post("/admin/api/domains/{domain_id}/baseline", self._admin_api_update_baseline)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_get("/admin/api/domains/{domain_id}/report-options", self._admin_api_report_options)
@@ -6832,6 +6837,39 @@ class DashboardServer:
         # Update via database
         await self.database.update_domain_status(domain_id, DomainStatus(new_status))
         return web.json_response({"status": "ok", "new_status": new_status})
+
+    async def _admin_api_update_domain_takedown_status(self, request: web.Request) -> web.Response:
+        """Update takedown status (PATCH /admin/api/domains/{domain_id}/takedown)."""
+        self._require_csrf_header(request)
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        data = await self._read_json(request)
+        new_status = (data.get("status") or "").strip().lower()
+
+        valid_statuses = {s.value for s in TakedownStatus}
+        if new_status not in valid_statuses:
+            return web.json_response(
+                {"error": f"Invalid status. Must be one of: {', '.join(sorted(valid_statuses))}"},
+                status=400,
+            )
+
+        detected_at = None
+        confirmed_at = None
+        if new_status in {TakedownStatus.LIKELY_DOWN.value, TakedownStatus.CONFIRMED_DOWN.value}:
+            now = datetime.now(timezone.utc).isoformat()
+            detected_at = now
+            if new_status == TakedownStatus.CONFIRMED_DOWN.value:
+                confirmed_at = now
+
+        await self.database.update_domain_takedown_status(
+            domain_id,
+            new_status,
+            detected_at=detected_at,
+            confirmed_at=confirmed_at,
+        )
+        return web.json_response({"status": "ok", "takedown_status": new_status})
 
     async def _admin_api_update_baseline(self, request: web.Request) -> web.Response:
         """Update watchlist baseline to current snapshot (POST /admin/api/domains/{domain_id}/baseline)."""

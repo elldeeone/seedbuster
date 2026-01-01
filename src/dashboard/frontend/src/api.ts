@@ -253,6 +253,17 @@ export async function updateDomainStatus(
   });
 }
 
+export async function updateTakedownStatus(
+  domainId: number,
+  status: string,
+): Promise<void> {
+  await request(`/domains/${domainId}/takedown`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+    skipJson: true,
+  });
+}
+
 export async function updateWatchlistBaseline(domainId: number): Promise<any> {
   return await request(`/domains/${domainId}/baseline`, {
     method: "POST",
