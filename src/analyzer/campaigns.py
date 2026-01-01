@@ -228,9 +228,142 @@ class ThreatCampaignManager:
         try:
             parsed = urlparse(raw if "://" in raw else f"http://{raw}")
             host = (parsed.hostname or raw.split("/")[0]).strip(".").lower()
+            if host.startswith("www.") and len(host) > 4:
+                host = host[4:]
             return host
         except Exception:
             return raw.split("/")[0].strip().lower()
+
+    def _domain_preference(self, domain: str) -> tuple[int, int, int, int]:
+        raw = (domain or "").strip().lower()
+        if not raw:
+            return (1, 1, 1, 0)
+        has_scheme = "://" in raw
+        try:
+            parsed = urlparse(raw if has_scheme else f"http://{raw}")
+            host = (parsed.hostname or raw.split("/")[0]).strip(".").lower()
+            has_path = bool(parsed.path and parsed.path != "/")
+        except Exception:
+            host = raw.split("/")[0].strip(".").lower()
+            has_path = "/" in raw
+        is_www = host.startswith("www.")
+        return (1 if has_scheme else 0, 1 if has_path else 0, 1 if is_www else 0, len(raw))
+
+    @staticmethod
+    def _merge_unique_lists(values: List[List[str]]) -> List[str]:
+        merged: List[str] = []
+        seen = set()
+        for items in values:
+            for item in items or []:
+                if item not in seen:
+                    seen.add(item)
+                    merged.append(item)
+        return merged
+
+    def _merge_campaign_members(self, members: List[CampaignMember]) -> CampaignMember:
+        if len(members) == 1:
+            return members[0]
+        base = min(members, key=lambda m: self._domain_preference(m.domain))
+        base.domain = min(
+            (m.domain for m in members if m.domain),
+            key=self._domain_preference,
+            default=base.domain,
+        )
+        base.added_at = min(
+            (m.added_at for m in members if m.added_at),
+            default=base.added_at,
+        )
+        base.score = max(
+            (m.score for m in members if m.score is not None),
+            default=base.score,
+        )
+        base.backends = self._merge_unique_lists([m.backends for m in members])
+        base.kit_matches = self._merge_unique_lists([m.kit_matches for m in members])
+        base.nameservers = self._merge_unique_lists([m.nameservers for m in members])
+        for attr in ("ip_address", "asn", "html_hash", "visual_hash"):
+            if getattr(base, attr):
+                continue
+            for member in members:
+                value = getattr(member, attr)
+                if value:
+                    setattr(base, attr, value)
+                    break
+        return base
+
+    def _merge_member_into_existing(
+        self,
+        target: CampaignMember,
+        incoming: CampaignMember,
+    ) -> bool:
+        changed = False
+        preferred = min(
+            [target.domain, incoming.domain],
+            key=self._domain_preference,
+        )
+        if preferred and preferred != target.domain:
+            target.domain = preferred
+            changed = True
+
+        earliest = min(
+            (m.added_at for m in (target, incoming) if m.added_at),
+            default=target.added_at,
+        )
+        if earliest != target.added_at:
+            target.added_at = earliest
+            changed = True
+
+        if incoming.score is not None and incoming.score > target.score:
+            target.score = incoming.score
+            changed = True
+
+        merged_backends = self._merge_unique_lists([target.backends, incoming.backends])
+        if merged_backends != target.backends:
+            target.backends = merged_backends
+            changed = True
+
+        merged_kits = self._merge_unique_lists(
+            [target.kit_matches, incoming.kit_matches]
+        )
+        if merged_kits != target.kit_matches:
+            target.kit_matches = merged_kits
+            changed = True
+
+        merged_nameservers = self._merge_unique_lists(
+            [target.nameservers, incoming.nameservers]
+        )
+        if merged_nameservers != target.nameservers:
+            target.nameservers = merged_nameservers
+            changed = True
+
+        for attr in ("ip_address", "asn", "html_hash", "visual_hash"):
+            if getattr(target, attr):
+                continue
+            value = getattr(incoming, attr)
+            if value:
+                setattr(target, attr, value)
+                changed = True
+
+        return changed
+
+    def _dedupe_campaign_members(self, campaign: ThreatCampaign) -> bool:
+        if len(campaign.members) <= 1:
+            return False
+        grouped: Dict[str, List[CampaignMember]] = {}
+        order: List[str] = []
+        for member in campaign.members:
+            key = self._normalize_domain_key(member.domain) or (
+                (member.domain or "").strip().lower()
+            )
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
+            grouped[key].append(member)
+        if all(len(items) == 1 for items in grouped.values()):
+            return False
+        campaign.members = [
+            self._merge_campaign_members(grouped[key]) for key in order
+        ]
+        return True
 
     def _strip_domain_label(self, label: str) -> str:
         return "".join(ch for ch in label.lower() if ch.isalnum())
@@ -277,10 +410,17 @@ class ThreatCampaignManager:
                 with open(self.campaigns_file, "r") as f:
                     data = json.load(f)
 
+                deduped = False
                 for campaign_data in data.get("campaigns", []):
                     campaign = ThreatCampaign.from_dict(campaign_data)
+                    if self._dedupe_campaign_members(campaign):
+                        deduped = True
                     self.campaigns[campaign.campaign_id] = campaign
                     self._index_campaign(campaign)
+
+                if deduped:
+                    self._save_campaigns()
+                    logger.info("Deduped campaign members on load")
 
                 logger.info(f"Loaded {len(self.campaigns)} threat campaigns")
             except Exception as e:
@@ -632,31 +772,51 @@ class ThreatCampaignManager:
         if match.campaign and match.match_score >= 50:
             # Add to existing campaign
             campaign = match.campaign
+            domain_key = self._normalize_domain_key(domain)
+            existing_member = None
+            if domain_key:
+                for existing in campaign.members:
+                    if self._normalize_domain_key(existing.domain) == domain_key:
+                        existing_member = existing
+                        break
 
-            # Check if domain already in campaign
-            existing_domains = {m.domain for m in campaign.members}
-            if domain not in existing_domains:
+            changed = False
+            if existing_member:
+                changed = self._merge_member_into_existing(existing_member, member)
+            else:
                 campaign.members.append(member)
+                changed = True
+
+            backends_before = len(campaign.shared_backends)
+            kits_before = len(campaign.shared_kits)
+            ns_before = len(campaign.shared_nameservers)
+            asn_before = len(campaign.shared_asns)
+            visual_before = len(campaign.shared_visual_hashes)
+
+            campaign.shared_backends.update(backend_domains)
+            campaign.shared_kits.update(kit_matches)
+            campaign.shared_nameservers.update(ns.lower() for ns in nameservers)
+            if asn:
+                campaign.shared_asns.add(asn)
+            if visual_hash:
+                campaign.shared_visual_hashes.add(visual_hash)
+
+            if (
+                changed
+                or len(campaign.shared_backends) != backends_before
+                or len(campaign.shared_kits) != kits_before
+                or len(campaign.shared_nameservers) != ns_before
+                or len(campaign.shared_asns) != asn_before
+                or len(campaign.shared_visual_hashes) != visual_before
+            ):
                 campaign.updated_at = datetime.now()
-
-                # Update shared indicators
-                campaign.shared_backends.update(backend_domains)
-                campaign.shared_kits.update(kit_matches)
-                campaign.shared_nameservers.update(ns.lower() for ns in nameservers)
-                if asn:
-                    campaign.shared_asns.add(asn)
-                if visual_hash:
-                    campaign.shared_visual_hashes.add(visual_hash)
-
-                # Recalculate confidence based on campaign size and indicator overlap
                 campaign.confidence = self._calculate_campaign_confidence(campaign)
-
-                # Update indices
                 self._index_campaign(campaign)
                 self._save_campaigns()
 
+                action = "Merged" if existing_member else "Added"
                 logger.info(
-                    f"Added {domain} to campaign '{campaign.name}' "
+                    f"{action} {domain} in campaign '{campaign.name}' "
                     f"(match: {match.match_score:.0f}%, reasons: {match.match_reasons})"
                 )
 
