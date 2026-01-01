@@ -534,6 +534,24 @@ class ReportManager:
         )
         logger.info("Initialized hosting provider manual reporter")
 
+        self.reporters["edge_provider"] = HostingProviderReporter(
+            reporter_email=self.resend_from_email or self.reporter_email or "",
+            provider_source="edge",
+            provider_label="Edge/CDN provider",
+            platform_name="edge_provider",
+            display_name="Edge/CDN Provider",
+        )
+        logger.info("Initialized edge/CDN provider manual reporter")
+
+        self.reporters["dns_provider"] = HostingProviderReporter(
+            reporter_email=self.resend_from_email or self.reporter_email or "",
+            provider_source="dns",
+            provider_label="Nameserver/DNS provider",
+            platform_name="dns_provider",
+            display_name="DNS Provider",
+        )
+        logger.info("Initialized DNS provider manual reporter")
+
         # Registrar manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["registrar"] = RegistrarReporter(
             reporter_email=self.resend_from_email or self.reporter_email or ""
@@ -929,6 +947,8 @@ class ReportManager:
             "shopify",
             "njalla",
             "hosting_provider",
+            "edge_provider",
+            "dns_provider",
         }
         registrar_specific = {
             "registrar",
@@ -941,8 +961,9 @@ class ReportManager:
         service_specific = {"telegram", "discord"}
 
         if platform in hosting_specific:
-            if platform == "hosting_provider":
-                return (is_applicable, reason or "No hosting provider identified")
+            if platform in {"hosting_provider", "edge_provider", "dns_provider"}:
+                label = getattr(reporter, "provider_label", "provider").lower()
+                return (is_applicable, reason or f"No {label} identified")
             if platform == "digitalocean":
                 if is_applicable or platform in hosting_hints:
                     return True, ""
@@ -1001,6 +1022,8 @@ class ReportManager:
             "railway",
             "cloudflare",
             "hosting_provider",
+            "edge_provider",
+            "dns_provider",
         }
         registrar_specific = {
             "registrar",

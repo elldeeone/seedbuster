@@ -3805,6 +3805,8 @@ def _render_action_required_panel(
         "apwg": "\U0001f3a3",
         "registrar": "\U0001f4dd",
         "hosting_provider": "\U0001f5a5",
+        "edge_provider": "\U0001f310",
+        "dns_provider": "\U0001f4e1",
         "digitalocean": "\U0001f30a",
     }
 

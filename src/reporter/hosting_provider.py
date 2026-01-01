@@ -35,11 +35,16 @@ ABUSE_FORMS: dict[str, str] = {
     "heroku": "https://www.heroku.com/policy/aup-reporting",
     "contabo": "https://contabo.com/en/company/contact/",
     "dreamhost": "https://www.dreamhost.com/company/contact/",
+    "njalla": "https://njal.la/contact/",
 }
 
 
 # Provider abuse email contacts (best-effort; some providers prefer forms).
 ABUSE_EMAILS: dict[str, str] = {
+    "abovedomains": "abuse@above.com",
+    "cdnext": "report@abuseradar.com",
+    "ifastnet": "abuse@ifastnet.com",
+    "wildcard": "abuse@ifastnet.com",
     "namecheap": "abuse@namecheap.com",
     "godaddy": "abuse@godaddy.com",
     "hostinger": "abuse@hostinger.com",
@@ -48,9 +53,27 @@ ABUSE_EMAILS: dict[str, str] = {
     "contabo": "abuse@contabo.com",
     "cogent": "abuse@cogentco.com",
     "rackforest": "abuse@rackforest.com",
-    "dreamhost": "abuse@dreamhost.com",
+    "dreamhost": "domain-abuse@dreamhost.com",
     "trellian": "abuse@trellian.com",
     "internetbilisim": "abuse@ultahost.com",
+    "streetplug": "abuse@namecheap.com",
+    "ukyeni": "domain@apiname.com",
+    "ultahost": "abuse@ultahost.com",
+}
+
+
+DNS_PROVIDER_PATTERNS: dict[str, list[str]] = {
+    "cloudflare": ["cloudflare.com"],
+    "njalla": ["njalla"],
+    "streetplug": ["streetplug.me"],
+    "ukyeni": ["ukyeni.com"],
+    "ultahost": ["ultahost.com"],
+    "abovedomains": ["abovedomains.com"],
+    "dreamhost": ["dreamhost.com"],
+    "namecheap": ["registrar-servers.com"],
+    "godaddy": ["domaincontrol.com"],
+    "porkbun": ["porkbun.com"],
+    "tucows": ["hover.com", "tucows.com", "hoverdns.com"],
 }
 
 
@@ -68,18 +91,40 @@ class HostingProviderReporter(BaseReporter):
     rate_limit_per_minute = 60
     manual_only = True
 
-    def __init__(self, reporter_email: str = ""):
+    def __init__(
+        self,
+        reporter_email: str = "",
+        *,
+        provider_source: str = "origin",
+        provider_label: str = "Hosting provider",
+        platform_name: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ):
         super().__init__()
         self.reporter_email = reporter_email
+        self.provider_source = provider_source
+        self.provider_label = provider_label
+        if platform_name:
+            self.platform_name = platform_name
+        if display_name:
+            self.display_name = display_name
         self._configured = True
 
     @staticmethod
-    def _detect_provider_from_evidence(evidence: ReportEvidence) -> Optional[str]:
-        provider = (evidence.hosting_provider or "").strip().lower()
+    def _normalize_provider(provider: str) -> Optional[str]:
+        if not provider:
+            return None
+        candidate = provider.strip().lower()
+        if not candidate:
+            return None
+        for key in list(ABUSE_FORMS.keys()) + list(ABUSE_EMAILS.keys()):
+            if key in candidate:
+                return key
+        return candidate
+
+    def _detect_origin_provider(self, evidence: ReportEvidence) -> Optional[str]:
+        provider = self._normalize_provider(evidence.hosting_provider or "")
         if provider:
-            for key in list(ABUSE_FORMS.keys()) + list(ABUSE_EMAILS.keys()):
-                if key in provider:
-                    return key
             return provider
 
         # Fall back to backend-domain patterns.
@@ -98,6 +143,35 @@ class HostingProviderReporter(BaseReporter):
             return "aws"
 
         return None
+
+    def _detect_edge_provider(self, evidence: ReportEvidence) -> Optional[str]:
+        infra = (evidence.analysis_json or {}).get("infrastructure") or {}
+        provider = (
+            (evidence.analysis_json or {}).get("edge_provider")
+            or infra.get("edge_provider")
+            or ""
+        )
+        return self._normalize_provider(provider)
+
+    def _detect_dns_provider(self, evidence: ReportEvidence) -> Optional[str]:
+        infra = (evidence.analysis_json or {}).get("infrastructure") or {}
+        nameservers = infra.get("nameservers") or []
+        if isinstance(nameservers, str):
+            nameservers = [nameservers]
+        joined = " ".join([ns.lower() for ns in nameservers])
+        if not joined:
+            return None
+        for provider, needles in DNS_PROVIDER_PATTERNS.items():
+            if any(needle in joined for needle in needles):
+                return provider
+        return None
+
+    def _detect_provider_from_evidence(self, evidence: ReportEvidence) -> Optional[str]:
+        if self.provider_source == "edge":
+            return self._detect_edge_provider(evidence)
+        if self.provider_source == "dns":
+            return self._detect_dns_provider(evidence)
+        return self._detect_origin_provider(evidence)
 
     @staticmethod
     def _extract_ips(evidence: ReportEvidence) -> list[str]:
@@ -187,7 +261,7 @@ class HostingProviderReporter(BaseReporter):
         destination_url = form_url or f"mailto:{email}" if email else ""
 
         notes = [
-            f"Detected hosting provider: {provider.upper()}",
+            f"Detected {self.provider_label}: {provider.upper()}",
             "Submit via the abuse form or email the abuse contact.",
         ]
         if not form_url and not email:
@@ -195,7 +269,7 @@ class HostingProviderReporter(BaseReporter):
 
         return ManualSubmissionData(
             form_url=destination_url,
-            reason=f"Hosting provider: {provider}",
+            reason=f"{self.provider_label}: {provider}",
             fields=fields,
             notes=notes,
         )
@@ -211,7 +285,7 @@ class HostingProviderReporter(BaseReporter):
         if not provider:
             return ManualSubmissionData(
                 form_url="",
-                reason="Hosting provider not identified",
+                reason=f"{self.provider_label} not identified",
                 fields=[
                     ManualSubmissionField(
                         name="url",
@@ -219,7 +293,7 @@ class HostingProviderReporter(BaseReporter):
                         value=evidence.url,
                     )
                 ],
-                notes=["No hosting provider identified from this evidence."],
+                notes=[f"No {self.provider_label.lower()} identified from this evidence."],
             )
 
         form_url = ABUSE_FORMS.get(provider)
