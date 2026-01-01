@@ -241,6 +241,12 @@ const badgeClass = (value: string | null | undefined, kind: "status" | "verdict"
   return `sb-badge sb-badge-${v}`;
 };
 
+const displayDomain = (domain: string) => {
+  const value = (domain || "").trim();
+  if (!value) return "";
+  return value.replace(/^www\./i, "");
+};
+
 const renderTakedownBadge = (domain: Domain) => {
   const takedown = (domain.takedown_status || "").toLowerCase();
   if (takedown === "confirmed_down") {
@@ -686,13 +692,13 @@ const DomainTable = ({
               const aScore = isAllowlisted ? "—" : (d as any).analysis_score ?? "—";
               return (
                 <tr key={d.id ?? d.domain} className={!canEdit ? "clickable" : ""} onClick={!canEdit && d.id ? () => onView(d.id!) : undefined}>
-                  <td className="domain-cell" title={d.domain}>
+                  <td className="domain-cell" title={displayDomain(d.domain)}>
                     {d.id ? (
                       <a className="domain-link" onClick={(e) => { e.stopPropagation(); onView(d.id!); }} href={`#/domains/${d.id}`}>
-                        {d.domain}
+                        {displayDomain(d.domain)}
                       </a>
                     ) : (
-                      <span>{d.domain}</span>
+                      <span>{displayDomain(d.domain)}</span>
                     )}
                     <div className="sb-muted" style={{ fontSize: 12 }}>{timeAgo(d.updated_at || d.created_at)}</div>
                   </td>

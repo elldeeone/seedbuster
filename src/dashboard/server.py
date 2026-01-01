@@ -156,6 +156,16 @@ def _format_bytes(num: int) -> str:
     return f"{n:.1f} PB"
 
 
+def _display_domain(domain: str) -> str:
+    raw = (domain or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered.startswith("www.") and len(raw) > 4:
+        return raw[4:]
+    return raw
+
+
 def _status_badge(value: str) -> str:
     status = (value or "").strip().lower() or "unknown"
     badge_class = f"sb-badge sb-badge-{status}"
@@ -2891,6 +2901,7 @@ def _render_domains_section(
         for d in domains:
             did = d.get("id")
             domain = d.get("domain") or ""
+            display_domain = _display_domain(domain)
             href = f"/admin/domains/{did}" if admin else f"/domains/{did}"
             domain_score = d.get("domain_score")
             analysis_score = d.get("analysis_score")
@@ -2906,7 +2917,7 @@ def _render_domains_section(
 
             rows.append(
                 "<tr>"
-                f'<td class="domain-cell" title="{_escape(domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(domain)}</a></td>'
+                f'<td class="domain-cell" title="{_escape(display_domain)}"><a class="domain-link" href="{_escape(href)}">{_escape(display_domain)}</a></td>'
                 f"<td>{_status_badge(str(d.get('status') or ''))}</td>"
                 f"<td>{_verdict_badge(d.get('verdict'))}</td>"
                 f'<td><span class="sb-score">{_escape(domain_score) if domain_score is not None else "&mdash;"}</span></td>'
