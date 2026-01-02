@@ -2192,7 +2192,53 @@ button {
   font-size: 12px;
   font-family: var(--font-mono);
   flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+
+.sb-footer-brand,
+.sb-footer-links {
+  display: flex;
+  align-items: center;
   gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sb-footer-links {
+  justify-content: flex-end;
+}
+
+.sb-footer-donate {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sb-footer-label {
+  color: var(--text-secondary);
+}
+
+.sb-footer-wallet {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sb-footer-copy {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+}
+
+@media (max-width: 640px) {
+  .sb-footer {
+    align-items: flex-start;
+  }
+
+  .sb-footer-links {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

@@ -71,6 +71,7 @@ const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "re
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
 const TAKEDOWN_CHECK_STATUS_OPTIONS = ["", "active", "likely_down", "confirmed_down"];
+const DONATION_WALLET = "kaspa:qqe57lvu4p4zhdlnlj6ne8hu0hgcfwwfzrhcgaenpt056k0hge85k7qtaw3m9";
 
 // Statuses to exclude when using "dangerous" filter mode
 const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
@@ -1207,6 +1208,43 @@ export default function App() {
   const showToast = useCallback((message: string, tone?: "success" | "error" | "info") => {
     setToast({ message, tone });
   }, []);
+
+  const copyDonationWallet = useCallback(async () => {
+    const fallbackCopy = () => {
+      const textarea = document.createElement("textarea");
+      textarea.value = DONATION_WALLET;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-1000px";
+      textarea.style.left = "-1000px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      return ok;
+    };
+
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(DONATION_WALLET);
+        showToast("Wallet copied", "success");
+        return;
+      }
+    } catch (err) {
+      // Fall through to the legacy copy flow.
+    }
+
+    try {
+      const ok = fallbackCopy();
+      showToast(ok ? "Wallet copied" : "Copy failed", ok ? "success" : "error");
+    } catch (err) {
+      showToast("Copy failed", "error");
+    }
+  }, [showToast]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -3486,8 +3524,23 @@ export default function App() {
       {content}
 
       <footer className="sb-footer">
-        <span>SeedBuster</span>
-        <span>{isAdmin ? "Admin view" : ""}</span>
+        <div className="sb-footer-brand">
+          <span>SeedBuster</span>
+          {isAdmin && <span>Admin view</span>}
+        </div>
+        <div className="sb-footer-links">
+          <span>
+            Made with ❤ by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a>
+          </span>
+          <a href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
+        </div>
+        <div className="sb-footer-donate">
+          <span className="sb-footer-label">Consider donating:</span>
+          <span className="sb-footer-wallet">{DONATION_WALLET}</span>
+          <button className="sb-btn sb-footer-copy" type="button" onClick={copyDonationWallet} title="Copy donation wallet">
+            Copy
+          </button>
+        </div>
       </footer>
 
       <div id="sb-toast-container" className="sb-toast-container" aria-live="polite">

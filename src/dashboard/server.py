@@ -199,6 +199,7 @@ STATUS_FILTER_OPTIONS = [
 
 VERDICT_FILTER_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"]
 DANGEROUS_EXCLUDE_STATUSES = ["watchlist", "false_positive", "allowlisted"]
+DONATION_WALLET = "kaspa:qqe57lvu4p4zhdlnlj6ne8hu0hgcfwwfzrhcgaenpt056k0hge85k7qtaw3m9"
 
 
 def _layout(*, title: str, body: str, admin: bool) -> str:
@@ -2287,6 +2288,54 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-wrap: wrap;
+        gap: 12px 20px;
+      }}
+
+      .sb-footer-brand,
+      .sb-footer-links {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }}
+
+      .sb-footer-links {{
+        justify-content: flex-end;
+      }}
+
+      .sb-footer-donate {{
+        flex-basis: 100%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }}
+
+      .sb-footer-label {{
+        color: var(--text-secondary);
+      }}
+
+      .sb-footer-wallet {{
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }}
+
+      .sb-footer-copy {{
+        padding: 4px 10px;
+        font-size: 11px;
+        background: transparent;
+      }}
+
+      @media (max-width: 640px) {{
+        .sb-footer {{
+          align-items: flex-start;
+        }}
+
+        .sb-footer-links {{
+          width: 100%;
+          justify-content: flex-start;
+        }}
       }}
 
       /* Pagination */
@@ -2687,6 +2736,54 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
             openManualModal(panelId);
           }}
         }}
+
+        const copyBtn = document.querySelector('.sb-footer-copy');
+        if (copyBtn) {{
+          let resetTimer = null;
+          const setLabel = function(label) {{
+            copyBtn.textContent = label;
+            if (resetTimer) {{
+              clearTimeout(resetTimer);
+            }}
+            resetTimer = setTimeout(function() {{
+              copyBtn.textContent = 'Copy';
+            }}, 1600);
+          }};
+          const fallbackCopy = function(wallet) {{
+            const textarea = document.createElement('textarea');
+            textarea.value = wallet;
+            textarea.setAttribute('readonly', 'true');
+            textarea.style.position = 'fixed';
+            textarea.style.top = '-1000px';
+            textarea.style.left = '-1000px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            let ok = false;
+            try {{
+              ok = document.execCommand('copy');
+            }} finally {{
+              document.body.removeChild(textarea);
+            }}
+            return ok;
+          }};
+          copyBtn.addEventListener('click', function() {{
+            const wallet = copyBtn.getAttribute('data-wallet');
+            if (!wallet) {{
+              return;
+            }}
+            if (navigator.clipboard && window.isSecureContext) {{
+              navigator.clipboard.writeText(wallet)
+                .then(function() {{
+                  setLabel('Copied');
+                }})
+                .catch(function() {{
+                  setLabel(fallbackCopy(wallet) ? 'Copied' : 'Copy failed');
+                }});
+              return;
+            }}
+            setLabel(fallbackCopy(wallet) ? 'Copied' : 'Copy failed');
+          }});
+        }}
       }});
     </script>
   </head>
@@ -2705,8 +2802,19 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       </header>
       {body}
       <footer class="sb-footer">
-        <span>SeedBuster Phishing Detection Pipeline</span>
-        <span>{("admin" if admin else "public")} view</span>
+        <div class="sb-footer-brand">
+          <span>SeedBuster Phishing Detection Pipeline</span>
+          <span>{("Admin" if admin else "Public")} view</span>
+        </div>
+        <div class="sb-footer-links">
+          <span>Made with &#10084; by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a></span>
+          <a href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
+        </div>
+        <div class="sb-footer-donate">
+          <span class="sb-footer-label">Consider donating:</span>
+          <span class="sb-footer-wallet">{DONATION_WALLET}</span>
+          <button class="sb-btn sb-footer-copy" type="button" data-wallet="{DONATION_WALLET}">Copy</button>
+        </div>
       </footer>
     </div>
   </body>
