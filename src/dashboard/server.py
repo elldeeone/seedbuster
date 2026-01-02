@@ -2286,17 +2286,9 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         font-size: 11px;
         color: var(--text-tertiary);
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
         gap: 12px 20px;
-      }}
-
-      .sb-footer-brand {{
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
-        justify-self: start;
       }}
 
       .sb-footer-mode {{
@@ -2304,8 +2296,12 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       }}
 
       .sb-footer-credit {{
-        justify-self: center;
-        text-align: center;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-self: start;
+        text-align: left;
       }}
 
       .sb-footer-fork {{
@@ -2371,24 +2367,20 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         .sb-footer {{
           align-items: flex-start;
         }}
-
-        .sb-footer-brand {{
-          gap: 8px;
-        }}
       }}
 
       @media (min-width: 1200px) {{
         .sb-footer {{
-          grid-template-columns: auto 1fr auto minmax(360px, 1.4fr);
+          grid-template-columns: minmax(0, 1fr) auto minmax(360px, 1.2fr);
           align-items: center;
         }}
 
         .sb-footer-credit {{
-          text-align: center;
+          text-align: left;
         }}
 
         .sb-footer-donate {{
-          grid-column: 4;
+          grid-column: 3;
           grid-row: 1;
           flex-direction: row;
           align-items: center;
@@ -2852,12 +2844,9 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       </header>
       {body}
       <footer class="sb-footer">
-        <div class="sb-footer-brand">
-          <span>SeedBuster Phishing Detection Pipeline</span>
-          <span class="sb-footer-mode">{("Admin" if admin else "Public")} view</span>
-        </div>
         <div class="sb-footer-credit">
           <span>Made with &#10084; by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a></span>
+          {('<span class="sb-footer-mode">Admin view</span>' if admin else '')}
         </div>
         <a class="sb-footer-fork" href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
         <div class="sb-footer-donate">
