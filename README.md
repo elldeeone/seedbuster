@@ -1,193 +1,89 @@
+<p align="center">
+  <img src="https://seedbuster.xyz/assets/seedbuster-social.png" alt="SeedBuster" width="840" />
+</p>
+
 # SeedBuster
 
-Automated detection pipeline for Kaspa wallet phishing sites that steal seed phrases.
+Community-powered scam defense for the crypto community.
+Automated detection and response pipeline for phishing and scam sites.
 
-## Features
+## Highlights
 
-- **Real-time monitoring** of Certificate Transparency logs for suspicious domains
-- **Optional search discovery** via official APIs (Google CSE / Bing) to find already-issued/older kits
-- **Smart detection** using fuzzy matching, IDN/homograph detection, and visual fingerprinting
-- **Headless browser analysis** with Playwright for evidence collection
-- **Telegram bot** for alerts, manual submissions, and control
-- **Web dashboard** (public + admin) for status, evidence, and reporting
-- **Evidence storage** with screenshots, HTML snapshots, and analysis results
+- Public/admin dashboard is the primary interface for triage, reporting, and submissions.
+- Monitors Certificate Transparency logs with optional search discovery.
+- Scores domains with fuzzy matching, IDN/homograph checks, and heuristics.
+- Uses Playwright to analyze targets and collect evidence.
+- Stores evidence in SQLite plus screenshots and HTML; reporting helpers included.
+- Telegram bot for alerts and shortcuts (optional).
 
-## Quick Start
+## Flow
 
-### 1. Get your Telegram Chat ID
+CT logs + search + community reports -> scoring -> browser analysis -> detection -> evidence -> dashboard triage -> reporting
 
-Message [@userinfobot](https://t.me/userinfobot) on Telegram to get your chat ID.
+## Quick start
 
-### 2. Configure
+1) Configure
 
 ```bash
 cp .env.example .env
-# Edit .env with your TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+# Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID only if you want bot alerts (use @userinfobot to get your chat ID)
 ```
 
-### 3. Capture fingerprint (one-time setup)
-
-Before running, capture the legitimate wallet fingerprint for clone detection:
+2) Capture the legitimate wallet fingerprint (one time)
 
 ```bash
-# Local (requires Python 3.11+)
+# Local
 pip install -e .
 playwright install chromium
 python scripts/capture_fingerprint.py
 
-# Or via Docker
+# Docker
 docker-compose run --rm seedbuster python scripts/capture_fingerprint.py
 ```
 
-### 4. Run
+3) Run the stack (dashboard + pipeline)
 
-**Docker (recommended):**
 ```bash
 docker-compose up -d
 docker-compose logs -f
 ```
 
-**Local:**
+Dashboard runs on `http://localhost:8080` (admin at `/admin`).
+
+Or run locally (two terminals):
+
 ```bash
-pip install -e .
-playwright install chromium
 python -m src.main
-```
-
-### 5. Dashboard (optional)
-
-**Docker:**
-```bash
-docker-compose up -d dashboard
-```
-
-**Local (separate terminal):**
-```bash
 seedbuster-dashboard
-# or: python -m src.dashboard.main
 ```
 
-**Frontend dev (hot reload):**
+4) Frontend dev server (UI work)
+
 ```bash
 cd src/dashboard/frontend
-npm install  # first run
-VITE_ADMIN_AUTH=admin:your_password npm run dev -- --host
-```
-- Visit `http://localhost:5173/admin/` for the React/Vite dashboard with HMR. API calls are proxied to the Python server on `:8080`; set `VITE_ADMIN_AUTH` so dev requests include Basic auth.
-- Build static assets with `npm run build` (output to `src/dashboard/frontend/dist`). The aiohttp server will serve `/admin` from this `dist` folder automatically if it exists, and the Docker image now bundles the built frontend.
-- The legacy server-rendered admin remains reachable at `/admin/legacy` if you need the old view.
-
-## Telegram Commands
-
-| Command | Description |
-|---------|-------------|
-| `/status` | System health and stats |
-| `/recent [n]` | Show last N domains |
-| `/submit <url>` | Manually submit domain |
-| `/ack <id>` | Acknowledge alert |
-| `/fp <id>` | Mark false positive |
-| `/evidence <id>` | Get evidence files |
-| `/report <id>` | Submit to blocklists |
-| `/help` | Show all commands |
-
-## How It Works
-
-```
-CT Logs + Search APIs → Domain Filter → Scorer → Browser Analysis → Detection → Telegram Alert
-                                        ↓
-                              Evidence Storage (SQLite + files)
+npm install
+VITE_ADMIN_AUTH=admin:password npm run dev -- --host
 ```
 
-1. **Discovery**: Monitors Certificate Transparency logs (and optionally search APIs) for Kaspa-related sites
-2. **Scoring**: Fuzzy matching, IDN detection, suspicious TLD/keyword scoring
-3. **Analysis**: Playwright visits suspicious sites, collects screenshots/HTML
-4. **Detection**: Checks for seed phrase forms, visual similarity to wallet.kaspanet.io
-5. **Alerting**: Sends Telegram alerts with evidence for human review
+## Telegram (optional)
+
+`/status`, `/recent [n]`, `/submit <url>`, `/ack <id>`, `/fp <id>`, `/evidence <id>`, `/report <id>`, `/help`
 
 ## Configuration
 
-See `.env.example` for all options.
+- `.env.example` lists all options, including search discovery and reporting providers.
+- `REPORT_PLATFORMS` controls auto-reporting; providers that require manual steps emit instructions into evidence folders.
+- `config/allowlist.txt`, `config/denylist.txt`, `config/keywords.txt` tune discovery.
+- `config/heuristics.yaml` overrides scoring and detection without code changes.
+- Data and evidence live under `data/` (do not commit).
 
-Required:
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+## Repository layout
 
-Detection:
-- `DOMAIN_SCORE_THRESHOLD` - Minimum domain score to analyze (default: 30)
-- `ANALYSIS_SCORE_THRESHOLD` - Minimum analysis score to alert (default: 70)
-- `MAX_CONCURRENT_ANALYSES` - Parallel browser sessions (default: 3)
-- `ANALYSIS_TIMEOUT` - Browser timeout in seconds (default: 30)
-
-External intelligence (optional):
-- `VIRUSTOTAL_API_KEY`
-- `URLSCAN_API_KEY`
-
-Search discovery (optional):
-- `SEARCH_DISCOVERY_ENABLED` - If `true`, periodically queries search APIs for phishing results
-- `SEARCH_DISCOVERY_PROVIDER` - `google` or `bing`
-- `SEARCH_DISCOVERY_QUERIES` - `;`-separated list of search queries
-- `SEARCH_DISCOVERY_INTERVAL_MINUTES`, `SEARCH_DISCOVERY_RESULTS_PER_QUERY`
-- `SEARCH_DISCOVERY_ROTATE_PAGES` - If `true`, rotates through result pages to discover new results over time
-- `SEARCH_DISCOVERY_FORCE_ANALYZE` - If `true`, bypasses `DOMAIN_SCORE_THRESHOLD` for search hits
-- `SEARCH_DISCOVERY_EXCLUDE_DOMAINS` - Comma-separated domains to ignore (e.g. `reddit.com,youtube.com`)
-- `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` - For provider `google`
-- `BING_SEARCH_API_KEY` - For provider `bing`
-
-Reporting:
-- `REPORT_PLATFORMS` - Comma-separated list (default: `google,cloudflare,netcraft,resend`)
-- `REPORT_MIN_SCORE` - Minimum score required to report (default: 80)
-- `REPORT_REQUIRE_APPROVAL` - If `false`, auto-submit reports on initial scans when score ≥ `REPORT_MIN_SCORE`
-- `RESEND_API_KEY`, `RESEND_FROM_EMAIL` - Email reporting via Resend
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` - Email reporting via SMTP
-- `PHISHTANK_API_KEY` - Optional (PhishTank API access required)
-- `hosting_provider` platform - Optional helper that generates provider-specific manual abuse destinations + copy/paste blocks (useful if you don't have Resend/SMTP)
-- `registrar` platform - Optional helper that does an RDAP lookup for registrar abuse contacts and generates a copy/paste email template
-- `apwg` platform - Optional helper that generates instructions for reporting to `reportphishing@apwg.org` (APWG)
-- `microsoft` platform - Optional helper that generates instructions for reporting to Microsoft SmartScreen/WDSI
-- Cloudflare: the abuse form is protected by Turnstile, so SeedBuster typically generates a pre-filled preview/instructions for manual submission (see `.env.example` `CLOUDFLARE_*` fields).
-
-Manual reporting:
-- When a platform returns `manual_required`, SeedBuster writes `report_instructions_<platform>.txt` into the domain evidence folder and sends it after `/report` or "Approve & Report" (you can also use `/evidence <id>`).
-
-Paths:
-- `DATA_DIR` (default: `./data`)
-- `EVIDENCE_DIR` (default: `./data/evidence`)
-- `CONFIG_DIR` (default: `./config`)
-- Health/metrics endpoint: `HEALTH_HOST`/`HEALTH_PORT`/`HEALTH_ENABLED` (default `0.0.0.0:8081`), exposes `/healthz` and a tiny `/metrics`.
-- Heuristics tuning: copy `config/heuristics.example.yaml` to `config/heuristics.yaml` to override target patterns, keyword weights, exploration targets, etc. without code changes.
-
-Dashboard (optional):
-- Run separately via `seedbuster-dashboard` (or `python -m src.dashboard.main`)
-- `DASHBOARD_HOST`, `DASHBOARD_PORT`
-- `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD` - Basic auth for `/admin`
-
-## File Structure
-
-```
-seedbuster/
-├── src/
-│   ├── discovery/      # CT log listener, domain scoring
-│   ├── analyzer/       # Playwright browser, phishing detection
-│   ├── storage/        # SQLite database, evidence files
-│   ├── bot/            # Telegram bot handlers
-│   └── reporter/       # Blocklist reporting (Phase 3)
-├── config/
-│   ├── allowlist.txt   # Known good domains
-│   ├── denylist.txt    # Known bad domains
-│   └── keywords.txt    # Detection keywords
-├── data/
-│   ├── seedbuster.db   # SQLite database
-│   ├── evidence/       # Collected evidence
-│   └── fingerprints/   # Visual fingerprints
-└── tests/
-```
-
-## Roadmap
-
-- [x] **Phase 1**: Core pipeline with CT monitoring and Telegram alerts
-- [ ] **Phase 2**: Visual fingerprinting and smart clone detection
-- [ ] **Phase 3**: Automated reporting to Google Safe Browsing, PhishTank
-- [ ] **Phase 4**: Hardening, monitoring, cleanup policies
+- `src/` pipeline, services, and dashboard server
+- `src/dashboard/frontend/` React/Vite UI
+- `config/` heuristics and lists
+- `tests/` pytest suite
+- `scripts/` one-off tooling
 
 ## License
 
