@@ -2285,27 +2285,49 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         font-family: var(--font-mono);
         font-size: 11px;
         color: var(--text-tertiary);
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
         align-items: center;
-        flex-wrap: wrap;
         gap: 12px 20px;
       }}
 
-      .sb-footer-brand,
-      .sb-footer-links {{
+      .sb-footer-brand {{
         display: flex;
         align-items: center;
         gap: 12px;
         flex-wrap: wrap;
+        justify-self: start;
       }}
 
-      .sb-footer-links {{
-        justify-content: flex-end;
+      .sb-footer-mode {{
+        color: var(--text-secondary);
+      }}
+
+      .sb-footer-credit {{
+        justify-self: center;
+        text-align: center;
+      }}
+
+      .sb-footer-fork {{
+        justify-self: end;
+        position: relative;
+        padding-left: 12px;
+      }}
+
+      .sb-footer-fork::before {{
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 1px;
+        height: 12px;
+        background: var(--border-subtle);
+        opacity: 0.7;
       }}
 
       .sb-footer-donate {{
-        flex-basis: 100%;
+        grid-column: 1 / -1;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
@@ -2350,9 +2372,32 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
           align-items: flex-start;
         }}
 
-        .sb-footer-links {{
-          width: 100%;
-          justify-content: flex-start;
+        .sb-footer-brand {{
+          gap: 8px;
+        }}
+      }}
+
+      @media (min-width: 1200px) {{
+        .sb-footer {{
+          grid-template-columns: auto 1fr auto minmax(360px, 1.4fr);
+          align-items: center;
+        }}
+
+        .sb-footer-credit {{
+          text-align: center;
+        }}
+
+        .sb-footer-donate {{
+          grid-column: 4;
+          grid-row: 1;
+          flex-direction: row;
+          align-items: center;
+          justify-self: end;
+          gap: 6px;
+        }}
+
+        .sb-footer-wallet {{
+          width: auto;
         }}
       }}
 
@@ -2809,12 +2854,12 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       <footer class="sb-footer">
         <div class="sb-footer-brand">
           <span>SeedBuster Phishing Detection Pipeline</span>
-          <span>{("Admin" if admin else "Public")} view</span>
+          <span class="sb-footer-mode">{("Admin" if admin else "Public")} view</span>
         </div>
-        <div class="sb-footer-links">
+        <div class="sb-footer-credit">
           <span>Made with &#10084; by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a></span>
-          <a href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
         </div>
+        <a class="sb-footer-fork" href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
         <div class="sb-footer-donate">
           <span class="sb-footer-label">Consider donating:</span>
           <button

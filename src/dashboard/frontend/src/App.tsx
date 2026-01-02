@@ -3526,14 +3526,14 @@ export default function App() {
       <footer className="sb-footer">
         <div className="sb-footer-brand">
           <span>SeedBuster</span>
-          {isAdmin && <span>Admin view</span>}
+          {isAdmin && <span className="sb-footer-mode">Admin view</span>}
         </div>
-        <div className="sb-footer-links">
+        <div className="sb-footer-credit">
           <span>
             Made with ❤ by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a>
           </span>
-          <a href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
         </div>
+        <a className="sb-footer-fork" href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
         <div className="sb-footer-donate">
           <span className="sb-footer-label">Consider donating:</span>
           <button
