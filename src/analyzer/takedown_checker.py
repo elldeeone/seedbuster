@@ -244,18 +244,32 @@ class TakedownChecker:
         timeout = httpx.Timeout(8, connect=5)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             first_response = None
+            first_server_error = None
+            first_error = None
+            first_error_target = None
             for url in targets:
                 try:
                     resp = await client.get(url)
                     status = resp.status_code
                     if status >= 500:
-                        return {"status": status, "error": None, "target": url}
+                        if first_server_error is None:
+                            first_server_error = {"status": status, "error": None, "target": url}
+                        continue
                     if first_response is None:
                         first_response = {"status": status, "error": None, "target": url}
                 except Exception as exc:
-                    return {"status": None, "error": str(exc), "target": url}
+                    if first_error is None:
+                        first_error = str(exc)
+                        first_error_target = url
+                    continue
 
-        return first_response or {"status": None, "error": None, "target": None}
+        if first_response is not None:
+            return first_response
+        if first_server_error is not None:
+            return first_server_error
+        if first_error is not None:
+            return {"status": None, "error": first_error, "target": first_error_target}
+        return {"status": None, "error": None, "target": None}
 
     def _build_backend_targets(
         self,
