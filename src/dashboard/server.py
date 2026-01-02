@@ -2307,9 +2307,9 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       .sb-footer-donate {{
         flex-basis: 100%;
         display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
       }}
 
       .sb-footer-label {{
@@ -2317,14 +2317,32 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
       }}
 
       .sb-footer-wallet {{
+        border: none;
+        background: transparent;
+        padding: 0;
+        text-align: left;
+        font: inherit;
+        color: var(--text-secondary);
+        cursor: pointer;
+        text-decoration: underline dotted;
+        text-underline-offset: 3px;
+        transition: color var(--transition-fast);
+        display: block;
+        width: 100%;
+        white-space: normal;
         overflow-wrap: anywhere;
         word-break: break-word;
+        max-width: 100%;
       }}
 
-      .sb-footer-copy {{
-        padding: 4px 10px;
-        font-size: 11px;
-        background: transparent;
+      .sb-footer-wallet:hover {{
+        color: var(--text-primary);
+      }}
+
+      .sb-footer-wallet:focus-visible {{
+        outline: 2px solid var(--accent-blue);
+        outline-offset: 2px;
+        border-radius: var(--radius-sm);
       }}
 
       @media (max-width: 640px) {{
@@ -2737,18 +2755,8 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
           }}
         }}
 
-        const copyBtn = document.querySelector('.sb-footer-copy');
-        if (copyBtn) {{
-          let resetTimer = null;
-          const setLabel = function(label) {{
-            copyBtn.textContent = label;
-            if (resetTimer) {{
-              clearTimeout(resetTimer);
-            }}
-            resetTimer = setTimeout(function() {{
-              copyBtn.textContent = 'Copy';
-            }}, 1600);
-          }};
+        const walletBtn = document.querySelector('.sb-footer-wallet');
+        if (walletBtn) {{
           const fallbackCopy = function(wallet) {{
             const textarea = document.createElement('textarea');
             textarea.value = wallet;
@@ -2766,22 +2774,19 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
             }}
             return ok;
           }};
-          copyBtn.addEventListener('click', function() {{
-            const wallet = copyBtn.getAttribute('data-wallet');
+          walletBtn.addEventListener('click', function() {{
+            const wallet = walletBtn.getAttribute('data-wallet');
             if (!wallet) {{
               return;
             }}
             if (navigator.clipboard && window.isSecureContext) {{
               navigator.clipboard.writeText(wallet)
-                .then(function() {{
-                  setLabel('Copied');
-                }})
                 .catch(function() {{
-                  setLabel(fallbackCopy(wallet) ? 'Copied' : 'Copy failed');
+                  fallbackCopy(wallet);
                 }});
               return;
             }}
-            setLabel(fallbackCopy(wallet) ? 'Copied' : 'Copy failed');
+            fallbackCopy(wallet);
           }});
         }}
       }});
@@ -2812,8 +2817,15 @@ def _layout(*, title: str, body: str, admin: bool) -> str:
         </div>
         <div class="sb-footer-donate">
           <span class="sb-footer-label">Consider donating:</span>
-          <span class="sb-footer-wallet">{DONATION_WALLET}</span>
-          <button class="sb-btn sb-footer-copy" type="button" data-wallet="{DONATION_WALLET}">Copy</button>
+          <button
+            class="sb-footer-wallet"
+            type="button"
+            data-wallet="{DONATION_WALLET}"
+            title="Click to copy wallet"
+            aria-label="Copy donation wallet"
+          >
+            {DONATION_WALLET}
+          </button>
         </div>
       </footer>
     </div>

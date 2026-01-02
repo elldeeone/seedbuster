@@ -3536,9 +3536,14 @@ export default function App() {
         </div>
         <div className="sb-footer-donate">
           <span className="sb-footer-label">Consider donating:</span>
-          <span className="sb-footer-wallet">{DONATION_WALLET}</span>
-          <button className="sb-btn sb-footer-copy" type="button" onClick={copyDonationWallet} title="Copy donation wallet">
-            Copy
+          <button
+            className="sb-footer-wallet"
+            type="button"
+            onClick={copyDonationWallet}
+            title="Click to copy wallet"
+            aria-label="Copy donation wallet"
+          >
+            {DONATION_WALLET}
           </button>
         </div>
       </footer>

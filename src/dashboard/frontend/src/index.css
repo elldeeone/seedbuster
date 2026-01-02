@@ -2210,9 +2210,9 @@ button {
 .sb-footer-donate {
   flex-basis: 100%;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
 }
 
 .sb-footer-label {
@@ -2220,14 +2220,32 @@ button {
 }
 
 .sb-footer-wallet {
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  transition: color var(--transition-fast);
+  display: block;
+  width: 100%;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+  max-width: 100%;
 }
 
-.sb-footer-copy {
-  padding: 4px 10px;
-  font-size: 11px;
-  background: transparent;
+.sb-footer-wallet:hover {
+  color: var(--text-primary);
+}
+
+.sb-footer-wallet:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 @media (max-width: 640px) {
