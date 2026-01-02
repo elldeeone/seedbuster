@@ -21,7 +21,7 @@ from src.dashboard.server import (
     _status_badge,
     _verdict_badge,
 )
-from src.storage.database import Database, Verdict
+from src.storage.database import Database, Verdict, DomainStatus
 
 
 # =============================================================================
@@ -509,6 +509,18 @@ async def test_admin_api_takedown_checks(dashboard_server, database):
         confidence=0.1,
         provider_signal="ok",
     )
+    allowlisted_id = await database.add_domain(
+        domain="takedown.allowlisted.com",
+        source="manual",
+        domain_score=10,
+    )
+    await database.update_domain_status(allowlisted_id, DomainStatus.ALLOWLISTED)
+    await database.add_takedown_check(
+        domain_id=allowlisted_id,
+        http_status=200,
+        takedown_status="active",
+        confidence=0.0,
+    )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
         resp = await client.get(
@@ -528,6 +540,15 @@ async def test_admin_api_takedown_checks(dashboard_server, database):
         data = await resp.json()
         assert data["count"] == 1
         assert data["checks"][0]["domain"] == "takedown.test.com"
+
+        resp = await client.get(
+            "/admin/api/takedown-checks",
+            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["count"] == 2
+        assert all(check["domain"] != "takedown.allowlisted.com" for check in data["checks"])
 
 
 @pytest.mark.asyncio

@@ -5950,6 +5950,7 @@ class DashboardServer:
     async def _admin_api_takedown_checks(self, request: web.Request) -> web.Response:
         domain_id = (request.query.get("domain_id") or "").strip()
         domain_query = (request.query.get("domain") or request.query.get("q") or "").strip()
+        exclude_statuses_raw = (request.query.get("exclude_statuses") or "").strip().lower()
         status = (request.query.get("status") or "").strip().lower()
         signal = (
             request.query.get("signal")
@@ -5984,9 +5985,15 @@ class DashboardServer:
             except ValueError:
                 raise web.HTTPBadRequest(text="domain_id must be an integer")
 
+        if "exclude_statuses" in request.query:
+            exclude_statuses = [s.strip() for s in exclude_statuses_raw.split(",") if s.strip()]
+        else:
+            exclude_statuses = ["allowlisted", "false_positive"]
+
         rows = await self.database.get_takedown_checks(
             domain_id=domain_id_value,
             domain_query=domain_query or None,
+            exclude_statuses=exclude_statuses,
             limit=limit,
             offset=offset,
             status=status or None,

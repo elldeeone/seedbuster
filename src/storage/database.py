@@ -2121,6 +2121,7 @@ class Database:
         *,
         domain_id: Optional[int] = None,
         domain_query: Optional[str] = None,
+        exclude_statuses: Optional[list[str]] = None,
         limit: int = 100,
         offset: int = 0,
         status: Optional[str] = None,
@@ -2147,6 +2148,14 @@ class Database:
                 )
                 pattern = f"%{normalized}%"
                 params.extend([pattern, pattern])
+        if exclude_statuses:
+            normalized_statuses = [s.strip().lower() for s in exclude_statuses if s.strip()]
+            if normalized_statuses:
+                placeholders = ",".join("?" for _ in normalized_statuses)
+                clauses.append(
+                    f"(d.status IS NULL OR LOWER(d.status) NOT IN ({placeholders}))"
+                )
+                params.extend(normalized_statuses)
         if status:
             clauses.append("tc.takedown_status = ?")
             params.append(status)
