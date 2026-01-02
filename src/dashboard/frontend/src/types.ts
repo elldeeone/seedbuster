@@ -68,6 +68,34 @@ export interface Report {
   response?: string;
 }
 
+export interface TakedownCheck {
+  id?: number;
+  domain_id?: number;
+  domain?: string | null;
+  checked_at?: string | null;
+  http_status?: number | null;
+  http_error?: string | null;
+  dns_resolves?: boolean | null;
+  dns_result?: string | null;
+  is_sinkholed?: boolean | null;
+  domain_status?: string | null;
+  content_hash?: string | null;
+  still_phishing?: boolean | null;
+  takedown_status?: string | null;
+  confidence?: number | null;
+  provider_signal?: string | null;
+  backend_status?: number | null;
+  backend_error?: string | null;
+  backend_target?: string | null;
+}
+
+export interface TakedownChecksResponse {
+  checks: TakedownCheck[];
+  count: number;
+  limit: number;
+  offset: number;
+}
+
 export interface EvidenceSummary {
   html?: string | null;
   analysis?: string | null;
@@ -97,6 +125,7 @@ export interface RescanRequestInfo {
 export interface DomainDetailResponse {
   domain: Domain;
   reports: Report[];
+  takedown_checks?: TakedownCheck[];
   evidence: EvidenceSummary;
   related_domains?: Domain[];
   campaign?: Campaign | null;

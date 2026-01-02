@@ -9,6 +9,7 @@ import type {
   PublicSubmission,
   ReportOptionsResponse,
   Stats,
+  TakedownChecksResponse,
 } from "./types";
 
 // Detect admin vs public mode based solely on server-injected flag.
@@ -102,6 +103,30 @@ export async function fetchDomains(params: {
   qs.set("page", String(params.page || 1));
   qs.set("limit", String(params.limit || 100));
   return request<DomainsResponse>(`/domains?${qs.toString()}`);
+}
+
+export async function fetchTakedownChecks(params: {
+  domainId?: number;
+  domain?: string;
+  status?: string;
+  signal?: string;
+  backendOnly?: boolean;
+  limit?: number;
+  offset?: number;
+  since?: string;
+  until?: string;
+}): Promise<TakedownChecksResponse> {
+  const qs = new URLSearchParams();
+  if (params.domainId) qs.set("domain_id", String(params.domainId));
+  if (params.domain) qs.set("domain", params.domain);
+  if (params.status) qs.set("status", params.status);
+  if (params.signal) qs.set("signal", params.signal);
+  if (params.backendOnly) qs.set("backend_only", "true");
+  if (params.since) qs.set("since", params.since);
+  if (params.until) qs.set("until", params.until);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  return request<TakedownChecksResponse>(`/takedown-checks?${qs.toString()}`);
 }
 
 

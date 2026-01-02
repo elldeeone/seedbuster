@@ -4759,6 +4759,7 @@ class DashboardServer:
         self._app.router.add_get("/admin/api/stats", self._admin_api_stats)
         self._app.router.add_get("/admin/api/domains", self._admin_api_domains)
         self._app.router.add_get("/admin/api/domains/{domain_id}", self._admin_api_domain)
+        self._app.router.add_get("/admin/api/takedown-checks", self._admin_api_takedown_checks)
         self._app.router.add_post("/admin/api/submit", self._admin_api_submit)
         self._app.router.add_post("/admin/api/domains/{domain_id}/rescan", self._admin_api_rescan)
         self._app.router.add_post("/admin/api/domains/bulk-rescan", self._admin_api_bulk_rescan)
@@ -5946,6 +5947,61 @@ class DashboardServer:
             }
         )
 
+    async def _admin_api_takedown_checks(self, request: web.Request) -> web.Response:
+        domain_id = (request.query.get("domain_id") or "").strip()
+        domain_query = (request.query.get("domain") or request.query.get("q") or "").strip()
+        status = (request.query.get("status") or "").strip().lower()
+        signal = (
+            request.query.get("signal")
+            or request.query.get("provider_signal")
+            or ""
+        ).strip()
+        backend_only = (request.query.get("backend_only") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        since = (request.query.get("since") or "").strip()
+        until = (request.query.get("until") or "").strip()
+
+        limit = _coerce_int(
+            request.query.get("limit"),
+            default=100,
+            min_value=1,
+            max_value=500,
+        )
+        offset = _coerce_int(
+            request.query.get("offset"),
+            default=0,
+            min_value=0,
+            max_value=1_000_000,
+        )
+
+        domain_id_value = None
+        if domain_id:
+            try:
+                domain_id_value = int(domain_id)
+            except ValueError:
+                raise web.HTTPBadRequest(text="domain_id must be an integer")
+
+        rows = await self.database.get_takedown_checks(
+            domain_id=domain_id_value,
+            domain_query=domain_query or None,
+            limit=limit,
+            offset=offset,
+            status=status or None,
+            provider_signal=signal or None,
+            backend_only=backend_only,
+            since=since or None,
+            until=until or None,
+        )
+        return web.json_response({
+            "checks": rows,
+            "count": len(rows),
+            "limit": limit,
+            "offset": offset,
+        })
+
 
     async def _admin_api_domain(self, request: web.Request) -> web.Response:
         domain_id = int(request.match_info.get("domain_id") or 0)
@@ -5961,6 +6017,9 @@ class DashboardServer:
             or self._is_allowlisted_domain(row["domain"])
         )
         reports = [] if is_allowlisted else await self.database.get_reports_for_domain(domain_id)
+        takedown_checks = (
+            [] if is_allowlisted else await self.database.get_recent_takedown_checks(domain_id)
+        )
         evidence = {}
         infrastructure = {}
         instruction_files: list[str] = []
@@ -6139,6 +6198,7 @@ class DashboardServer:
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
                 "rescan_request": rescan_request_info,
+                "takedown_checks": takedown_checks,
                 "snapshots": snapshots,
                 "snapshot": snapshot,
             }

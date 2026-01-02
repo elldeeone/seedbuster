@@ -9,6 +9,7 @@ import {
   fetchBulkRescanStatus,
   fetchDomainDetail,
   fetchDomains,
+  fetchTakedownChecks,
   fetchPublicSubmissions,
   fetchStats,
   isAdminMode,
@@ -47,6 +48,7 @@ import type {
   Stats,
   RescanRequestInfo,
   SnapshotSummary,
+  TakedownCheck,
 } from "./types";
 
 type Route =
@@ -57,10 +59,18 @@ type Route =
 
 type AllowlistEntry = { domain: string; locked: boolean };
 type DomainSimilarity = { left: string; right: string; similarity: number };
+type TakedownCheckFilters = {
+  domain: string;
+  status: string;
+  signal: string;
+  backendOnly: boolean;
+  limit: number;
+};
 
 const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
 const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
+const TAKEDOWN_CHECK_STATUS_OPTIONS = ["", "active", "likely_down", "confirmed_down"];
 
 // Statuses to exclude when using "dangerous" filter mode
 const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
@@ -121,6 +131,12 @@ const truncateHash = (value?: string | null, length = 10) => {
   if (!value) return "";
   if (value.length <= length) return value;
   return `${value.slice(0, length)}...`;
+};
+
+const truncateText = (value?: string | null, length = 48) => {
+  if (!value) return "—";
+  if (value.length <= length) return value;
+  return `${value.slice(0, Math.max(0, length - 3))}...`;
 };
 
 const formatSnapshotLabel = (snapshot: SnapshotSummary) => {
@@ -843,6 +859,87 @@ const ReportsTable = ({ data }: { data: DomainDetailResponse | null }) => {
   );
 };
 
+const renderTakedownHttp = (row: TakedownCheck) => {
+  const status = row.http_status;
+  const error = row.http_error;
+  const label = status != null ? `HTTP ${status}` : error ? "error" : "—";
+  return (
+    <div>
+      <div>{label}</div>
+      {error && (
+        <div className="sb-muted" title={error}>{truncateText(error, 64)}</div>
+      )}
+    </div>
+  );
+};
+
+const renderTakedownBackend = (row: TakedownCheck) => {
+  const status = row.backend_status;
+  const error = row.backend_error;
+  const target = row.backend_target;
+  const label = status != null ? `HTTP ${status}` : error ? "error" : "—";
+  return (
+    <div>
+      <div>{label}</div>
+      {target && (
+        <div className="sb-muted" title={target}>{truncateText(target, 64)}</div>
+      )}
+      {error && (
+        <div className="sb-muted" title={error}>{truncateText(error, 64)}</div>
+      )}
+    </div>
+  );
+};
+
+const TakedownChecksTable = ({ data }: { data: DomainDetailResponse | null }) => {
+  if (!data) return null;
+  const rows = data.takedown_checks || [];
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="sb-panel">
+      <div className="sb-panel-header">
+        <span className="sb-panel-title">Takedown Checks</span>
+        <span className="sb-muted">{rows.length} recent</span>
+      </div>
+      <div className="sb-table-wrap">
+        <table className="sb-table">
+          <thead>
+            <tr>
+              <th>Checked</th>
+              <th>Status</th>
+              <th>Confidence</th>
+              <th>HTTP</th>
+              <th>Backend</th>
+              <th>Signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id || row.checked_at || Math.random()}>
+                <td className="sb-muted">{row.checked_at ? timeAgo(row.checked_at) : "—"}</td>
+                <td>
+                  <span className={badgeClass(row.takedown_status || "unknown", "status")}>
+                    {(row.takedown_status || "unknown").toUpperCase()}
+                  </span>
+                </td>
+                <td className="sb-muted">
+                  {typeof row.confidence === "number" ? row.confidence.toFixed(2) : "—"}
+                </td>
+                <td>{renderTakedownHttp(row)}</td>
+                <td>{renderTakedownBackend(row)}</td>
+                <td className="sb-muted">
+                  {row.provider_signal ? truncateText(row.provider_signal, 48) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const renderDomainSimilarity = (pairs?: DomainSimilarity[]) => {
   if (!pairs || pairs.length === 0) return null;
   return (
@@ -1037,6 +1134,18 @@ export default function App() {
   // Analytics (admin)
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [takedownChecks, setTakedownChecks] = useState<TakedownCheck[]>([]);
+  const [takedownChecksLoading, setTakedownChecksLoading] = useState(false);
+  const [takedownChecksError, setTakedownChecksError] = useState<string | null>(null);
+  const [takedownChecksCount, setTakedownChecksCount] = useState(0);
+  const [takedownChecksOffset, setTakedownChecksOffset] = useState(0);
+  const [takedownCheckFilters, setTakedownCheckFilters] = useState<TakedownCheckFilters>({
+    domain: "",
+    status: "",
+    signal: "",
+    backendOnly: false,
+    limit: 100,
+  });
 
   // Detect admin mode for conditional rendering
   const isAdmin = isAdminMode();
@@ -1215,6 +1324,33 @@ export default function App() {
     }
   }, [canEdit]);
 
+  const updateTakedownFilters = useCallback((updates: Partial<TakedownCheckFilters>) => {
+    setTakedownCheckFilters((prev) => ({ ...prev, ...updates }));
+    setTakedownChecksOffset(0);
+  }, []);
+
+  const loadTakedownChecks = useCallback(async () => {
+    if (!canEdit) return;
+    setTakedownChecksLoading(true);
+    setTakedownChecksError(null);
+    try {
+      const res = await fetchTakedownChecks({
+        domain: takedownCheckFilters.domain || undefined,
+        status: takedownCheckFilters.status || undefined,
+        signal: takedownCheckFilters.signal || undefined,
+        backendOnly: takedownCheckFilters.backendOnly,
+        limit: takedownCheckFilters.limit,
+        offset: takedownChecksOffset,
+      });
+      setTakedownChecks(res.checks || []);
+      setTakedownChecksCount(res.count ?? 0);
+    } catch (err) {
+      setTakedownChecksError((err as Error).message || "Failed to load takedown checks");
+    } finally {
+      setTakedownChecksLoading(false);
+    }
+  }, [canEdit, takedownCheckFilters, takedownChecksOffset]);
+
   const loadAllowlist = useCallback(async () => {
     if (!canEdit) return;
     setAllowlistLoading(true);
@@ -1293,6 +1429,15 @@ export default function App() {
       setPublicSubmissions([]);
     }
   }, [canEdit, loadPublicSubmissions, loadAnalytics]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      setTakedownChecks([]);
+      setTakedownChecksCount(0);
+      return;
+    }
+    loadTakedownChecks();
+  }, [canEdit, loadTakedownChecks]);
 
   useEffect(() => {
     if (route.name === "domain") {
@@ -2277,6 +2422,149 @@ export default function App() {
         </div>
       )}
 
+      {canEdit && (
+        <div className="sb-panel" style={{ borderColor: "rgba(88, 166, 255, 0.3)", marginBottom: 16 }}>
+          <div className="sb-panel-header" style={{ borderColor: "rgba(88, 166, 255, 0.2)", flexWrap: "wrap" }}>
+            <span className="sb-panel-title" style={{ color: "var(--accent-blue)" }}>Takedown Checks</span>
+            <div className="sb-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <span className="sb-muted" style={{ fontSize: 12 }}>
+                {takedownChecksCount} shown
+              </span>
+              <button className="sb-btn" onClick={loadTakedownChecks} disabled={takedownChecksLoading}>
+                {takedownChecksLoading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
+          </div>
+          <div className="sb-row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <input
+              className="sb-input"
+              placeholder="Filter domain"
+              value={takedownCheckFilters.domain}
+              onChange={(e) => updateTakedownFilters({ domain: e.target.value })}
+              style={{ minWidth: 200 }}
+            />
+            <select
+              className="sb-select"
+              value={takedownCheckFilters.status}
+              onChange={(e) => updateTakedownFilters({ status: e.target.value })}
+            >
+              {TAKEDOWN_CHECK_STATUS_OPTIONS.map((option) => (
+                <option key={option || "all"} value={option}>
+                  {option ? option.replace(/_/g, " ") : "All Statuses"}
+                </option>
+              ))}
+            </select>
+            <input
+              className="sb-input"
+              placeholder="Signal filter"
+              value={takedownCheckFilters.signal}
+              onChange={(e) => updateTakedownFilters({ signal: e.target.value })}
+              style={{ minWidth: 180 }}
+            />
+            <label className="sb-row" style={{ gap: 6, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={takedownCheckFilters.backendOnly}
+                onChange={(e) => updateTakedownFilters({ backendOnly: e.target.checked })}
+              />
+              <span className="sb-muted" style={{ fontSize: 12 }}>Backend only</span>
+            </label>
+            <select
+              className="sb-select"
+              value={String(takedownCheckFilters.limit)}
+              onChange={(e) => updateTakedownFilters({ limit: Number(e.target.value) || 100 })}
+            >
+              {LIMIT_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option} / page</option>
+              ))}
+            </select>
+          </div>
+          {takedownChecksError && (
+            <div className="sb-notice" style={{ color: "var(--accent-red)", marginBottom: 8 }}>{takedownChecksError}</div>
+          )}
+          {takedownChecksLoading && <div className="skeleton" style={{ height: 12 }} />}
+          {!takedownChecksLoading && takedownChecks.length === 0 && (
+            <div className="sb-muted">No takedown checks yet.</div>
+          )}
+          {!takedownChecksLoading && takedownChecks.length > 0 && (
+            <div className="sb-table-wrap">
+              <table className="sb-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Checked</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                    <th>HTTP</th>
+                    <th>Backend</th>
+                    <th>Signal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {takedownChecks.map((row) => (
+                    <tr key={row.id || `${row.domain_id || "row"}-${row.checked_at || Math.random()}`}>
+                      <td>
+                        {row.domain_id ? (
+                          <a
+                            className="domain-link"
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.location.hash = `#/domains/${row.domain_id}`;
+                            }}
+                          >
+                            {row.domain || `Domain ${row.domain_id}`}
+                          </a>
+                        ) : (
+                          <span>{row.domain || "—"}</span>
+                        )}
+                      </td>
+                      <td className="sb-muted" title={row.checked_at || undefined}>
+                        {row.checked_at ? timeAgo(row.checked_at) : "—"}
+                      </td>
+                      <td>
+                        <span className={badgeClass(row.takedown_status || "unknown", "status")}>
+                          {(row.takedown_status || "unknown").toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="sb-muted">
+                        {typeof row.confidence === "number" ? row.confidence.toFixed(2) : "—"}
+                      </td>
+                      <td>{renderTakedownHttp(row)}</td>
+                      <td>{renderTakedownBackend(row)}</td>
+                      <td className="sb-muted">
+                        {row.provider_signal ? truncateText(row.provider_signal, 48) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="sb-row" style={{ justifyContent: "space-between", marginTop: 8, flexWrap: "wrap", gap: 8 }}>
+            <span className="sb-muted" style={{ fontSize: 12 }}>
+              Offset {takedownChecksOffset}
+            </span>
+            <div className="sb-row" style={{ gap: 6 }}>
+              <button
+                className="sb-btn"
+                disabled={takedownChecksOffset <= 0 || takedownChecksLoading}
+                onClick={() => setTakedownChecksOffset((prev) => Math.max(0, prev - takedownCheckFilters.limit))}
+              >
+                Newer
+              </button>
+              <button
+                className="sb-btn"
+                disabled={takedownChecksLoading || takedownChecks.length < takedownCheckFilters.limit}
+                onClick={() => setTakedownChecksOffset((prev) => prev + takedownCheckFilters.limit)}
+              >
+                Older
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Domain table - full width */}
       <DomainTable
         domains={domains}
@@ -2946,6 +3234,7 @@ export default function App() {
             </div>
           )}
 
+          {!isAllowlisted && <TakedownChecksTable data={domainDetail} />}
           {!isAllowlisted && <EvidenceSection data={domainDetail} snapshotLabel={snapshotLabel} />}
           {!isAllowlisted && <ReportsTable data={domainDetail} />}
 

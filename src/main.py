@@ -5,6 +5,7 @@ import json
 import logging
 import signal
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
 from .config import load_config, Config, validate_config
@@ -96,7 +97,11 @@ class SeedBusterPipeline:
             scoring_weights=config.scoring_weights,
         )
         self.threat_intel_updater = ThreatIntelUpdater(config.config_dir)
-        self.takedown_checker = TakedownChecker()
+        self.takedown_checker = TakedownChecker(
+            backend_probe_paths=config.takedown_backend_probe_paths,
+            backend_status_weight=config.takedown_backend_status_weight,
+            backend_error_weight=config.takedown_backend_error_weight,
+        )
 
         # Initialize report manager
         self.report_manager = ReportManager(
@@ -917,9 +922,24 @@ class SeedBusterPipeline:
                             return 0
                         try:
                             check_time = datetime.now(timezone.utc)
+                            analysis = None
+                            evidence_path = row.get("evidence_path")
+                            analysis_path = None
+                            if evidence_path:
+                                analysis_path = Path(str(evidence_path)) / "analysis.json"
+                            if not analysis_path or not analysis_path.exists():
+                                analysis_path = self.evidence_store.get_analysis_path(domain)
+                            if analysis_path and analysis_path.exists():
+                                try:
+                                    analysis = json.loads(
+                                        analysis_path.read_text(encoding="utf-8")
+                                    )
+                                except Exception:
+                                    analysis = None
                             result = await self.takedown_checker.check_domain(
                                 domain,
                                 previous_status=row.get("takedown_status"),
+                                analysis=analysis,
                             )
                             await self.database.add_takedown_check(
                                 domain_id=int(row.get("id") or 0),
@@ -933,6 +953,10 @@ class SeedBusterPipeline:
                                 still_phishing=None,
                                 takedown_status=result.status.value,
                                 confidence=result.confidence,
+                                provider_signal=result.provider_signal,
+                                backend_status=result.backend_status,
+                                backend_error=result.backend_error,
+                                backend_target=result.backend_target,
                             )
 
                             detected_at = None

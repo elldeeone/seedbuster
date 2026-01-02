@@ -133,6 +133,15 @@ DEFAULT_SUBSTITUTIONS: dict[str, str] = {
     "$": "s",
 }
 
+DEFAULT_TAKEDOWN_BACKEND_PROBE_PATHS: list[str] = [
+    "/api/health",
+    "/api/status",
+    "/api/ping",
+    "/api",
+    "/health",
+    "/status",
+]
+
 
 @dataclass
 class Config:
@@ -223,6 +232,11 @@ class Config:
     takedown_interval_older_hours: int = 3
     takedown_interval_likely_down_minutes: int = 30
     takedown_interval_confirmed_down_hours: int = 6
+    takedown_backend_probe_paths: list[str] = field(
+        default_factory=lambda: list(DEFAULT_TAKEDOWN_BACKEND_PROBE_PATHS)
+    )
+    takedown_backend_status_weight: float = 0.4
+    takedown_backend_error_weight: float = 0.4
 
     # Paths
     data_dir: Path = field(default_factory=lambda: Path("./data"))
@@ -546,6 +560,24 @@ def _load_heuristics(config_dir: Path) -> dict:
     }
 
 
+def _parse_csv_list(value: str | None, default: list[str]) -> list[str]:
+    if not value:
+        return list(default)
+    parts = [item.strip() for item in value.split(",") if item.strip()]
+    return parts or list(default)
+
+
+def _parse_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(0.0, min(1.0, value))
+
+
 def load_config() -> Config:
     """Load configuration from environment variables."""
     load_dotenv()
@@ -646,6 +678,18 @@ def load_config() -> Config:
         ),
         takedown_interval_confirmed_down_hours=max(
             1, int(os.getenv("TAKEDOWN_INTERVAL_CONFIRMED_DOWN_HOURS", "6"))
+        ),
+        takedown_backend_probe_paths=_parse_csv_list(
+            os.getenv("TAKEDOWN_BACKEND_PROBE_PATHS"),
+            DEFAULT_TAKEDOWN_BACKEND_PROBE_PATHS,
+        ),
+        takedown_backend_status_weight=_parse_float_env(
+            "TAKEDOWN_BACKEND_STATUS_WEIGHT",
+            0.4,
+        ),
+        takedown_backend_error_weight=_parse_float_env(
+            "TAKEDOWN_BACKEND_ERROR_WEIGHT",
+            0.4,
         ),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),
         evidence_dir=Path(os.getenv("EVIDENCE_DIR", "./data/evidence")),

@@ -268,6 +268,8 @@ class CodeRule:
             "code_reasons": code_result.risk_reasons,
             "kit_matches": [kit.kit_name for kit in code_result.kit_matches],
         }
+        if code_result.c2_endpoints:
+            metadata["suspicious_endpoints"] = list(code_result.c2_endpoints)
         return RuleResult(
             self.name,
             score=code_result.risk_score,

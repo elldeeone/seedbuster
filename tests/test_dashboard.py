@@ -481,6 +481,56 @@ async def test_admin_api_domain_detail(dashboard_server, database):
 
 
 @pytest.mark.asyncio
+async def test_admin_api_takedown_checks(dashboard_server, database):
+    """Admin API returns takedown checks."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    domain_id = await database.add_domain(
+        domain="takedown.test.com",
+        source="manual",
+        domain_score=70,
+    )
+    other_domain_id = await database.add_domain(
+        domain="takedown.other.com",
+        source="manual",
+        domain_score=50,
+    )
+    await database.add_takedown_check(
+        domain_id=domain_id,
+        http_status=503,
+        takedown_status="likely_down",
+        confidence=0.4,
+        provider_signal="backend:503",
+    )
+    await database.add_takedown_check(
+        domain_id=other_domain_id,
+        http_status=200,
+        takedown_status="active",
+        confidence=0.1,
+        provider_signal="ok",
+    )
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        resp = await client.get(
+            f"/admin/api/takedown-checks?domain_id={domain_id}",
+            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["count"] == 1
+        assert data["checks"][0]["domain_id"] == domain_id
+
+        resp = await client.get(
+            "/admin/api/takedown-checks?domain=takedown.test.com",
+            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["count"] == 1
+        assert data["checks"][0]["domain"] == "takedown.test.com"
+
+
+@pytest.mark.asyncio
 async def test_admin_api_domain_not_found(dashboard_server):
     """Missing domain returns 404 from API."""
     from aiohttp.test_utils import TestClient, TestServer

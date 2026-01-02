@@ -200,6 +200,10 @@ class Database:
                         still_phishing BOOLEAN,
                         takedown_status TEXT,
                         confidence REAL,
+                        provider_signal TEXT,
+                        backend_status INTEGER,
+                        backend_error TEXT,
+                        backend_target TEXT,
                         FOREIGN KEY (domain_id) REFERENCES domains(id)
                     );
                 """
@@ -209,6 +213,7 @@ class Database:
         # Migrations must run before creating indexes that reference newer columns,
         # otherwise existing DBs on older schemas would fail to start up.
         await self._migrate_domains_table()
+        await self._migrate_takedown_checks_table()
         await self._migrate_reports_table()
         await self._migrate_report_engagement_table()
         await self._migrate_dashboard_actions_table()
@@ -265,6 +270,30 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_confirmed_at TIMESTAMP")
         if "scam_type" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN scam_type TEXT")
+
+        for stmt in migrations:
+            try:
+                await self._connection.execute(stmt)
+            except Exception:
+                continue
+        if migrations:
+            await self._connection.commit()
+
+    async def _migrate_takedown_checks_table(self) -> None:
+        """Add columns to takedown_checks table (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(takedown_checks)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+
+        migrations: list[str] = []
+        if "provider_signal" not in existing:
+            migrations.append("ALTER TABLE takedown_checks ADD COLUMN provider_signal TEXT")
+        if "backend_status" not in existing:
+            migrations.append("ALTER TABLE takedown_checks ADD COLUMN backend_status INTEGER")
+        if "backend_error" not in existing:
+            migrations.append("ALTER TABLE takedown_checks ADD COLUMN backend_error TEXT")
+        if "backend_target" not in existing:
+            migrations.append("ALTER TABLE takedown_checks ADD COLUMN backend_target TEXT")
 
         for stmt in migrations:
             try:
@@ -2023,6 +2052,10 @@ class Database:
         still_phishing: Optional[bool] = None,
         takedown_status: Optional[str] = None,
         confidence: Optional[float] = None,
+        provider_signal: Optional[str] = None,
+        backend_status: Optional[int] = None,
+        backend_error: Optional[str] = None,
+        backend_target: Optional[str] = None,
     ) -> int:
         """Insert a takedown check row."""
         async with self._lock:
@@ -2039,8 +2072,12 @@ class Database:
                     content_hash,
                     still_phishing,
                     takedown_status,
-                    confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    confidence,
+                    provider_signal,
+                    backend_status,
+                    backend_error,
+                    backend_target
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     domain_id,
@@ -2054,6 +2091,10 @@ class Database:
                     still_phishing,
                     takedown_status,
                     confidence,
+                    provider_signal,
+                    backend_status,
+                    backend_error,
+                    backend_target,
                 ),
             )
             await self._connection.commit()
@@ -2072,6 +2113,69 @@ class Database:
                 """,
                 (domain_id, limit),
             )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_takedown_checks(
+        self,
+        *,
+        domain_id: Optional[int] = None,
+        domain_query: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        status: Optional[str] = None,
+        provider_signal: Optional[str] = None,
+        backend_only: bool = False,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> list[dict]:
+        """Return takedown checks with optional filters."""
+        clauses: list[str] = []
+        params: list[object] = []
+
+        if domain_id:
+            clauses.append("tc.domain_id = ?")
+            params.append(domain_id)
+        if domain_query:
+            normalized = domain_query.strip().lower()
+            if normalized:
+                clauses.append(
+                    "("
+                    "LOWER(d.domain) LIKE ? OR "
+                    "LOWER(d.canonical_domain) LIKE ?"
+                    ")"
+                )
+                pattern = f"%{normalized}%"
+                params.extend([pattern, pattern])
+        if status:
+            clauses.append("tc.takedown_status = ?")
+            params.append(status)
+        if provider_signal:
+            clauses.append("LOWER(tc.provider_signal) LIKE ?")
+            params.append(f"%{provider_signal.lower()}%")
+        if backend_only:
+            clauses.append(
+                "("
+                "tc.backend_status IS NOT NULL OR "
+                "tc.backend_error IS NOT NULL OR "
+                "tc.backend_target IS NOT NULL"
+                ")"
+            )
+        if since:
+            clauses.append("datetime(tc.checked_at) >= datetime(?)")
+            params.append(since)
+        if until:
+            clauses.append("datetime(tc.checked_at) <= datetime(?)")
+            params.append(until)
+
+        query = "SELECT tc.*, d.domain FROM takedown_checks tc LEFT JOIN domains d ON d.id = tc.domain_id"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY datetime(tc.checked_at) DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        async with self._lock:
+            cursor = await self._connection.execute(query, params)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -2130,6 +2234,7 @@ class Database:
                     d.reported_at,
                     d.created_at,
                     d.takedown_status,
+                    d.evidence_path,
                     MAX(tc.checked_at) AS last_checked_at
                 FROM domains d
                 LEFT JOIN takedown_checks tc ON tc.domain_id = d.id
