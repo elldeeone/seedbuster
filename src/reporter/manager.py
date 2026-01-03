@@ -2020,11 +2020,18 @@ Note: Cloudflare uses Turnstile; submission is typically manual.
 """
         elif platform == "google":
             additional_info = ReportTemplates.google_safebrowsing_comment(evidence)
+            form_url = "https://safebrowsing.google.com/safebrowsing/report_phish/"
+            reporter = self.reporters.get("google")
+            if reporter and hasattr(reporter, "get_form_url"):
+                try:
+                    form_url = reporter.get_form_url(evidence)
+                except Exception:
+                    pass
             return f"""
 GOOGLE SAFE BROWSING REPORT PREVIEW
 ===================================
 
-Form URL: https://safebrowsing.google.com/safebrowsing/report_phish/
+Form URL: {form_url}
 
 Field: url
 Value: {evidence.url}

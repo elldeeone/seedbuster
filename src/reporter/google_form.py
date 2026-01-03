@@ -23,7 +23,7 @@ class GoogleFormReporter(BaseReporter):
     """
     Google Safe Browsing web form reporter.
 
-    Submits phishing reports via Google's free web form.
+    Submits reports via Google's free web form.
     This is free (unlike the Web Risk API) and doesn't require authentication.
 
     The Web Risk API charges $50+/month for submissions, so we use the
@@ -37,22 +37,36 @@ class GoogleFormReporter(BaseReporter):
     rate_limit_per_minute = 10
     manual_only = True  # reCAPTCHA almost always blocks automation
 
-    REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
+    PHISH_REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
+    UNSAFE_REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report-url"
 
     def __init__(self):
         super().__init__()
         self._configured = True  # Always available
 
+    def _use_phishing_form(self, evidence: ReportEvidence) -> bool:
+        return evidence.resolve_scam_type() == "seed_phishing"
+
+    def get_form_url(self, evidence: ReportEvidence) -> str:
+        return self.PHISH_REPORT_URL if self._use_phishing_form(evidence) else self.UNSAFE_REPORT_URL
+
+    def _url_field_label(self, evidence: ReportEvidence) -> str:
+        if self._use_phishing_form(evidence):
+            return "URL of the suspected phishing page"
+        return "URL of the unsafe site"
+
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         """Generate structured manual submission data for public instructions."""
         additional_info = ReportTemplates.google_safebrowsing_comment(evidence)
+        form_url = self.get_form_url(evidence)
+        url_label = self._url_field_label(evidence)
         return ManualSubmissionData(
-            form_url=self.REPORT_URL,
+            form_url=form_url,
             reason="Google Safe Browsing form",
             fields=[
                 ManualSubmissionField(
                     name="url",
-                    label="URL of the suspected phishing page",
+                    label=url_label,
                     value=evidence.url,
                 ),
                 ManualSubmissionField(
@@ -70,9 +84,9 @@ class GoogleFormReporter(BaseReporter):
 
     async def submit(self, evidence: ReportEvidence) -> ReportResult:
         """
-        Submit phishing report to Google Safe Browsing.
+        Submit report to Google Safe Browsing.
 
-        Uses the free web form at safebrowsing.google.com/safebrowsing/report_phish/
+        Uses the phishing form for seed-phrase theft, otherwise the report-url form.
         """
         # Validate evidence
         is_valid, error = self.validate_evidence(evidence)
@@ -85,6 +99,8 @@ class GoogleFormReporter(BaseReporter):
 
         # Generate additional info
         additional_info = ReportTemplates.google_safebrowsing_comment(evidence)
+        form_url = self.get_form_url(evidence)
+        url_label = self._url_field_label(evidence)
 
         async with httpx.AsyncClient(
             timeout=30,
@@ -96,7 +112,7 @@ class GoogleFormReporter(BaseReporter):
         ) as client:
             try:
                 # First, load the form page to get any required tokens
-                form_resp = await client.get(self.REPORT_URL)
+                form_resp = await client.get(form_url)
 
                 if form_resp.status_code != 200:
                     return ReportResult(
@@ -109,12 +125,12 @@ class GoogleFormReporter(BaseReporter):
                 page_lower = (form_resp.text or "").lower()
                 if any(token in page_lower for token in ("recaptcha", "g-recaptcha", "captcha", "turnstile")):
                     manual_data = ManualSubmissionData(
-                        form_url=self.REPORT_URL,
+                        form_url=form_url,
                         reason="reCAPTCHA detected",
                         fields=[
                             ManualSubmissionField(
                                 name="url",
-                                label="URL of the suspected phishing page",
+                                label=url_label,
                                 value=evidence.url,
                             ),
                             ManualSubmissionField(
@@ -134,13 +150,13 @@ class GoogleFormReporter(BaseReporter):
                         status=ReportStatus.MANUAL_REQUIRED,
                         message=(
                             "Manual submission required (CAPTCHA): "
-                            f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
+                            f"{form_url}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                         ),
                         response_data={"manual_fields": manual_data.to_dict()},
                     )
 
                 # Look for form action URL and any hidden fields
-                form_action = self.REPORT_URL
+                form_action = form_url
                 hidden_fields = {}
 
                 # Extract hidden input fields
@@ -167,7 +183,7 @@ class GoogleFormReporter(BaseReporter):
                     data=form_data,
                     headers={
                         "Content-Type": "application/x-www-form-urlencoded",
-                        "Referer": self.REPORT_URL,
+                        "Referer": form_url,
                         "Origin": "https://safebrowsing.google.com",
                     },
                 )
@@ -201,12 +217,12 @@ class GoogleFormReporter(BaseReporter):
                     else:
                         # Don't assume success if we can't confirm.
                         manual_data = ManualSubmissionData(
-                            form_url=self.REPORT_URL,
+                            form_url=form_url,
                             reason="Submission not confirmed",
                             fields=[
                                 ManualSubmissionField(
                                     name="url",
-                                    label="URL of the suspected phishing page",
+                                    label=url_label,
                                     value=evidence.url,
                                 ),
                                 ManualSubmissionField(
@@ -226,7 +242,7 @@ class GoogleFormReporter(BaseReporter):
                             status=ReportStatus.MANUAL_REQUIRED,
                             message=(
                                 "Submission not confirmed; manual submission recommended: "
-                                f"{self.REPORT_URL}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
+                                f"{form_url}\n\nURL: {evidence.url}\n\nCopy/paste details:\n{additional_info}"
                             ),
                             response_data={"manual_fields": manual_data.to_dict()},
                         )
