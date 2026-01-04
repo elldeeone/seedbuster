@@ -5,9 +5,9 @@ kaspa-lens.com
 kaspa-ng.org
 kaspa.com
 kaspa.org
+kaspafaq.com
 kaspahub.org
 kaspanet.io
 kasware.xyz
+seedbuster.xyz
 tangem.com
-wallet.kaspanet.io
-www.kaspafaq.com
