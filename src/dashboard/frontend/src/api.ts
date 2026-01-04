@@ -289,6 +289,17 @@ export async function updateTakedownStatus(
   });
 }
 
+export async function updateTakedownOverride(
+  domainId: number,
+  enabled: boolean,
+): Promise<void> {
+  await request(`/domains/${domainId}/takedown-override`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+    skipJson: true,
+  });
+}
+
 export async function updateWatchlistBaseline(domainId: number): Promise<any> {
   return await request(`/domains/${domainId}/baseline`, {
     method: "POST",

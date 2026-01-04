@@ -456,17 +456,23 @@ class TakedownChecker:
                     signal_confidence = weight
                 break
 
+        pre_backend_confidence = confidence
+        backend_confidence = 0.0
+        backend_signal = None
         if backend_status is not None:
             if backend_status >= 500:
-                confidence += self.backend_status_weight
-                if signal_confidence <= self.backend_status_weight:
-                    provider_signal = f"backend:{backend_status}"
-                    signal_confidence = self.backend_status_weight
+                backend_confidence = self.backend_status_weight
+                backend_signal = f"backend:{backend_status}"
         elif backend_error:
-            confidence += self.backend_error_weight
-            if signal_confidence <= self.backend_error_weight:
-                provider_signal = "backend:error"
-                signal_confidence = self.backend_error_weight
+            backend_confidence = self.backend_error_weight
+            backend_signal = "backend:error"
+
+        # Avoid marking a site down based solely on backend probe failures.
+        if backend_confidence and pre_backend_confidence > 0:
+            confidence += backend_confidence
+            if backend_signal and signal_confidence <= backend_confidence:
+                provider_signal = backend_signal
+                signal_confidence = backend_confidence
 
         whois_status = None
         if whois and isinstance(whois, dict):

@@ -22,6 +22,7 @@ import {
   submitPublicTarget,
   submitTarget,
   updateDomainStatus,
+  updateTakedownOverride,
   updateTakedownStatus,
   updateOperatorNotes,
   updateCampaignName,
@@ -1991,6 +1992,33 @@ export default function App() {
     }
   };
 
+  const changeTakedownOverride = async (domain: Domain, enabled: boolean) => {
+    if (!canEdit) {
+      showToast("Read-only mode: takedown changes are disabled.", "info");
+      return;
+    }
+    const id = domain.id;
+    if (!id) {
+      showToast("Domain id is missing for this record", "error");
+      return;
+    }
+
+    setActionBusy((prev) => ({ ...prev, [id]: "takedown_override" }));
+    try {
+      await updateTakedownOverride(id, enabled);
+      const message = enabled
+        ? `Manual takedown override enabled for ${domain.domain}`
+        : `Auto takedown checks resumed for ${domain.domain}`;
+      showToast(message, "success");
+      loadDomains();
+      if (route.name === "domain") loadDomainDetail(id, snapshotSelection || null);
+    } catch (err) {
+      showToast((err as Error).message || "Takedown override update failed", "error");
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
   const bulkTriggerCampaign = async (type: "rescan" | "report") => {
     if (!canEdit) {
       showToast("Read-only mode: actions are disabled.", "info");
@@ -2973,9 +3001,13 @@ export default function App() {
                   const currentStatus = (domainDetail.domain.status || "").toLowerCase();
                   if (["allowlisted", "false_positive"].includes(currentStatus)) return null;
                   const takedownStatus = (domainDetail.domain.takedown_status || "active").toLowerCase();
+                  const takedownOverride = !!domainDetail.domain.takedown_override;
+                  const overrideAge = takedownOverride ? timeAgo(domainDetail.domain.takedown_override_at || null) : null;
+                  const overrideSuffix = overrideAge && overrideAge !== "—" ? ` (${overrideAge})` : "";
                   const busyState = actionBusy[domainDetail.domain.id || 0];
                   const isBusy = !!busyState;
                   const isUpdating = busyState === "takedown_change";
+                  const isOverrideUpdating = busyState === "takedown_override";
 
                   return (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
@@ -2990,7 +3022,7 @@ export default function App() {
                             {isUpdating ? "Updating…" : "Mark Down"}
                           </button>
                         )}
-                        {takedownStatus === "confirmed_down" && (
+                        {takedownStatus !== "active" && (
                           <button
                             className="sb-btn sb-btn-success"
                             disabled={!domainDetail.domain.id || isBusy}
@@ -3000,8 +3032,21 @@ export default function App() {
                           </button>
                         )}
                       </div>
+                      {takedownOverride && (
+                        <div className="sb-row" style={{ flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                          <button
+                            className="sb-btn"
+                            disabled={!domainDetail.domain.id || isBusy}
+                            onClick={() => changeTakedownOverride(domainDetail.domain, false)}
+                          >
+                            {isOverrideUpdating ? "Updating…" : "Resume Auto"}
+                          </button>
+                        </div>
+                      )}
                       <div className="sb-muted" style={{ fontSize: 11 }}>
-                        Auto checks continue and will update this status.
+                        {takedownOverride
+                          ? `Manual override active${overrideSuffix}. Auto updates paused.`
+                          : "Auto checks continue and will update this status."}
                       </div>
                     </div>
                   );

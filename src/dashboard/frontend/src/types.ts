@@ -41,6 +41,8 @@ export interface Domain {
   takedown_status?: string | null;
   takedown_detected_at?: string | null;
   takedown_confirmed_at?: string | null;
+  takedown_override?: boolean | number | null;
+  takedown_override_at?: string | null;
   action_required?: string | null;
   operator_notes?: string | null;
   verdict_reasons?: string | null;

@@ -4925,6 +4925,10 @@ class DashboardServer:
             "/admin/api/domains/{domain_id}/takedown",
             self._admin_api_update_domain_takedown_status,
         )
+        self._app.router.add_patch(
+            "/admin/api/domains/{domain_id}/takedown-override",
+            self._admin_api_update_domain_takedown_override,
+        )
         self._app.router.add_post("/admin/api/domains/{domain_id}/baseline", self._admin_api_update_baseline)
         self._app.router.add_get("/admin/api/domains/{domain_id}/evidence", self._admin_api_evidence)
         self._app.router.add_get("/admin/api/domains/{domain_id}/report-options", self._admin_api_report_options)
@@ -7087,21 +7091,50 @@ class DashboardServer:
                 status=400,
             )
 
+        now = datetime.now(timezone.utc).isoformat()
         detected_at = None
         confirmed_at = None
+        clear_timestamps = False
         if new_status in {TakedownStatus.LIKELY_DOWN.value, TakedownStatus.CONFIRMED_DOWN.value}:
-            now = datetime.now(timezone.utc).isoformat()
             detected_at = now
             if new_status == TakedownStatus.CONFIRMED_DOWN.value:
                 confirmed_at = now
+        elif new_status == TakedownStatus.ACTIVE.value:
+            clear_timestamps = True
 
         await self.database.update_domain_takedown_status(
             domain_id,
             new_status,
             detected_at=detected_at,
             confirmed_at=confirmed_at,
+            clear_timestamps=clear_timestamps,
         )
-        return web.json_response({"status": "ok", "takedown_status": new_status})
+        await self.database.set_takedown_override(domain_id, enabled=True, override_at=now)
+        return web.json_response(
+            {
+                "status": "ok",
+                "takedown_status": new_status,
+                "takedown_override": True,
+            }
+        )
+
+    async def _admin_api_update_domain_takedown_override(self, request: web.Request) -> web.Response:
+        """Update takedown override flag (PATCH /admin/api/domains/{domain_id}/takedown-override)."""
+        self._require_csrf_header(request)
+        domain_id = int(request.match_info.get("domain_id") or 0)
+        if not domain_id:
+            raise web.HTTPBadRequest(text="domain_id required")
+
+        data = await self._read_json(request)
+        enabled = bool(data.get("enabled"))
+        override_at = datetime.now(timezone.utc).isoformat() if enabled else None
+
+        await self.database.set_takedown_override(
+            domain_id,
+            enabled=enabled,
+            override_at=override_at,
+        )
+        return web.json_response({"status": "ok", "takedown_override": enabled})
 
     async def _admin_api_update_baseline(self, request: web.Request) -> web.Response:
         """Update watchlist baseline to current snapshot (POST /admin/api/domains/{domain_id}/baseline)."""

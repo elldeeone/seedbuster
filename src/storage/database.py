@@ -98,6 +98,8 @@ class Database:
                         takedown_status TEXT DEFAULT 'active',
                         takedown_detected_at TIMESTAMP,
                         takedown_confirmed_at TIMESTAMP,
+                        takedown_override BOOLEAN DEFAULT FALSE,
+                        takedown_override_at TIMESTAMP,
                         evidence_path TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -268,6 +270,10 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_detected_at TIMESTAMP")
         if "takedown_confirmed_at" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_confirmed_at TIMESTAMP")
+        if "takedown_override" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN takedown_override BOOLEAN DEFAULT FALSE")
+        if "takedown_override_at" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN takedown_override_at TIMESTAMP")
         if "scam_type" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN scam_type TEXT")
 
@@ -2204,6 +2210,37 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+    async def set_takedown_override(
+        self,
+        domain_id: int,
+        enabled: bool,
+        *,
+        override_at: Optional[str] = None,
+    ) -> None:
+        """Enable or clear manual takedown overrides."""
+        async with self._lock:
+            if enabled:
+                await self._connection.execute(
+                    """
+                    UPDATE domains
+                    SET takedown_override = 1,
+                        takedown_override_at = COALESCE(?, takedown_override_at)
+                    WHERE id = ?
+                    """,
+                    (override_at, domain_id),
+                )
+            else:
+                await self._connection.execute(
+                    """
+                    UPDATE domains
+                    SET takedown_override = 0,
+                        takedown_override_at = NULL
+                    WHERE id = ?
+                    """,
+                    (domain_id,),
+                )
+            await self._connection.commit()
+
     async def update_domain_takedown_status(
         self,
         domain_id: int,
@@ -2211,19 +2248,32 @@ class Database:
         *,
         detected_at: Optional[str] = None,
         confirmed_at: Optional[str] = None,
+        clear_timestamps: bool = False,
     ) -> None:
         """Update takedown status columns on domains."""
         async with self._lock:
-            await self._connection.execute(
-                """
-                UPDATE domains
-                SET takedown_status = ?,
-                    takedown_detected_at = COALESCE(?, takedown_detected_at),
-                    takedown_confirmed_at = COALESCE(?, takedown_confirmed_at)
-                WHERE id = ?
-                """,
-                (status, detected_at, confirmed_at, domain_id),
-            )
+            if clear_timestamps:
+                await self._connection.execute(
+                    """
+                    UPDATE domains
+                    SET takedown_status = ?,
+                        takedown_detected_at = NULL,
+                        takedown_confirmed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (status, domain_id),
+                )
+            else:
+                await self._connection.execute(
+                    """
+                    UPDATE domains
+                    SET takedown_status = ?,
+                        takedown_detected_at = COALESCE(?, takedown_detected_at),
+                        takedown_confirmed_at = COALESCE(?, takedown_confirmed_at)
+                    WHERE id = ?
+                    """,
+                    (status, detected_at, confirmed_at, domain_id),
+                )
             await self._connection.commit()
 
     async def get_domains_for_takedown_check(self, limit: int = 200) -> list[dict]:
@@ -2243,6 +2293,8 @@ class Database:
                     d.reported_at,
                     d.created_at,
                     d.takedown_status,
+                    d.takedown_override,
+                    d.takedown_override_at,
                     d.evidence_path,
                     MAX(tc.checked_at) AS last_checked_at
                 FROM domains d

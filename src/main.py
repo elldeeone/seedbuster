@@ -958,6 +958,8 @@ class SeedBusterPipeline:
                                 backend_error=result.backend_error,
                                 backend_target=result.backend_target,
                             )
+                            if bool(row.get("takedown_override")):
+                                return 1
 
                             detected_at = None
                             confirmed_at = None
