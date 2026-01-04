@@ -23,6 +23,7 @@ domain:
   target_patterns:
     - kaspa
     - kaspanet
+    - kaspenet
     - kaspawallet
     - kasware
     - kaspapay
