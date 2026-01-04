@@ -1065,6 +1065,20 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def list_scams_for_export(self) -> list[dict]:
+        """List domains considered malicious for public export."""
+        async with self._lock:
+            cursor = await self._connection.execute(
+                """
+                SELECT id, domain, first_seen, scam_type, source, created_at
+                FROM domains
+                WHERE status NOT IN ('watchlist', 'false_positive', 'allowlisted')
+                ORDER BY updated_at DESC, id DESC
+                """
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
     async def count_domains(
         self,
         *,

@@ -52,6 +52,7 @@ MULTITENANT_SUFFIXES = (
     "herokuapp.com",
     "azurewebsites.net",
 )
+SCAMS_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
 def _escape(value: object) -> str:
@@ -4508,6 +4509,9 @@ class DashboardServer:
         self._ns_cache: dict[str, tuple[float, list[str]]] = {}
         self._cache_ttl_seconds = 600
         self._http_session: aiohttp.ClientSession | None = None
+        self._scams_cache: dict[str, dict] = {}
+        self._scams_cache_lock = asyncio.Lock()
+        self._scams_cache_ttl_seconds = SCAMS_CACHE_TTL_SECONDS
 
         self._app = web.Application(
             middlewares=[
@@ -4610,6 +4614,17 @@ class DashboardServer:
         remote = (request.remote or "").split(":")[0]
         return remote or "unknown"
 
+    def _public_base_url(self, request: web.Request) -> str:
+        proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "http").split(",")[0].strip()
+        host = (
+            request.headers.get("X-Forwarded-Host")
+            or request.headers.get("Host")
+            or request.host
+            or ""
+        )
+        host = host.split(",")[0].strip()
+        return f"{proto}://{host}"
+
     def _session_hash(self, request: web.Request) -> str:
         """Generate a stable, non-PII session hash for deduping."""
         raw = f"{self._client_ip(request)}:{request.headers.get('User-Agent', 'unknown')}"
@@ -4662,6 +4677,59 @@ class DashboardServer:
     def _cache_set(self, cache: dict[str, tuple[float, list[str]]], key: str, values: list[str]) -> None:
         expires_at = datetime.now(timezone.utc).timestamp() + float(self._cache_ttl_seconds)
         cache[key] = (expires_at, values)
+
+    def _scams_cache_key(self, base_url: str) -> str:
+        return base_url.rstrip("/")
+
+    async def _get_scams_cache(self, base_url: str) -> dict:
+        key = self._scams_cache_key(base_url)
+        now = time.time()
+        cached = self._scams_cache.get(key)
+        if cached and cached["expires_at"] > now:
+            return cached
+
+        async with self._scams_cache_lock:
+            cached = self._scams_cache.get(key)
+            now = time.time()
+            if cached and cached["expires_at"] > now:
+                return cached
+
+            entry = await self._build_scams_cache_entry(base_url)
+            self._scams_cache[key] = entry
+            return entry
+
+    async def _build_scams_cache_entry(self, base_url: str) -> dict:
+        rows = await self.database.list_scams_for_export()
+        scams = []
+        for row in rows:
+            domain = str(row.get("domain") or "").strip()
+            if not domain:
+                continue
+            first_seen = self._format_iso_timestamp(row.get("first_seen")) or self._format_iso_timestamp(
+                row.get("created_at")
+            )
+            domain_id = row.get("id")
+            detail_url = f"{base_url}/#/domains/{domain_id}" if domain_id else f"{base_url}/#/domains"
+            scams.append(
+                {
+                    "domain": domain,
+                    "url": f"https://{domain}",
+                    "first_seen": first_seen,
+                    "scam_type": row.get("scam_type"),
+                    "source": row.get("source"),
+                    "detail_url": detail_url,
+                }
+            )
+
+        payload = json.dumps(scams, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        etag = hashlib.sha256(payload).hexdigest()
+        now = time.time()
+        return {
+            "payload": payload,
+            "etag": f"\"{etag}\"",
+            "generated_at": now,
+            "expires_at": now + float(self._scams_cache_ttl_seconds),
+        }
 
     async def _get_http_session(self) -> aiohttp.ClientSession:
         if self._http_session and not self._http_session.closed:
@@ -4900,6 +4968,8 @@ class DashboardServer:
         self._app.router.add_post("/api/domains/{domain_id}/report-engagement", self._public_api_report_engagement)
         self._app.router.add_post("/api/domains/{domain_id}/rescan-request", self._public_api_rescan_request)
         self._app.router.add_get("/api/analytics", self._public_api_analytics)
+        self._app.router.add_get("/api/scams.json", self._public_api_scams_json)
+        self._app.router.add_route("OPTIONS", "/api/scams.json", self._public_api_scams_options)
 
         # Evidence directory is public by design for transparency.
         self._app.router.add_static("/evidence", str(self.evidence_dir), show_index=False)
@@ -5921,6 +5991,14 @@ class DashboardServer:
         except ValueError:
             return None
 
+    def _format_iso_timestamp(self, value: str | None) -> str | None:
+        dt = self._parse_report_time(value)
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
     def _report_timestamp(self, report: dict) -> datetime | None:
         return (
             self._parse_report_time(report.get("submitted_at"))
@@ -6907,6 +6985,38 @@ class DashboardServer:
                 "message": f"Thanks. We will rescan after {remaining} more request(s).",
             }
         )
+
+    def _scams_cors_headers(self) -> dict[str, str]:
+        return {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+
+    def _scams_response_headers(self, etag: str) -> dict[str, str]:
+        headers = self._scams_cors_headers()
+        headers["Cache-Control"] = f"public, max-age={int(self._scams_cache_ttl_seconds)}"
+        headers["ETag"] = etag
+        return headers
+
+    async def _public_api_scams_json(self, request: web.Request) -> web.Response:
+        base_url = self._public_base_url(request)
+        cache = await self._get_scams_cache(base_url)
+        headers = self._scams_response_headers(cache["etag"])
+
+        if_none_match = request.headers.get("If-None-Match", "")
+        if if_none_match:
+            tags = [tag.strip() for tag in if_none_match.split(",") if tag.strip()]
+            if cache["etag"] in tags or cache["etag"].strip("\"") in tags:
+                return web.Response(status=304, headers=headers)
+
+        return web.Response(body=cache["payload"], content_type="application/json", headers=headers)
+
+    async def _public_api_scams_options(self, _request: web.Request) -> web.Response:
+        headers = self._scams_cors_headers()
+        headers["Access-Control-Max-Age"] = str(int(self._scams_cache_ttl_seconds))
+        headers["Cache-Control"] = f"public, max-age={int(self._scams_cache_ttl_seconds)}"
+        return web.Response(status=204, headers=headers)
 
     async def _public_api_analytics(self, request: web.Request) -> web.Response:
         """Return public-safe analytics (engagement + takedown stats)."""
