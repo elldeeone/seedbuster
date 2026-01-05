@@ -249,7 +249,7 @@ class HostingProviderReporter(BaseReporter):
                 )
             )
 
-        destination_url = form_url or f"mailto:{email}" if email else ""
+        destination_url = form_url or (f"mailto:{email}" if email else "")
 
         notes = [
             f"Detected {self.provider_label}: {provider.upper()}",
