@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from PIL import Image
+import yaml
 from playwright.async_api import async_playwright
 
 # Add src to path
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.analyzer.visual_match import fingerprint_payload
 
 
-SITES = [
+DEFAULT_SITES = [
     {
         "group": "kaspa.org",
         "url": "https://kaspa.org/",
@@ -117,6 +118,7 @@ async def _capture_variant(page, fingerprints_dir: Path, site: dict, variant: di
         variant=variant["label"],
         image=image,
         text=text,
+        raw_html=html,
         url=site["url"],
         viewport=viewport,
         hints=site.get("hints"),
@@ -127,10 +129,26 @@ async def _capture_variant(page, fingerprints_dir: Path, site: dict, variant: di
     print(f"Saved {name}")
 
 
+def _load_sites(config_dir: Path) -> list[dict]:
+    config_path = config_dir / "visual_fingerprints.yaml"
+    if not config_path.exists():
+        return list(DEFAULT_SITES)
+    try:
+        data = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        return list(DEFAULT_SITES)
+    sites = data.get("sites")
+    if not isinstance(sites, list):
+        return list(DEFAULT_SITES)
+    return sites
+
+
 async def main() -> None:
     data_dir = Path(os.environ.get("DATA_DIR", "./data"))
     fingerprints_dir = data_dir / "fingerprints"
     fingerprints_dir.mkdir(parents=True, exist_ok=True)
+    config_dir = Path(os.environ.get("CONFIG_DIR", "./config"))
+    sites = _load_sites(config_dir)
 
     playwright = await async_playwright().start()
     browser = await playwright.chromium.launch(headless=True)
@@ -138,7 +156,7 @@ async def main() -> None:
     page = await context.new_page()
 
     try:
-        for site in SITES:
+        for site in sites:
             for variant in site["variants"]:
                 await _capture_variant(page, fingerprints_dir, site, variant)
     finally:

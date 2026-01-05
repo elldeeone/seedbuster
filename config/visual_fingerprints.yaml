@@ -1,0 +1,87 @@
+sites:
+  - group: kaspa.org
+    url: https://kaspa.org/
+    hints:
+      - kaspa.org
+    variants:
+      - label: base
+        name: kaspa.org
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: full
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: hero
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.0
+      - label: mid
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.4
+      - label: footer
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.8
+      - label: mobile
+        viewport: [390, 844]
+        full_page: false
+        scroll: 0.0
+  - group: wallet.kaspanet.io
+    url: https://wallet.kaspanet.io/
+    hints:
+      - wallet.kaspanet.io
+      - kaspa-ng.org
+    variants:
+      - label: landing
+        name: kaspanet-wallet-landing
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: base
+        name: kaspanet-wallet
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: legacy
+        name: kaspanet-wallet-recovery
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+        click_text: Continue on Legacy Wallet
+      - label: full
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: hero
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.0
+      - label: mobile
+        viewport: [390, 844]
+        full_page: false
+        scroll: 0.0
+  - group: kaspa-ng.org
+    url: https://kaspa-ng.org/
+    hints:
+      - kaspa-ng.org
+      - kaspa ng
+    variants:
+      - label: full
+        viewport: [1280, 720]
+        full_page: true
+        scroll: 0.0
+      - label: hero
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.0
+      - label: mid
+        viewport: [1280, 720]
+        full_page: false
+        scroll: 0.4
+      - label: mobile
+        viewport: [390, 844]
+        full_page: false
+        scroll: 0.0

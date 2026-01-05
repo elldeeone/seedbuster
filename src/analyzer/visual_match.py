@@ -2,63 +2,17 @@
 
 from __future__ import annotations
 
-import html as html_lib
 import io
 import json
-import re
 import time
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageFilter
 import imagehash
 
-STOPWORDS = {
-    "the",
-    "and",
-    "for",
-    "with",
-    "that",
-    "this",
-    "from",
-    "your",
-    "you",
-    "are",
-    "was",
-    "were",
-    "will",
-    "have",
-    "has",
-    "had",
-    "not",
-    "but",
-    "all",
-    "any",
-    "can",
-    "our",
-    "their",
-    "they",
-    "them",
-    "his",
-    "her",
-    "she",
-    "him",
-    "its",
-    "into",
-    "out",
-    "over",
-    "more",
-    "less",
-    "new",
-    "old",
-    "about",
-    "use",
-    "using",
-    "click",
-    "continue",
-}
+from .visual_tokens import extract_visual_tokens
 
 REGION_WEIGHTS = {
     "full": 0.4,
@@ -95,62 +49,6 @@ class VisualMatchResult:
     image_score: float
     text_score: float
     hint_bonus: float
-
-
-class _TextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self._chunks: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
-        if tag in {"script", "style", "noscript", "svg", "canvas"}:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
-        if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:  # type: ignore[override]
-        if self._skip_depth:
-            return
-        if data and data.strip():
-            self._chunks.append(data)
-
-    def text(self) -> str:
-        return " ".join(self._chunks)
-
-
-def _normalize_text(text: str) -> str:
-    text = html_lib.unescape(text or "")
-    if "<" in text and ">" in text:
-        # Cap input to avoid pathological HTML parse time.
-        text = text[:200000]
-        parser = _TextExtractor()
-        parser.feed(text)
-        raw = parser.text()
-    else:
-        raw = text
-    raw = re.sub(r"\\s+", " ", raw)
-    return raw.strip()
-
-
-def _extract_tokens(text: str, *, limit: int = 200) -> list[str]:
-    text = (text or "").lower()
-    domains = re.findall(r"[a-z0-9][a-z0-9-]{1,63}(?:\\.[a-z0-9-]{2,})+", text)
-    raw = re.findall(r"[a-z0-9]{3,}", text)
-    tokens = []
-    seen = set()
-    for token in domains + raw:
-        if token in STOPWORDS or token in seen:
-            continue
-        if len(token) > 40:
-            continue
-        seen.add(token)
-        tokens.append(token)
-        if len(tokens) >= limit:
-            break
-    return tokens
 
 
 def _hash_similarity(a: imagehash.ImageHash, b: imagehash.ImageHash) -> float:
@@ -225,16 +123,18 @@ def _regions(image: Image.Image) -> dict[str, Image.Image]:
     }
 
 
-def build_signature(image: Image.Image, text: Optional[str]) -> VisualSignature:
-    tokens = _extract_tokens(_normalize_text(text or ""))
+def build_signature(image: Image.Image, text: Optional[str], raw_html: Optional[str]) -> VisualSignature:
+    tokens = extract_visual_tokens(text or "", raw_html or "")
     hashes: dict[str, dict[str, str]] = {}
     color_hists: dict[str, list[float]] = {}
 
     for region, img in _regions(image).items():
+        edges = img.convert("L").filter(ImageFilter.FIND_EDGES)
         hashes[region] = {
             "phash": str(imagehash.phash(img)),
             "dhash": str(imagehash.dhash(img)),
             "ahash": str(imagehash.average_hash(img)),
+            "phash_edges": str(imagehash.phash(edges)),
         }
         color_hists[region] = _color_hist(img)
 
@@ -248,11 +148,12 @@ def fingerprint_payload(
     variant: Optional[str],
     image: Image.Image,
     text: Optional[str],
+    raw_html: Optional[str],
     url: Optional[str] = None,
     viewport: Optional[tuple[int, int]] = None,
     hints: Optional[list[str]] = None,
 ) -> dict:
-    signature = build_signature(image, text)
+    signature = build_signature(image, text, raw_html)
     return {
         "version": 2,
         "name": name,
@@ -409,13 +310,18 @@ class VisualMatcher:
                 return 10.0
         return 0.0
 
-    def match(self, screenshot: bytes, html: Optional[str] = None) -> VisualMatchResult:
+    def match(
+        self,
+        screenshot: bytes,
+        text: Optional[str] = None,
+        raw_html: Optional[str] = None,
+    ) -> VisualMatchResult:
         self._ensure_fresh()
         if not self._fingerprints:
             return VisualMatchResult(0.0, None, None, 0.0, 0.0, 0.0)
 
         image = Image.open(io.BytesIO(screenshot))
-        signature = build_signature(image, html or "")
+        signature = build_signature(image, text or "", raw_html or "")
         grouped: dict[str, VisualMatchResult] = {}
 
         for fp in self._fingerprints:
@@ -451,6 +357,7 @@ class VisualMatcher:
         variant: Optional[str],
         screenshot: bytes,
         html: Optional[str],
+        text: Optional[str] = None,
         url: Optional[str] = None,
         viewport: Optional[tuple[int, int]] = None,
         hints: Optional[list[str]] = None,
@@ -461,7 +368,8 @@ class VisualMatcher:
             group=group,
             variant=variant,
             image=image,
-            text=html,
+            text=text or "",
+            raw_html=html,
             url=url,
             viewport=viewport,
             hints=hints,

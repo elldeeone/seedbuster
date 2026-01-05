@@ -2,7 +2,7 @@
 Description=Weekly SeedBuster visual fingerprint refresh
 
 [Timer]
-OnCalendar=Sun *-*-* 03:30:00
+OnCalendar=*-*-* 03:30:00
 Persistent=true
 RandomizedDelaySec=1800
 

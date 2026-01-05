@@ -76,30 +76,30 @@ class VisualMatchRule:
         metadata: dict = {}
         s = detector.scoring  # Shorthand for scoring weights
 
-        candidates: list[tuple[bytes, str]] = []
+        candidates: list[tuple[bytes, str, str]] = []
         browser = context.browser_result
 
         if browser.screenshot:
             combined_text = " ".join(
                 part for part in [browser.html, browser.title, browser.final_url] if part
             )
-            candidates.append((browser.screenshot, combined_text))
+            candidates.append((browser.screenshot, combined_text, browser.html or ""))
 
         if browser.screenshot_early:
             combined_text = " ".join(
                 part for part in [browser.html_early, browser.title_early, browser.final_url] if part
             )
-            candidates.append((browser.screenshot_early, combined_text))
+            candidates.append((browser.screenshot_early, combined_text, browser.html_early or ""))
 
         for step in browser.exploration_steps or []:
             if not step.screenshot:
                 continue
             combined_text = " ".join(part for part in [step.html, step.title, step.url] if part)
-            candidates.append((step.screenshot, combined_text))
+            candidates.append((step.screenshot, combined_text, step.html or ""))
 
         best_match = VisualMatchResult(0.0, None, None, 0.0, 0.0, 0.0)
-        for shot, text in candidates:
-            match = detector._check_visual_match(shot, text)
+        for shot, text, raw_html in candidates:
+            match = detector._check_visual_match(shot, text, raw_html)
             if match.score > best_match.score:
                 best_match = match
 
@@ -592,10 +592,15 @@ class PhishingDetector:
 
         return result
 
-    def _check_visual_match(self, screenshot: bytes, html: Optional[str]) -> VisualMatchResult:
+    def _check_visual_match(
+        self,
+        screenshot: bytes,
+        text: Optional[str],
+        raw_html: Optional[str],
+    ) -> VisualMatchResult:
         """Compare screenshot against stored fingerprints."""
         try:
-            return self._visual_matcher.match(screenshot, html)
+            return self._visual_matcher.match(screenshot, text=text, raw_html=raw_html)
         except Exception as e:
             logger.error(f"Error comparing visual fingerprint: {e}")
             return VisualMatchResult(0.0, None, None, 0.0, 0.0, 0.0)
