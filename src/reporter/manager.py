@@ -1144,7 +1144,7 @@ class ReportManager:
                 results[platform] = data
             except Exception as e:
                 results[platform] = {"error": str(e)}
-        return results
+        return self._dedupe_generic_provider_reports(results)
 
     async def ensure_pending_reports(self, domain_id: int, platforms: Optional[list[str]] = None) -> None:
         """
