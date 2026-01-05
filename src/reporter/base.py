@@ -383,7 +383,15 @@ class ReportEvidence:
                 if result_url:
                     links.append(result_url)
 
-        for reason in self.detection_reasons or []:
+        reasons: list[str] = []
+        if self.detection_reasons:
+            reasons.extend(self.detection_reasons)
+        if isinstance(self.analysis_json, dict):
+            analysis_reasons = self.analysis_json.get("reasons")
+            if isinstance(analysis_reasons, list):
+                reasons.extend(analysis_reasons)
+
+        for reason in reasons:
             for link in self._extract_urls(reason):
                 if "urlscan.io" in link:
                     links.append(link)
