@@ -4512,6 +4512,8 @@ class DashboardServer:
         self._scams_cache: dict[str, dict] = {}
         self._scams_cache_lock = asyncio.Lock()
         self._scams_cache_ttl_seconds = SCAMS_CACHE_TTL_SECONDS
+        self._stats_cache: dict[str, tuple[float, dict]] = {}
+        self._stats_cache_ttl_seconds = 15.0
 
         self._app = web.Application(
             middlewares=[
@@ -4843,6 +4845,19 @@ class DashboardServer:
                 enriched_member["id"] = domain_record.get("id")
             enriched.append(enriched_member)
         return enriched
+
+    async def _get_stats_cached(self, *, include_evidence: bool = False) -> dict:
+        cache_key = "admin" if include_evidence else "public"
+        now = time.time()
+        cached = self._stats_cache.get(cache_key)
+        if cached and (now - cached[0]) < self._stats_cache_ttl_seconds:
+            return dict(cached[1])
+
+        stats = await self.database.get_stats()
+        if include_evidence:
+            stats["evidence_bytes"] = self._compute_evidence_bytes()
+        self._stats_cache[cache_key] = (now, dict(stats))
+        return stats
 
     def _compute_evidence_bytes(self) -> int:
         total = 0
@@ -5219,7 +5234,7 @@ class DashboardServer:
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
 
-        stats = await self.database.get_stats()
+        stats = await self._get_stats_cached()
 
         status_filter = None if status == "dangerous" else (status or None)
         exclude_statuses = DANGEROUS_EXCLUDE_STATUSES if status == "dangerous" else None
@@ -5371,8 +5386,7 @@ class DashboardServer:
         page = _coerce_int(request.query.get("page"), default=1, min_value=1, max_value=10_000)
         offset = (page - 1) * limit
 
-        stats = await self.database.get_stats()
-        stats["evidence_bytes"] = self._compute_evidence_bytes()
+        stats = await self._get_stats_cached(include_evidence=True)
         health_status = await self._fetch_health_status()
 
         status_filter = None if status == "dangerous" else (status or None)
@@ -6133,8 +6147,7 @@ class DashboardServer:
     # Admin API (JSON) endpoints for web-first interactions
     # ------------------------------------------------------------------
     async def _admin_api_stats(self, request: web.Request) -> web.Response:
-        stats = await self.database.get_stats()
-        stats["evidence_bytes"] = self._compute_evidence_bytes()
+        stats = await self._get_stats_cached(include_evidence=True)
         stats["public_submissions_pending"] = await self.database.count_public_submissions(status="pending_review")
         pending_reports = await self.database.get_pending_reports()
         health_status = await self._fetch_health_status()
