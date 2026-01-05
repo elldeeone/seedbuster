@@ -76,27 +76,51 @@ class VisualMatchRule:
         metadata: dict = {}
         s = detector.scoring  # Shorthand for scoring weights
 
-        if context.browser_result.screenshot:
-            combined_text = " ".join(
-                part for part in [context.browser_result.html, context.browser_result.title] if part
-            )
-            match = detector._check_visual_match(context.browser_result.screenshot, combined_text)
-            metadata["visual_match_score"] = match.score
-            metadata["matched_fingerprint"] = match.label
-            metadata["visual_match_image_score"] = match.image_score
-            metadata["visual_match_text_score"] = match.text_score
+        candidates: list[tuple[bytes, str]] = []
+        browser = context.browser_result
 
-            if match.label and match.score >= s.get("visual_threshold_high", 80):
+        if browser.screenshot:
+            combined_text = " ".join(
+                part for part in [browser.html, browser.title, browser.final_url] if part
+            )
+            candidates.append((browser.screenshot, combined_text))
+
+        if browser.screenshot_early:
+            combined_text = " ".join(
+                part for part in [browser.html_early, browser.title_early, browser.final_url] if part
+            )
+            candidates.append((browser.screenshot_early, combined_text))
+
+        for step in browser.exploration_steps or []:
+            if not step.screenshot:
+                continue
+            combined_text = " ".join(part for part in [step.html, step.title, step.url] if part)
+            candidates.append((step.screenshot, combined_text))
+
+        best_match = VisualMatchResult(0.0, None, None, 0.0, 0.0, 0.0)
+        for shot, text in candidates:
+            match = detector._check_visual_match(shot, text)
+            if match.score > best_match.score:
+                best_match = match
+
+        if best_match.label:
+            metadata["visual_match_score"] = best_match.score
+            metadata["matched_fingerprint"] = best_match.label
+            metadata["visual_match_image_score"] = best_match.image_score
+            metadata["visual_match_text_score"] = best_match.text_score
+            metadata["visual_match_variant"] = best_match.variant
+
+            if best_match.score >= s.get("visual_threshold_high", 80):
                 score += s.get("visual_match_high", 40)
                 reasons.append(
-                    f"Visual match to {match.label}: {match.score:.0f}%"
-                    f" (image {match.image_score:.0f}%, text {match.text_score:.0f}%)"
+                    f"Visual match to {best_match.label}: {best_match.score:.0f}%"
+                    f" (image {best_match.image_score:.0f}%, text {best_match.text_score:.0f}%)"
                 )
-            elif match.label and match.score >= s.get("visual_threshold_partial", 60):
+            elif best_match.score >= s.get("visual_threshold_partial", 60):
                 score += s.get("visual_match_partial", 20)
                 reasons.append(
-                    f"Partial visual match to {match.label}: {match.score:.0f}%"
-                    f" (image {match.image_score:.0f}%, text {match.text_score:.0f}%)"
+                    f"Partial visual match to {best_match.label}: {best_match.score:.0f}%"
+                    f" (image {best_match.image_score:.0f}%, text {best_match.text_score:.0f}%)"
                 )
 
         return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
