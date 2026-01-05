@@ -418,27 +418,16 @@ class ReportEvidence:
         brand = None
         official_site = None
         has_brand_reason = False
-        kit_matches: list[str] = []
-
-        if isinstance(self.analysis_json, dict):
-            raw_kit_matches = self.analysis_json.get("kit_matches")
-            if isinstance(raw_kit_matches, list):
-                kit_matches.extend(raw_kit_matches)
-            code_analysis = self.analysis_json.get("code_analysis") or {}
-            if isinstance(code_analysis, dict):
-                code_kit_matches = code_analysis.get("kit_matches")
-                if isinstance(code_kit_matches, list):
-                    kit_matches.extend(code_kit_matches)
-
         hint_sources = []
         hint_sources.extend(reasons)
-        hint_sources.extend(kit_matches)
         hint_sources.extend(self.suspicious_endpoints or [])
         hint_sources.extend(self.backend_domains or [])
         hint_text = " ".join(str(item) for item in hint_sources if item).lower()
 
+        domain_lower = (self.domain or "").lower()
+        url_lower = (self.url or "").lower()
         kaspa_ng_hint = any(
-            token in hint_text
+            token in domain_lower or token in url_lower
             for token in ("kaspa_ng", "kaspa-ng", "kaspa ng", "app-kaspa-ng")
         )
         kaspa_wallet_hint = any(
@@ -450,6 +439,10 @@ class ReportEvidence:
                 "kaspanet-wallet",
                 "kaspanet wallet",
             )
+        )
+        kaspa_seed_phish = "kaspa" in domain_lower and (
+            (self.scam_type or "").lower() == "seed_phishing"
+            or self._reasons_contain(("seed phrase", "mnemonic", "recovery phrase"))
         )
 
         for reason in reasons:
@@ -480,7 +473,8 @@ class ReportEvidence:
                 lines.append("Claims to be Kaspa support.")
                 brand = brand or "Kaspa"
                 has_brand_reason = True
-
+            if "wallet-related title" in lower:
+                lines.append("Page title references a cryptocurrency wallet.")
         if kaspa_ng_hint and (brand is None or brand.lower().startswith("kaspa")):
             brand = "Kaspa NG"
             official_site = "kaspa-ng.org"
@@ -489,8 +483,11 @@ class ReportEvidence:
             brand = "Kaspa Wallet"
             official_site = "wallet.kaspanet.io"
             has_brand_reason = True
+        elif kaspa_seed_phish and (brand is None or brand.lower().startswith("kaspa")):
+            brand = "Kaspa Wallet"
+            official_site = "wallet.kaspanet.io"
+            has_brand_reason = True
 
-        domain_lower = (self.domain or "").lower()
         if "kaspa" in domain_lower and domain_lower not in ("kaspa.org", "www.kaspa.org"):
             if not has_brand_reason:
                 lines.append("Domain name includes 'kaspa'.")
