@@ -397,9 +397,27 @@ class ReportEvidence:
             seen.add(link)
         return deduped
 
+    def _get_urlscan_history_links(self) -> list[str]:
+        links: list[str] = []
+        for reason in self.detection_reasons or []:
+            text = (reason or "").lower()
+            if "urlscan.io historical scan" not in text and "historical scan with wallet/seed ui" not in text:
+                continue
+            links.extend(self._extract_urls(reason))
+
+        deduped: list[str] = []
+        seen = set()
+        for link in links:
+            if link in seen:
+                continue
+            deduped.append(link)
+            seen.add(link)
+        return deduped
+
     def _get_review_notes(self) -> list[str]:
         notes: list[str] = []
         reasons = [(r or "").lower() for r in (self.detection_reasons or [])]
+        history_links = self._get_urlscan_history_links()
 
         cloaking = any("cloaking" in r for r in reasons)
         if isinstance(self.analysis_json, dict):
@@ -418,9 +436,12 @@ class ReportEvidence:
         if anti_bot:
             notes.append("Anti-bot measures may show a decoy page to reviewers.")
 
-        if cloaking or anti_bot:
-            for link in self._get_urlscan_links()[:2]:
-                notes.append(f"External capture (may show hidden content): {link}")
+        if history_links:
+            for link in history_links[:2]:
+                notes.append(f"Historical urlscan capture (wallet/seed UI observed): {link}")
+            public_line = self.get_public_entry_line()
+            if public_line:
+                notes.append(public_line)
 
         return notes
 
