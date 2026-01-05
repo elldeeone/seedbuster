@@ -44,9 +44,14 @@ PARKING_SIGNALS = [
     ),
     ("parking:expired", 0.6, ("domain has expired", "domain expired", "renew your domain")),
     (
+        "parking:dynadot",
+        0.6,
+        ("dynadot.com", "this domain is registered at dynadot", "website coming soon"),
+    ),
+    (
         "parking:provider",
         0.6,
-        ("sedo", "afternic", "dan.com", "bodis", "parkingcrew", "hugedomains"),
+        ("sedo", "afternic", "dan.com", "bodis", "parkingcrew", "hugedomains", "dynadot"),
     ),
 ]
 

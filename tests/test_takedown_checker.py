@@ -119,6 +119,23 @@ def test_parking_page_marks_likely_down():
     assert result.provider_signal == "parking:for_sale"
 
 
+def test_dynadot_parking_page_marks_likely_down():
+    checker = TakedownChecker()
+    result = checker._analyze(
+        "kaspa.insure",
+        _base_dns(),
+        _base_http(
+            status=200,
+            text="This domain is registered at Dynadot.com. Website coming soon.",
+        ),
+        None,
+        None,
+    )
+
+    assert result.status == TakedownStatus.LIKELY_DOWN
+    assert result.provider_signal == "parking:dynadot"
+
+
 @pytest.mark.asyncio
 async def test_backend_error_only_when_all_fail(monkeypatch):
     import httpx
