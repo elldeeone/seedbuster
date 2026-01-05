@@ -316,34 +316,71 @@ class ThreatCampaignManager:
             target.score = incoming.score
             changed = True
 
-        merged_backends = self._merge_unique_lists([target.backends, incoming.backends])
-        if merged_backends != target.backends:
-            target.backends = merged_backends
-            changed = True
+        if incoming.backends:
+            merged_backends = self._merge_unique_lists([incoming.backends])
+            if merged_backends != target.backends:
+                target.backends = merged_backends
+                changed = True
 
-        merged_kits = self._merge_unique_lists(
-            [target.kit_matches, incoming.kit_matches]
-        )
-        if merged_kits != target.kit_matches:
-            target.kit_matches = merged_kits
-            changed = True
+        if incoming.kit_matches:
+            merged_kits = self._merge_unique_lists([incoming.kit_matches])
+            if merged_kits != target.kit_matches:
+                target.kit_matches = merged_kits
+                changed = True
 
-        merged_nameservers = self._merge_unique_lists(
-            [target.nameservers, incoming.nameservers]
-        )
-        if merged_nameservers != target.nameservers:
-            target.nameservers = merged_nameservers
-            changed = True
+        if incoming.nameservers:
+            merged_nameservers = self._merge_unique_lists([incoming.nameservers])
+            if merged_nameservers != target.nameservers:
+                target.nameservers = merged_nameservers
+                changed = True
 
         for attr in ("ip_address", "asn", "html_hash", "visual_hash"):
-            if getattr(target, attr):
-                continue
             value = getattr(incoming, attr)
-            if value:
+            if value and value != getattr(target, attr):
                 setattr(target, attr, value)
                 changed = True
 
         return changed
+
+    def _rebuild_campaign_shared_indicators(self, campaign: ThreatCampaign) -> bool:
+        backends: Set[str] = set()
+        kits: Set[str] = set()
+        nameservers: Set[str] = set()
+        asns: Set[str] = set()
+        visual_hashes: Set[str] = set()
+
+        for member in campaign.members:
+            backends.update(member.backends or [])
+            kits.update(member.kit_matches or [])
+            nameservers.update(ns.lower() for ns in (member.nameservers or []))
+            if member.asn:
+                asns.add(member.asn)
+            if member.visual_hash:
+                visual_hashes.add(member.visual_hash)
+
+        changed = (
+            backends != campaign.shared_backends
+            or kits != campaign.shared_kits
+            or nameservers != campaign.shared_nameservers
+            or asns != campaign.shared_asns
+            or visual_hashes != campaign.shared_visual_hashes
+        )
+
+        campaign.shared_backends = backends
+        campaign.shared_kits = kits
+        campaign.shared_nameservers = nameservers
+        campaign.shared_asns = asns
+        campaign.shared_visual_hashes = visual_hashes
+        return changed
+
+    def _rebuild_indexes(self) -> None:
+        self._backend_index = {}
+        self._kit_index = {}
+        self._ns_index = {}
+        self._asn_index = {}
+        self._domain_index = {}
+        for campaign in self.campaigns.values():
+            self._index_campaign(campaign)
 
     def _dedupe_campaign_members(self, campaign: ThreatCampaign) -> bool:
         if len(campaign.members) <= 1:
@@ -787,31 +824,14 @@ class ThreatCampaignManager:
                 campaign.members.append(member)
                 changed = True
 
-            backends_before = len(campaign.shared_backends)
-            kits_before = len(campaign.shared_kits)
-            ns_before = len(campaign.shared_nameservers)
-            asn_before = len(campaign.shared_asns)
-            visual_before = len(campaign.shared_visual_hashes)
+            shared_changed = False
+            if changed:
+                shared_changed = self._rebuild_campaign_shared_indicators(campaign)
 
-            campaign.shared_backends.update(backend_domains)
-            campaign.shared_kits.update(kit_matches)
-            campaign.shared_nameservers.update(ns.lower() for ns in nameservers)
-            if asn:
-                campaign.shared_asns.add(asn)
-            if visual_hash:
-                campaign.shared_visual_hashes.add(visual_hash)
-
-            if (
-                changed
-                or len(campaign.shared_backends) != backends_before
-                or len(campaign.shared_kits) != kits_before
-                or len(campaign.shared_nameservers) != ns_before
-                or len(campaign.shared_asns) != asn_before
-                or len(campaign.shared_visual_hashes) != visual_before
-            ):
+            if changed or shared_changed:
                 campaign.updated_at = datetime.now()
                 campaign.confidence = self._calculate_campaign_confidence(campaign)
-                self._index_campaign(campaign)
+                self._rebuild_indexes()
                 self._save_campaigns()
 
                 action = "Merged" if existing_member else "Added"
