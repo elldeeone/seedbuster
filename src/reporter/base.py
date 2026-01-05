@@ -361,7 +361,7 @@ class ReportEvidence:
         if not text:
             return []
         urls = []
-        for match in re.findall(r"https?://\\S+", text):
+        for match in re.findall(r"https?://\S+", text):
             cleaned = match.rstrip(").,]\"'")
             if cleaned:
                 urls.append(cleaned)
