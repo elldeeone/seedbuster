@@ -107,6 +107,8 @@ class ReportEvidence:
             lines.append("IMPERSONATION INDICATORS:")
             lines.extend(f"  - {line}" for line in impersonation)
 
+        self._append_review_notes(lines)
+
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
         lines.extend([
@@ -159,6 +161,8 @@ class ReportEvidence:
             lines.append("IMPERSONATION INDICATORS:")
             lines.extend(f"  - {line}" for line in impersonation)
 
+        self._append_review_notes(lines)
+
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
         lines.extend([
@@ -209,6 +213,8 @@ class ReportEvidence:
             lines.append("")
             lines.append("IMPERSONATION INDICATORS:")
             lines.extend(f"  - {line}" for line in impersonation)
+
+        self._append_review_notes(lines)
 
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
@@ -349,6 +355,82 @@ class ReportEvidence:
         if not url:
             return None
         return f"More information: {url}"
+
+    @staticmethod
+    def _extract_urls(text: str) -> list[str]:
+        if not text:
+            return []
+        urls = []
+        for match in re.findall(r"https?://\\S+", text):
+            cleaned = match.rstrip(").,]\"'")
+            if cleaned:
+                urls.append(cleaned)
+        return urls
+
+    def _get_urlscan_links(self) -> list[str]:
+        links: list[str] = []
+        if isinstance(self.analysis_json, dict):
+            external = self.analysis_json.get("external_intel")
+            if isinstance(external, dict):
+                urlscan = external.get("urlscan")
+                if isinstance(urlscan, dict):
+                    result_url = (urlscan.get("result_url") or "").strip()
+                    if result_url:
+                        links.append(result_url)
+            submission = self.analysis_json.get("urlscan_submission")
+            if isinstance(submission, dict):
+                result_url = (submission.get("result_url") or "").strip()
+                if result_url:
+                    links.append(result_url)
+
+        for reason in self.detection_reasons or []:
+            for link in self._extract_urls(reason):
+                if "urlscan.io" in link:
+                    links.append(link)
+
+        deduped: list[str] = []
+        seen = set()
+        for link in links:
+            if link in seen:
+                continue
+            deduped.append(link)
+            seen.add(link)
+        return deduped
+
+    def _get_review_notes(self) -> list[str]:
+        notes: list[str] = []
+        reasons = [(r or "").lower() for r in (self.detection_reasons or [])]
+
+        cloaking = any("cloaking" in r for r in reasons)
+        if isinstance(self.analysis_json, dict):
+            temporal = self.analysis_json.get("temporal")
+            if isinstance(temporal, dict) and temporal.get("cloaking_detected"):
+                cloaking = True
+
+        anti_bot = any(
+            token in r
+            for r in reasons
+            for token in ("anti-bot", "bot detection", "turnstile", "recaptcha", "access denied")
+        )
+
+        if cloaking:
+            notes.append("Content appears cloaked or inconsistent across visits.")
+        if anti_bot:
+            notes.append("Anti-bot measures may show a decoy page to reviewers.")
+
+        if cloaking or anti_bot:
+            for link in self._get_urlscan_links()[:2]:
+                notes.append(f"External capture (may show hidden content): {link}")
+
+        return notes
+
+    def _append_review_notes(self, lines: list[str]) -> None:
+        notes = self._get_review_notes()
+        if not notes:
+            return
+        lines.append("")
+        lines.append("REVIEWER NOTES:")
+        lines.extend(f"  - {note}" for note in notes)
 
     def get_filtered_reasons(self, max_items: int = 5) -> list[str]:
         """Get detection reasons with low-signal items filtered out."""
@@ -563,6 +645,8 @@ class ReportEvidence:
             lines.append("IMPERSONATION INDICATORS:")
             lines.extend(f"  - {line}" for line in impersonation)
             lines.append("")
+
+        self._append_review_notes(lines)
 
         if self.scammer_wallets:
             lines.append("SCAMMER WALLET ADDRESSES:")
