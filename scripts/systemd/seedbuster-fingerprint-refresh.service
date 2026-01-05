@@ -1,0 +1,11 @@
+[Unit]
+Description=SeedBuster visual fingerprint refresh
+After=network.target
+
+[Service]
+Type=oneshot
+User=seedbuster
+WorkingDirectory=/opt/seedbuster
+EnvironmentFile=/etc/seedbuster/seedbuster.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/seedbuster/.venv/bin/python /opt/seedbuster/scripts/capture_visual_fingerprints.py
