@@ -36,7 +36,7 @@ class CloudflareReporter(BaseReporter):
     rate_limit_per_minute = 10
     manual_only = True  # Turnstile/CAPTCHA almost always blocks automation
 
-    ABUSE_FORM_URL = "https://abuse.cloudflare.com/phishing"
+    ABUSE_FORM_URL = "https://abuse.cloudflare.com/"
     SUBMIT_URL = "https://abuse.cloudflare.com/api/v1/phishing"
 
     def __init__(

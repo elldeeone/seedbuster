@@ -24,14 +24,14 @@ class GoogleSafeBrowsingReporter(BaseReporter):
     """
 
     platform_name = "google_safebrowsing"
-    platform_url = "https://safebrowsing.google.com/safebrowsing/report_phish/"
+    platform_url = "https://www.google.com/safebrowsing/report_phish/"
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 10
     manual_only = True
 
-    PHISH_FORM_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
-    UNSAFE_FORM_URL = "https://safebrowsing.google.com/safebrowsing/report-url"
+    PHISH_FORM_URL = "https://www.google.com/safebrowsing/report_phish/"
+    UNSAFE_FORM_URL = "https://www.google.com/safebrowsing/report_phish/"
 
     def __init__(self):
         super().__init__()

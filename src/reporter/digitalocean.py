@@ -26,12 +26,12 @@ class DigitalOceanReporter(BaseReporter):
     """
 
     platform_name = "digitalocean"
-    platform_url = "https://www.digitalocean.com/company/contact/abuse#phishing"
+    platform_url = "https://www.digitalocean.com/company/contact/abuse"
     supports_evidence = True
     requires_api_key = False
     rate_limit_per_minute = 5
 
-    FORM_URL = "https://www.digitalocean.com/company/contact/abuse#phishing"
+    FORM_URL = "https://www.digitalocean.com/company/contact/abuse"
 
     def __init__(self, reporter_email: str = "", reporter_name: str = "Kaspa Security"):
         super().__init__()
@@ -162,7 +162,7 @@ Detected by SeedBuster - github.com/elldeeone/seedbuster"""
             reason="DigitalOcean abuse form",
             fields=fields,
             notes=[
-                "Select 'Phishing' as the abuse type (pre-selected via URL).",
+                "Select 'Phishing' as the abuse type.",
                 "The form requires JavaScript; fill fields after page loads.",
                 "DigitalOcean SOC team typically responds within 24 hours.",
             ],

@@ -27,24 +27,24 @@ logger = logging.getLogger(__name__)
 # Registrar abuse destinations (best-effort).
 REGISTRAR_ABUSE_EMAILS: dict[str, str] = {
     "namecheap": "abuse@namecheap.com",
-    "godaddy": "abuse@godaddy.com",
-    "hostinger": "abuse@hostinger.com",
     "tucows": "compliance@tucows.com",
-    "dynadot": "abuse@dynadot.com",
-    "network solutions": "abuse@networksolutions.com",
     "dreamhost": "abuse@dreamhost.com",
-    "instra": "abuse@instra.com",
-    "abovedomains": "abuse@abovedomains.com",
+    "instra": "legal@instra.com",
     "ultahost": "abuse@ultahost.com",
     "namesilo": "abuse@namesilo.com",
-    "own web solution": "corp@ownregistrar.com",
     "synergy wholesale": "abuse@synergywholesale.com",
-    "squarespace domains": "abuse-complaints@squarespace.com",
-    "cloudflare": "abuse@cloudflare.com",
 }
 
 REGISTRAR_ABUSE_FORMS: dict[str, str] = {
-    "dynadot": "https://www.dynadot.com/report-abuse",
+    "abovedomains": "https://www.above.com/contact.html",
+    "above.com": "https://www.above.com/contact.html",
+    "cloudflare": "https://abuse.cloudflare.com/",
+    "dynadot": "https://www.dynadot.com/es/reportar-abuso",
+    "godaddy": "https://supportcenter.godaddy.com/abusereport",
+    "hostinger": "https://www.hostinger.com/report-abuse",
+    "namesilo": "https://www.namesilo.com/report_abuse.php",
+    "squarespace domains": "https://support.squarespace.com/hc/en-us/articles/11580957865869-Reporting-abuse",
+    "tucows": "https://tucowsdomains.com/report-abuse/",
 }
 
 

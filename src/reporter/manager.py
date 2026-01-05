@@ -664,6 +664,28 @@ class ReportManager:
         """Normalize provider/registrar strings for comparison."""
         return (value or "").strip().lower()
 
+    def _extract_provider_from_reason(self, reason: object) -> str:
+        text = str(reason or "").strip()
+        if ":" not in text:
+            return ""
+        provider = text.split(":", 1)[1].strip()
+        if not provider:
+            return ""
+        return self._canonical_provider(provider)
+
+    def _dedupe_generic_provider_reports(self, results: dict[str, dict]) -> dict[str, dict]:
+        generic = {"hosting_provider", "edge_provider", "dns_provider"}
+        if not results:
+            return results
+        for platform in list(generic):
+            data = results.get(platform)
+            if not isinstance(data, dict):
+                continue
+            provider = self._extract_provider_from_reason(data.get("reason"))
+            if provider and provider in results:
+                results.pop(platform, None)
+        return self._dedupe_generic_provider_reports(results)
+
     def _canonical_provider(self, value: str) -> str:
         """Map provider aliases to platform keys used by reporters."""
         key = self._normalize_hint(value)
@@ -1021,6 +1043,7 @@ class ReportManager:
             "azure",
             "vercel",
             "netlify",
+            "njalla",
             "render",
             "fly_io",
             "railway",
@@ -1088,7 +1111,8 @@ class ReportManager:
                     notes = data.get("notes")
                     if not isinstance(notes, list):
                         notes = []
-                        data["notes"] = notes
+                    notes = list(notes)
+                    data["notes"] = notes
                     if platform in hosting_hints:
                         context = f"Hosting detected: {platform.replace('_', ' ').title()}"
                         if context not in notes:
@@ -1107,7 +1131,8 @@ class ReportManager:
                         notes = data.get("notes")
                         if not isinstance(notes, list):
                             notes = []
-                            data["notes"] = notes
+                        notes = list(notes)
+                        data["notes"] = notes
                         if "Use your own contact details" not in notes:
                             notes.append("Use your own contact details (do not use SeedBuster details).")
                     form_url = str(data.get("form_url") or "").strip() if isinstance(data, dict) else ""

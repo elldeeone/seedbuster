@@ -360,8 +360,8 @@ class AWSReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="aws",
-            form_url="https://support.aws.amazon.com/#/contacts/report-abuse",
-            reason="AWS Trust & Safety form",
+            form_url="https://repost.aws/knowledge-center/report-aws-abuse",
+            reason="AWS abuse reporting guidance",
             notes=[
                 "Include any AWS resource identifiers if visible (S3 bucket URL, CloudFront domain, EC2 IP).",
                 "Select 'Phishing' as the abuse type.",
@@ -408,14 +408,15 @@ class VercelReporter(_SimpleFormReporter):
         )
 
 
-class NetlifyReporter(_SimpleEmailReporter):
+class NetlifyReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="netlify",
-            email="fraud@netlify.com",
-            subject_prefix="Phishing report:",
+            form_url="https://www.netlify.com/support/?topic=Report+Fraud+or+Abuse",
+            reason="Netlify support form (Report Fraud or Abuse)",
             notes=[
-                "Netlify prefers emails with the full phishing URL and a short description.",
+                "Select the 'Report Fraud or Abuse' topic in the form.",
+                "Include the full phishing URL and a short description.",
                 "Attach screenshots if possible.",
             ],
         )
@@ -425,8 +426,8 @@ class GoDaddyReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="godaddy",
-            form_url="https://supportcenter.godaddy.com/abusereport/phishing",
-            reason="GoDaddy phishing report form",
+            form_url="https://supportcenter.godaddy.com/abusereport",
+            reason="GoDaddy abuse report form",
             notes=[
                 "Provide the full URL and describe the phishing content.",
                 "If you know the GoDaddy customer number, include it (optional).",
@@ -442,7 +443,6 @@ class NamecheapReporter(_SimpleEmailReporter):
             subject_prefix="Phishing report:",
             notes=[
                 "For domain abuse: abuse@namecheap.com",
-                "For hosting abuse: abuse@namecheaphosting.com",
                 "Include the full phishing URL and evidence of credential harvesting.",
                 "Namecheap accepts plain-text reports; attachments optional.",
             ],
@@ -494,13 +494,14 @@ class GoogleDomainsReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="google_domains",
-            form_url="https://support.google.com/domains/troubleshooter/9339157",
-            reason="Google Domains abuse form",
+            form_url="https://support.squarespace.com/hc/en-us/articles/11580957865869-Reporting-abuse",
+            reason="Squarespace Domains abuse reporting",
             notes=[
-                "Select phishing as the abuse type.",
+                "Use the abuse report web form linked from the Reporting abuse page.",
                 "Include the full domain and any evidence of credential harvesting.",
             ],
         )
+        self.platform_display_name = "Squarespace Domains"
 
 
 class TucowsReporter(_SimpleFormReporter):

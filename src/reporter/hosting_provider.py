@@ -23,42 +23,33 @@ logger = logging.getLogger(__name__)
 
 # Provider abuse form URLs (best-effort; providers may change these).
 ABUSE_FORMS: dict[str, str] = {
+    "abovedomains": "https://www.above.com/contact.html",
+    "above.com": "https://www.above.com/contact.html",
     "digitalocean": "https://www.digitalocean.com/company/contact/abuse",
-    "cloudflare": "https://abuse.cloudflare.com/phishing",
-    "aws": "https://support.aws.amazon.com/#/contacts/report-abuse",
+    "cloudflare": "https://abuse.cloudflare.com/",
+    "aws": "https://repost.aws/knowledge-center/report-aws-abuse",
     "azure": "https://msrc.microsoft.com/report/abuse",
     "google": "https://support.google.com/code/contact/cloud_platform_report",
-    "vultr": "https://www.vultr.com/company/abuse/",
+    "godaddy": "https://supportcenter.godaddy.com/abusereport",
+    "hetzner": "https://abuse.hetzner.com/",
+    "hostinger": "https://www.hostinger.com/report-abuse",
     "linode": "https://www.linode.com/legal-abuse/",
     "vercel": "https://vercel.com/abuse",
-    "netlify": "https://www.netlify.com/abuse/",
-    "heroku": "https://www.heroku.com/policy/aup-reporting",
+    "netlify": "https://www.netlify.com/support/?topic=Report+Fraud+or+Abuse",
+    "ovh": "https://www.ovh.com/abuse/",
     "contabo": "https://contabo.com/en/abuse/",
-    "dreamhost": "https://www.dreamhost.com/company/contact/",
     "njalla": "https://njal.la/contact/",
+    "ultahost": "https://ultahost.com/report-abuse",
 }
 
 
 # Provider abuse email contacts (best-effort; some providers prefer forms).
 ABUSE_EMAILS: dict[str, str] = {
-    "abovedomains": "abuse@above.com",
-    "cdnext": "report@abuseradar.com",
     "ifastnet": "abuse@ifastnet.com",
-    "wildcard": "abuse@ifastnet.com",
     "namecheap": "abuse@namecheap.com",
-    "godaddy": "abuse@godaddy.com",
-    "hostinger": "abuse@hostinger.com",
-    "ovh": "abuse@ovh.net",
-    "hetzner": "abuse@hetzner.com",
-    "contabo": "abuse@contabo.com",
-    "cogent": "abuse@cogentco.com",
-    "rackforest": "abuse@rackforest.com",
-    "dreamhost": "domain-abuse@dreamhost.com",
-    "trellian": "abuse@trellian.com",
-    "internetbilisim": "abuse@ultahost.com",
-    "streetplug": "abuse@namecheap.com",
-    "ukyeni": "domain@apiname.com",
+    "dreamhost": "abuse@dreamhost.com",
     "ultahost": "abuse@ultahost.com",
+    "vultr": "abuse@vultr.com",
 }
 
 

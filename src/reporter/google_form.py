@@ -31,14 +31,14 @@ class GoogleFormReporter(BaseReporter):
     """
 
     platform_name = "google"
-    platform_url = "https://safebrowsing.google.com/safebrowsing/report_phish/"
+    platform_url = "https://www.google.com/safebrowsing/report_phish/"
     supports_evidence = False
     requires_api_key = False
     rate_limit_per_minute = 10
     manual_only = True  # reCAPTCHA almost always blocks automation
 
-    PHISH_REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report_phish/"
-    UNSAFE_REPORT_URL = "https://safebrowsing.google.com/safebrowsing/report-url"
+    PHISH_REPORT_URL = "https://www.google.com/safebrowsing/report_phish/"
+    UNSAFE_REPORT_URL = "https://www.google.com/safebrowsing/report_phish/"
 
     def __init__(self):
         super().__init__()
