@@ -395,7 +395,10 @@ class VisualMatcher:
         union = sig | base
         if not union:
             return 0.0
-        return len(sig & base) / len(union) * 100.0
+        overlap = len(sig & base)
+        jaccard = overlap / len(union)
+        containment = overlap / max(1, min(len(sig), len(base)))
+        return max(jaccard, containment) * 100.0
 
     def _hint_bonus(self, signature: VisualSignature, fp: VisualFingerprint) -> float:
         if not fp.hints or not signature.text_tokens:
@@ -419,7 +422,8 @@ class VisualMatcher:
             image_score = self._image_score(signature, fp)
             text_score = self._text_score(signature, fp)
             hint_bonus = self._hint_bonus(signature, fp)
-            final_score = min(100.0, image_score * 0.75 + text_score * 0.2 + hint_bonus)
+            base_score = image_score * 0.7 + text_score * 0.25 + hint_bonus
+            final_score = min(100.0, max(image_score, base_score))
 
             existing = grouped.get(fp.group)
             candidate = VisualMatchResult(
