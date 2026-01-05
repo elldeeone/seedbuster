@@ -8,6 +8,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
 
@@ -96,12 +97,42 @@ class VisualMatchResult:
     hint_bonus: float
 
 
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._chunks: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
+        if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:  # type: ignore[override]
+        if self._skip_depth:
+            return
+        if data and data.strip():
+            self._chunks.append(data)
+
+    def text(self) -> str:
+        return " ".join(self._chunks)
+
+
 def _normalize_text(text: str) -> str:
     text = html_lib.unescape(text or "")
-    text = re.sub(r"(?is)<(script|style|noscript|svg|canvas).*?>.*?</\\1>", " ", text)
-    text = re.sub(r"(?is)<[^>]+>", " ", text)
-    text = re.sub(r"\\s+", " ", text)
-    return text.strip()
+    if "<" in text and ">" in text:
+        # Cap input to avoid pathological HTML parse time.
+        text = text[:200000]
+        parser = _TextExtractor()
+        parser.feed(text)
+        raw = parser.text()
+    else:
+        raw = text
+    raw = re.sub(r"\\s+", " ", raw)
+    return raw.strip()
 
 
 def _extract_tokens(text: str, *, limit: int = 200) -> list[str]:
