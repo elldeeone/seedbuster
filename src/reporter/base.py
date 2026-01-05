@@ -399,7 +399,15 @@ class ReportEvidence:
 
     def _get_urlscan_history_links(self) -> list[str]:
         links: list[str] = []
-        for reason in self.detection_reasons or []:
+        reasons: list[str] = []
+        if self.detection_reasons:
+            reasons.extend(self.detection_reasons)
+        if isinstance(self.analysis_json, dict):
+            analysis_reasons = self.analysis_json.get("reasons")
+            if isinstance(analysis_reasons, list):
+                reasons.extend(analysis_reasons)
+
+        for reason in reasons:
             text = (reason or "").lower()
             if "urlscan.io historical scan" not in text and "historical scan with wallet/seed ui" not in text:
                 continue
