@@ -888,6 +888,21 @@ class SeedBusterPipeline:
         hours = max(1, int(self.config.takedown_interval_older_hours or 3))
         return hours * 60 * 60
 
+    @staticmethod
+    def _takedown_recovered(
+        previous_status: str | None,
+        current_status: TakedownStatus,
+    ) -> bool:
+        prev = str(previous_status or "").strip().lower()
+        if not prev:
+            return False
+        if current_status != TakedownStatus.ACTIVE:
+            return False
+        return prev in {
+            TakedownStatus.LIKELY_DOWN.value,
+            TakedownStatus.CONFIRMED_DOWN.value,
+        }
+
     async def _takedown_worker(self):
         """Monitor domains for takedown signals (DNS/HTTP)."""
         logger.info("Takedown monitor worker started")
@@ -958,6 +973,12 @@ class SeedBusterPipeline:
                                 backend_error=result.backend_error,
                                 backend_target=result.backend_target,
                             )
+                            if self._takedown_recovered(row.get("takedown_status"), result.status):
+                                await self._handle_rescan(domain, ScanReason.CONTENT_CHANGE)
+                                logger.info(
+                                    "Takedown recovery detected for %s; rescan queued",
+                                    domain,
+                                )
                             if bool(row.get("takedown_override")):
                                 return 1
 
