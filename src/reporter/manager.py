@@ -1921,7 +1921,6 @@ class ReportManager:
 
 Reported URL: {evidence.url}
 Observed: {observed_line}
-Confidence: {evidence.confidence_score}%
 
 """
 
@@ -1936,11 +1935,7 @@ Confidence: {evidence.confidence_score}%
 
 Captured evidence (screenshot + HTML) available on request.
 
-Detected by SeedBuster - github.com/elldeeone/seedbuster"""
-
-            public_line = evidence.get_public_entry_line()
-            if public_line:
-                description = f"{description.rstrip()}\n{public_line}"
+"""
 
             return f"""
 DIGITALOCEAN ABUSE REPORT PREVIEW
@@ -2111,7 +2106,6 @@ Body:
 Platform: {platform}
 Domain: {evidence.domain}
 URL: {evidence.url}
-Confidence: {evidence.confidence_score}%
 
 Evidence Summary:
 {evidence.to_summary()}
@@ -2148,7 +2142,6 @@ EVIDENCE SUMMARY
 
 Domain: {evidence.domain}
 URL: {evidence.url}
-Confidence: {evidence.confidence_score}%
 Detection Time: {evidence.detected_at.isoformat()}
 
 Detection Reasons:

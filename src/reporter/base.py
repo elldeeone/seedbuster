@@ -99,7 +99,6 @@ class ReportEvidence:
             f"  Domain: {self.domain}",
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
-            f"  Confidence: {self.confidence_score}%",
         ]
 
         impersonation = self.get_impersonation_lines()
@@ -136,16 +135,6 @@ class ReportEvidence:
             lines.append("")
             lines.append("Captured evidence (screenshot + HTML) available on request.")
 
-        lines.extend([
-            "",
-            "Reported by: SeedBuster (automated phishing detection)",
-            "Source: https://github.com/elldeeone/seedbuster",
-        ])
-
-        public_line = self.get_public_entry_line()
-        if public_line:
-            lines.append(public_line)
-
         return "\n".join(lines)
 
     def _fake_airdrop_summary(self) -> str:
@@ -163,7 +152,6 @@ class ReportEvidence:
             f"  Domain: {self.domain}",
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
-            f"  Confidence: {self.confidence_score}%",
         ]
         impersonation = self.get_impersonation_lines()
         if impersonation:
@@ -199,16 +187,6 @@ class ReportEvidence:
             lines.append("")
             lines.append("Captured evidence (screenshot + HTML) available on request.")
 
-        lines.extend([
-            "",
-            "Reported by: SeedBuster (automated phishing detection)",
-            "Source: https://github.com/elldeeone/seedbuster",
-        ])
-
-        public_line = self.get_public_entry_line()
-        if public_line:
-            lines.append(public_line)
-
         return "\n".join(lines)
 
     def _generic_summary(self) -> str:
@@ -225,7 +203,6 @@ class ReportEvidence:
             f"  Domain: {self.domain}",
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
-            f"  Confidence: {self.confidence_score}%",
         ]
         impersonation = self.get_impersonation_lines()
         if impersonation:
@@ -260,16 +237,6 @@ class ReportEvidence:
         if self.screenshot_path or self.html_path:
             lines.append("")
             lines.append("Captured evidence (screenshot + HTML) available on request.")
-
-        lines.extend([
-            "",
-            "Reported by: SeedBuster (automated phishing detection)",
-            "Source: https://github.com/elldeeone/seedbuster",
-        ])
-
-        public_line = self.get_public_entry_line()
-        if public_line:
-            lines.append(public_line)
 
         return "\n".join(lines)
 
@@ -591,7 +558,6 @@ class ReportEvidence:
             f"  Domain: {self.domain}",
             f"  URL: {self.url}",
             f"  Detected: {self.detected_at.strftime('%Y-%m-%d %H:%M UTC') if self.detected_at else 'Unknown'}",
-            f"  Confidence: {self.confidence_score}%",
             "",
         ]
 
@@ -623,16 +589,6 @@ class ReportEvidence:
         if self.screenshot_path or self.html_path:
             lines.append("")
             lines.append("Captured evidence (screenshot + HTML) available on request.")
-
-        lines.extend([
-            "",
-            "Reported by: SeedBuster (automated phishing detection)",
-            "Source: https://github.com/elldeeone/seedbuster",
-        ])
-
-        public_line = self.get_public_entry_line()
-        if public_line:
-            lines.append(public_line)
 
         return "\n".join(lines)
 
@@ -994,7 +950,6 @@ def build_manual_submission(
             "Cryptocurrency advance-fee fraud (crypto doubler/giveaway scam)",
             "",
             f"Domain: {evidence.domain}",
-            f"Confidence: {evidence.confidence_score}%",
         ]
         if include_wallets and evidence.scammer_wallets:
             details.append("")
@@ -1006,7 +961,6 @@ def build_manual_submission(
             "Cryptocurrency fraud (fake airdrop/claim)",
             "",
             f"Domain: {evidence.domain}",
-            f"Confidence: {evidence.confidence_score}%",
             "",
             "Observed fake airdrop/claim flow",
         ]
@@ -1016,7 +970,6 @@ def build_manual_submission(
             "Cryptocurrency phishing (seed phrase theft)",
             "",
             f"Domain: {evidence.domain}",
-            f"Confidence: {evidence.confidence_score}%",
             "",
             seed_obs,
         ]
@@ -1025,7 +978,6 @@ def build_manual_submission(
             "Cryptocurrency fraud / phishing",
             "",
             f"Domain: {evidence.domain}",
-            f"Confidence: {evidence.confidence_score}%",
             "",
             "Observed cryptocurrency fraud/phishing content",
         ]
@@ -1035,11 +987,6 @@ def build_manual_submission(
     details.append("Key evidence:")
     for reason_text in evidence.get_filtered_reasons(max_items=4):
         details.append(f"  - {reason_text}")
-
-    public_line = evidence.get_public_entry_line()
-    if public_line:
-        details.append("")
-        details.append(public_line)
 
     fields.append(
         ManualSubmissionField(

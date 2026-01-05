@@ -63,16 +63,6 @@ def _finalize_description(
     if extra:
         lines.extend(["", extra])
 
-    lines.extend([
-        "",
-        "Reported by: SeedBuster (automated phishing detection)",
-        "Source: https://github.com/elldeeone/seedbuster",
-    ])
-
-    public_line = evidence.get_public_entry_line()
-    if public_line:
-        lines.append(public_line)
-
     return "\n".join(lines).strip()
 
 
@@ -81,12 +71,6 @@ def _basic_description(evidence: ReportEvidence, *, extra: str | None = None) ->
     description = evidence.to_summary().strip()
     if not extra:
         return description
-
-    public_line = evidence.get_public_entry_line()
-    if public_line and description.endswith(public_line):
-        base = description[: -len(public_line)].rstrip()
-        return f"{base}\n\n{extra}\n{public_line}".strip()
-
     return f"{description}\n\n{extra}".strip()
 
 
@@ -111,7 +95,6 @@ def _basic_description_seed_phishing(
         f"  URL: {evidence.url}",
         f"  Domain: {evidence.domain}",
         f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
-        f"  Confidence: {evidence.confidence_score}%",
     ]
 
     if seed_field:
@@ -138,7 +121,6 @@ def _basic_description_fake_airdrop(
         f"  URL: {evidence.url}",
         f"  Domain: {evidence.domain}",
         f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
-        f"  Confidence: {evidence.confidence_score}%",
     ]
 
     return _finalize_description(lines, evidence, extra=extra)
@@ -161,7 +143,6 @@ def _basic_description_generic(
         f"  URL: {evidence.url}",
         f"  Domain: {evidence.domain}",
         f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
-        f"  Confidence: {evidence.confidence_score}%",
     ]
 
     return _finalize_description(lines, evidence, extra=extra)
@@ -182,7 +163,6 @@ def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | 
         f"  URL: {evidence.url}",
         f"  Domain: {evidence.domain}",
         f"  Detected: {evidence.detected_at.strftime('%Y-%m-%d %H:%M UTC') if evidence.detected_at else 'Unknown'}",
-        f"  Confidence: {evidence.confidence_score}%",
     ]
 
     wallets = evidence.scammer_wallets or []
@@ -222,16 +202,6 @@ def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | 
 
     if extra:
         lines.extend(["", extra])
-
-    lines.extend([
-        "",
-        "Reported by: SeedBuster (automated phishing detection)",
-        "Source: https://github.com/elldeeone/seedbuster",
-    ])
-
-    public_line = evidence.get_public_entry_line()
-    if public_line:
-        lines.append(public_line)
 
     return "\n".join(lines).strip()
 

@@ -87,7 +87,6 @@ class DigitalOceanReporter(BaseReporter):
 
 Reported URL: {evidence.url}
 Observed: {observed_line}
-Confidence: {evidence.confidence_score}%
 
 This site runs a cryptocurrency scam against end users.
 Victims lose funds immediately and irreversibly.
@@ -105,10 +104,7 @@ Victims lose funds immediately and irreversibly.
 
 Captured evidence (screenshot + HTML) available on request.
 
-Detected by SeedBuster - github.com/elldeeone/seedbuster"""
-        public_line = evidence.get_public_entry_line()
-        if public_line:
-            description = f"{description.rstrip()}\n{public_line}"
+"""
         return description
     def generate_manual_submission(self, evidence: ReportEvidence) -> ManualSubmissionData:
         """Generate structured manual submission data for public dashboard."""
