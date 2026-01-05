@@ -444,9 +444,13 @@ class ReportEvidence:
         if anti_bot:
             notes.append("Anti-bot measures may show a decoy page to reviewers.")
 
-        if history_links:
-            for link in history_links[:2]:
-                notes.append(f"Historical urlscan capture (wallet/seed UI observed): {link}")
+        urlscan_links = history_links or self._get_urlscan_links()
+        if urlscan_links:
+            label = "Historical urlscan capture (wallet/seed UI observed):"
+            if not history_links:
+                label = "urlscan.io capture:"
+            for link in urlscan_links[:2]:
+                notes.append(f"{label} {link}")
             public_line = self.get_public_entry_line()
             if public_line:
                 notes.append(public_line)
