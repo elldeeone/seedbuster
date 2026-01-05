@@ -638,7 +638,7 @@ class ReportEvidence:
 
     def get_official_site(self) -> Optional[str]:
         for line in self.get_impersonation_lines():
-            match = re.search(r"official site:\\s*(https?://\\S+)", line, re.I)
+            match = re.search(r"official site:\s*(https?://\S+)", line, re.I)
             if match:
                 return match.group(1).rstrip(").,")
         return None
