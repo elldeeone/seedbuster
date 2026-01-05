@@ -35,6 +35,9 @@ Last validated: 2026-01-05
 - Tucows: https://tucowsdomains.com/report-abuse/ (also compliance@tucows.com)
 - Instra: legal@instra.com
 
+## DNS Providers
+- Streetplug: support@streetplug.me
+
 ## Messaging / Social Platforms
 - Discord: https://support.discord.com/hc/en-us/requests/new?ticket_form_id=360000029731
 - Telegram: abuse@telegram.org

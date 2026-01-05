@@ -50,6 +50,7 @@ ABUSE_EMAILS: dict[str, str] = {
     "dreamhost": "abuse@dreamhost.com",
     "ultahost": "abuse@ultahost.com",
     "vultr": "abuse@vultr.com",
+    "streetplug": "support@streetplug.me",
 }
 
 
