@@ -684,7 +684,7 @@ class ReportManager:
             provider = self._extract_provider_from_reason(data.get("reason"))
             if provider and provider in results:
                 results.pop(platform, None)
-        return self._dedupe_generic_provider_reports(results)
+        return results
 
     def _canonical_provider(self, value: str) -> str:
         """Map provider aliases to platform keys used by reporters."""
@@ -1134,7 +1134,7 @@ class ReportManager:
                         notes = list(notes)
                         data["notes"] = notes
                         if "Use your own contact details" not in notes:
-                            notes.append("Use your own contact details (do not use SeedBuster details).")
+                            notes.append("Use your own contact details.")
                     form_url = str(data.get("form_url") or "").strip() if isinstance(data, dict) else ""
                     if not form_url:
                         missing = "Destination missing; research needed."
