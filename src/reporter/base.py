@@ -636,6 +636,13 @@ class ReportEvidence:
             seen.add(line)
         return deduped
 
+    def get_official_site(self) -> Optional[str]:
+        for line in self.get_impersonation_lines():
+            match = re.search(r"official site:\\s*(https?://\\S+)", line, re.I)
+            if match:
+                return match.group(1).rstrip(").,")
+        return None
+
     def get_seed_observation(self) -> str:
         """Get a human-readable observation about seed phrase detection."""
         seed_hint = self.extract_seed_phrase_indicator()

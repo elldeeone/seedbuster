@@ -106,6 +106,7 @@ class RegistrarReporter(BaseReporter):
         reporter_email = self._reporter_email_address() or "(fill manually)"
         reporter_name = self._reporter_name() or "(fill manually)"
         domain_value = registered_domain(evidence.domain) or (evidence.domain or "").strip().lower()
+        official_site = evidence.get_official_site() or "N/A"
         comments = evidence.to_summary().strip()
 
         fields: list[ManualSubmissionField] = [
@@ -142,7 +143,7 @@ class RegistrarReporter(BaseReporter):
             ManualSubmissionField(
                 name="official_site",
                 label="Official Website",
-                value="N/A",
+                value=official_site,
             ),
             ManualSubmissionField(
                 name="vpn_proxy",
