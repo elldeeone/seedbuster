@@ -13,6 +13,7 @@ import imagehash
 
 from .browser import BrowserResult
 from .threat_intel import ThreatIntelLoader
+from .visual_match import VisualMatcher, VisualMatchResult
 from .infrastructure import InfrastructureResult
 from .code_analysis import CodeAnalyzer, CodeAnalysisResult
 from .temporal import TemporalAnalysis
@@ -76,16 +77,27 @@ class VisualMatchRule:
         s = detector.scoring  # Shorthand for scoring weights
 
         if context.browser_result.screenshot:
-            visual_score, matched = detector._check_visual_match(context.browser_result.screenshot)
-            metadata["visual_match_score"] = visual_score
-            metadata["matched_fingerprint"] = matched
+            combined_text = " ".join(
+                part for part in [context.browser_result.html, context.browser_result.title] if part
+            )
+            match = detector._check_visual_match(context.browser_result.screenshot, combined_text)
+            metadata["visual_match_score"] = match.score
+            metadata["matched_fingerprint"] = match.label
+            metadata["visual_match_image_score"] = match.image_score
+            metadata["visual_match_text_score"] = match.text_score
 
-            if visual_score >= s.get("visual_threshold_high", 80):
+            if match.label and match.score >= s.get("visual_threshold_high", 80):
                 score += s.get("visual_match_high", 40)
-                reasons.append(f"Visual match to {matched}: {visual_score:.0f}%")
-            elif visual_score >= s.get("visual_threshold_partial", 60):
+                reasons.append(
+                    f"Visual match to {match.label}: {match.score:.0f}%"
+                    f" (image {match.image_score:.0f}%, text {match.text_score:.0f}%)"
+                )
+            elif match.label and match.score >= s.get("visual_threshold_partial", 60):
                 score += s.get("visual_match_partial", 20)
-                reasons.append(f"Partial visual match to {matched}: {visual_score:.0f}%")
+                reasons.append(
+                    f"Partial visual match to {match.label}: {match.score:.0f}%"
+                    f" (image {match.image_score:.0f}%, text {match.text_score:.0f}%)"
+                )
 
         return RuleResult(self.name, score=score, reasons=reasons, metadata=metadata)
 
@@ -389,8 +401,7 @@ class PhishingDetector:
         if scoring_weights:
             self.scoring.update(scoring_weights)
 
-        self._fingerprints: dict[str, imagehash.ImageHash] = {}
-        self._load_fingerprints()
+        self._visual_matcher = VisualMatcher(self.fingerprints_dir)
 
         # Load threat intelligence
         self.config_dir = config_dir or Path("config")
@@ -430,17 +441,6 @@ class PhishingDetector:
         logger.info(f"Threat intel reloaded: v{self._threat_intel.version}")
         return self._threat_intel.version
 
-    def _load_fingerprints(self):
-        """Load stored fingerprints of legitimate sites."""
-        for fp_file in self.fingerprints_dir.glob("*.hash"):
-            name = fp_file.stem
-            hash_str = fp_file.read_text().strip()
-            try:
-                self._fingerprints[name] = imagehash.hex_to_hash(hash_str)
-                logger.info(f"Loaded fingerprint: {name}")
-            except Exception as e:
-                logger.error(f"Failed to load fingerprint {name}: {e}")
-
     def save_fingerprint(self, name: str, screenshot: bytes):
         """Save a fingerprint of a legitimate site."""
         try:
@@ -448,7 +448,17 @@ class PhishingDetector:
             phash = imagehash.phash(img)
             fp_path = self.fingerprints_dir / f"{name}.hash"
             fp_path.write_text(str(phash))
-            self._fingerprints[name] = phash
+            try:
+                self._visual_matcher.save_fingerprint_json(
+                    name=name,
+                    group=name.split("__", 1)[0],
+                    variant=None,
+                    screenshot=screenshot,
+                    html=None,
+                )
+                self._visual_matcher.reload()
+            except Exception as exc:
+                logger.debug(f"Failed to save v2 fingerprint for {name}: {exc}")
             logger.info(f"Saved fingerprint: {name}")
         except Exception as e:
             logger.error(f"Failed to save fingerprint {name}: {e}")
@@ -558,33 +568,13 @@ class PhishingDetector:
 
         return result
 
-    def _check_visual_match(self, screenshot: bytes) -> tuple[float, Optional[str]]:
+    def _check_visual_match(self, screenshot: bytes, html: Optional[str]) -> VisualMatchResult:
         """Compare screenshot against stored fingerprints."""
-        if not self._fingerprints:
-            return 0.0, None
-
         try:
-            img = Image.open(io.BytesIO(screenshot))
-            current_hash = imagehash.phash(img)
-
-            best_match = None
-            best_score = 0.0
-
-            for name, stored_hash in self._fingerprints.items():
-                # Calculate similarity (lower difference = more similar)
-                diff = current_hash - stored_hash
-                # Convert to percentage (hash is 64 bits, max diff is 64)
-                similarity = max(0, (64 - diff) / 64 * 100)
-
-                if similarity > best_score:
-                    best_score = similarity
-                    best_match = name
-
-            return best_score, best_match
-
+            return self._visual_matcher.match(screenshot, html)
         except Exception as e:
             logger.error(f"Error comparing visual fingerprint: {e}")
-            return 0.0, None
+            return VisualMatchResult(0.0, None, None, 0.0, 0.0, 0.0)
 
     def _detect_seed_form(self, result: BrowserResult) -> tuple[int, list[str]]:
         """Detect seed phrase input forms."""
