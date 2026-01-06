@@ -3,6 +3,7 @@
 import asyncio
 import ipaddress
 import logging
+import os
 import random
 import re
 import socket
@@ -289,13 +290,16 @@ class BrowserAnalyzer:
     async def start(self):
         """Start the browser instance."""
         self._playwright = await async_playwright().start()
+        sandbox_args: list[str] = []
+        if os.getenv("SEEDBUSTER_DISABLE_CHROMIUM_SANDBOX") == "1":
+            sandbox_args = ["--no-sandbox", "--disable-setuid-sandbox"]
+            logger.warning("Chromium sandbox disabled via SEEDBUSTER_DISABLE_CHROMIUM_SANDBOX=1")
         self._browser = await self._playwright.chromium.launch(
             headless=self.headless,
             args=[
                 "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
                 "--disable-gpu",
+                *sandbox_args,
             ],
         )
         logger.info("Browser started")
