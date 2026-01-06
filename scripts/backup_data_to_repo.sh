@@ -43,7 +43,41 @@ timestamp="$(date +%Y-%m-%d)"
 archive_rel="backups/nightly/seedbuster-data-$timestamp.tgz"
 archive="$worktree_dir/$archive_rel"
 
-tar -czf "$archive" -C "$repo_root" data
+include_paths=(
+  "opt/seedbuster/data"
+  "opt/seedbuster/config"
+  "etc/seedbuster/admin-ips.conf"
+  "etc/systemd/system/seedbuster.service"
+  "etc/systemd/system/seedbuster-dashboard.service"
+  "etc/systemd/system/update-cloudflare-nft.service"
+  "etc/systemd/system/update-cloudflare-nft.timer"
+  "etc/ssh/sshd_config.d/99-hardening.conf"
+  "etc/nginx/nginx.conf"
+  "etc/nginx/sites-available/seedbuster"
+  "etc/nftables.conf"
+  "etc/nftables.d/seedbuster.nft"
+  "etc/sysctl.d/99-seedbuster-hardening.conf"
+)
+missing_paths=()
+final_paths=()
+for path in "${include_paths[@]}"; do
+  if [ -e "/$path" ]; then
+    final_paths+=("$path")
+  else
+    missing_paths+=("$path")
+  fi
+done
+if [ "${#missing_paths[@]}" -gt 0 ]; then
+  echo "Missing paths: ${missing_paths[*]}"
+fi
+
+tar -czf "$archive" -C / \
+  --exclude="etc/seedbuster/seedbuster.env" \
+  --exclude="etc/seedbuster/backup_deploy_key" \
+  --exclude="etc/seedbuster/backup_deploy_key.pub" \
+  --exclude="etc/seedbuster/seedbuster.env.bak"* \
+  --ignore-failed-read \
+  "${final_paths[@]}"
 echo "Archive created $archive_rel"
 
 git -C "$worktree_dir" add "$archive_rel"
