@@ -8,6 +8,8 @@ branch="backup"
 backup_remote="${BACKUP_REMOTE:-backup}"
 backup_ssh_command="${BACKUP_SSH_COMMAND:-ssh -i /etc/seedbuster/backup_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/etc/ssh/ssh_known_hosts}"
 
+echo "Backup start $(date -Is)"
+
 if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
   echo "Not a git repo: $repo_root" >&2
   exit 1
@@ -42,11 +44,14 @@ archive_rel="backups/nightly/seedbuster-data-$timestamp.tgz"
 archive="$worktree_dir/$archive_rel"
 
 tar -czf "$archive" -C "$repo_root" data
+echo "Archive created $archive_rel"
 
 git -C "$worktree_dir" add "$archive_rel"
 if git -C "$worktree_dir" diff --cached --quiet -- "$archive_rel"; then
+  echo "No changes for $timestamp (already backed up)"
   exit 0
 fi
 
 git -C "$worktree_dir" commit -m "Backup data $timestamp" -- "$archive_rel"
 GIT_SSH_COMMAND="$backup_ssh_command" git -C "$worktree_dir" push "$backup_remote" "$branch"
+echo "Backup pushed to $backup_remote/$branch"
