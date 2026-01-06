@@ -4507,7 +4507,7 @@ class DashboardServer:
         database: Database,
         evidence_dir: Path,
         campaigns_dir: Path | None = None,
-        submit_callback: Callable[[str], None] | None = None,
+        submit_callback: Callable[[str, str | None], None] | None = None,
         rescan_callback: Callable[[str], None] | None = None,
         report_callback: Callable[[int, str, Optional[list[str]], bool], object] | None = None,
         mark_manual_done_callback: Callable[[int, str, Optional[list[str]], str], object] | None = None,
@@ -4580,6 +4580,34 @@ class DashboardServer:
             ]
         )
         self._register_routes()
+
+    @staticmethod
+    def _normalize_source_url(source_url: str | None, *, canonical: str | None = None) -> str | None:
+        raw = str(source_url or "").strip()
+        if not raw:
+            return None
+        if not raw.startswith(("http://", "https://")):
+            raw = f"https://{raw}"
+        try:
+            parsed = urlparse(raw)
+        except Exception:
+            return None
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if canonical:
+            if canonicalize_domain(parsed.netloc) != canonicalize_domain(canonical):
+                return None
+        return raw
+
+    @staticmethod
+    def _is_root_source_url(source_url: str) -> bool:
+        try:
+            parsed = urlparse(source_url)
+        except Exception:
+            return False
+        path = parsed.path or ""
+        has_extra = bool(parsed.query or parsed.fragment)
+        return path in ("", "/") and not has_extra
 
     def _load_campaigns(self) -> list[dict]:
         """Load all threat campaigns from campaigns.json."""
@@ -5669,9 +5697,17 @@ class DashboardServer:
         domain = canonicalize_domain(target) or _extract_hostname(target)
         if not domain:
             raise web.HTTPSeeOther(location=_build_query_link("/admin", msg="Invalid domain/URL", error=1))
+        source_url = None
+        if "/" in target or target.startswith(("http://", "https://")):
+            source_url = self._normalize_source_url(target, canonical=domain)
 
         existing = await self.database.get_domain(domain)
         if existing:
+            if source_url and self.submit_callback:
+                self.submit_callback(domain, source_url)
+                raise web.HTTPSeeOther(
+                    location=_build_query_link("/admin", msg=f"Rescan queued for {domain}")
+                )
             if self.rescan_callback:
                 self.rescan_callback(domain)
                 raise web.HTTPSeeOther(
@@ -5685,7 +5721,7 @@ class DashboardServer:
             raise web.HTTPSeeOther(
                 location=_build_query_link("/admin", msg="Submit not configured", error=1)
             )
-        self.submit_callback(target)
+        self.submit_callback(domain, source_url)
         raise web.HTTPSeeOther(location=_build_query_link("/admin", msg=f"Submitted: {domain}"))
 
     async def _admin_domain(self, request: web.Request) -> web.Response:
@@ -6129,6 +6165,8 @@ class DashboardServer:
             "score": data.get("score"),
             "verdict": data.get("verdict"),
             "scan_reason": data.get("scan_reason"),
+            "source_url": data.get("source_url"),
+            "final_url": data.get("final_url"),
             "is_latest": is_latest,
         }
         return meta, timestamp
@@ -6419,6 +6457,8 @@ class DashboardServer:
                             "reasons": data.get("reasons"),
                             "scan_reason": data.get("scan_reason"),
                             "is_latest": is_latest,
+                            "source_url": data.get("source_url"),
+                            "final_url": data.get("final_url"),
                         }
                         final_url = data.get("final_url")
                         final_domain = data.get("final_domain") or canonicalize_domain(final_url or "")
@@ -6567,9 +6607,15 @@ class DashboardServer:
         domain = canonicalize_domain(target) or _extract_hostname(target)
         if not domain:
             return web.json_response({"error": "Invalid domain/URL"}, status=400)
+        source_url = None
+        if "/" in target or target.startswith(("http://", "https://")):
+            source_url = self._normalize_source_url(target, canonical=domain)
 
         existing = await self.database.get_domain(domain)
         if existing:
+            if source_url and self.submit_callback:
+                self.submit_callback(domain, source_url)
+                return web.json_response({"status": "rescan_queued", "domain": domain})
             if self.rescan_callback:
                 already = await self.database.has_pending_dashboard_action("rescan_domain", domain)
                 if already:
@@ -6581,7 +6627,7 @@ class DashboardServer:
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit not configured")
 
-        self.submit_callback(target)
+        self.submit_callback(domain, source_url)
         return web.json_response({"status": "submitted", "domain": domain})
 
     async def _admin_api_rescan(self, request: web.Request) -> web.Response:
@@ -7256,8 +7302,14 @@ class DashboardServer:
 
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit callback not configured")
+        source_url = None
+        if isinstance(submission, dict):
+            source_url = self._normalize_source_url(submission.get("source_url"), canonical=canonical)
 
-        self.submit_callback(canonical)
+        # Queue root scan first, then path scan (if applicable) so latest snapshot is the path.
+        self.submit_callback(canonical, None)
+        if source_url and not self._is_root_source_url(source_url):
+            self.submit_callback(canonical, source_url)
         await self.database.update_public_submission_status(
             submission_id=submission_id,
             status="approved",

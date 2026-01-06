@@ -111,6 +111,8 @@ export interface SnapshotSummary {
   score?: number | null;
   verdict?: string | null;
   scan_reason?: string | null;
+  source_url?: string | null;
+  final_url?: string | null;
   is_latest?: boolean;
 }
 

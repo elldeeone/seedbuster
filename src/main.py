@@ -5,6 +5,7 @@ import json
 import logging
 import signal
 import sys
+from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -185,7 +186,12 @@ class SeedBusterPipeline:
         except asyncio.QueueFull:
             logger.warning(f"Queue full, could not submit: {domain}")
 
-    async def _handle_rescan(self, domain: str, reason: ScanReason):
+    async def _handle_rescan(
+        self,
+        domain: str,
+        reason: ScanReason,
+        source_url: str | None = None,
+    ):
         """Handle scheduled rescan - re-analyze domain and send update if changed."""
         logger.info(f"Rescan triggered for {domain} (reason: {reason.value})")
 
@@ -216,18 +222,19 @@ class SeedBusterPipeline:
         if rescan_key:
             self._rescan_pending.add(rescan_key)
         try:
-            await self._analysis_queue.put((domain, reason))
+            task = (domain, reason, source_url) if source_url else (domain, reason)
+            await self._analysis_queue.put(task)
         except Exception:
             if rescan_key:
                 self._rescan_pending.discard(rescan_key)
             raise
 
-    def _manual_rescan(self, domain: str):
+    def _manual_rescan(self, domain: str, source_url: str | None = None):
         """Handle manual rescan request from Telegram."""
         import asyncio
         try:
             # Create task to handle async rescan
-            asyncio.create_task(self._handle_rescan(domain, ScanReason.MANUAL))
+            asyncio.create_task(self._handle_rescan(domain, ScanReason.MANUAL, source_url=source_url))
             logger.info(f"Manual rescan queued: {domain}")
         except Exception as e:
             logger.error(f"Failed to queue manual rescan for {domain}: {e}")
@@ -627,10 +634,29 @@ class SeedBusterPipeline:
             domain = str(payload.get("domain") or "").strip().lower()
             if not domain:
                 raise ValueError("domain is required")
+            canonical = canonicalize_domain(domain) or domain
+            domain = canonical
+
+            source_url = (payload.get("source_url") or "").strip()
+            if source_url:
+                if not source_url.startswith(("http://", "https://")):
+                    source_url = f"https://{source_url}"
+                try:
+                    parsed = urlparse(source_url)
+                    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                        source_url = ""
+                    elif canonicalize_domain(parsed.netloc) != canonical:
+                        source_url = ""
+                except Exception:
+                    source_url = ""
+            source_url = source_url or None
 
             # If it already exists, treat it as a rescan request.
             if await self.database.domain_exists(domain):
-                self._manual_rescan(domain)
+                if source_url:
+                    self._manual_rescan(domain, source_url=source_url)
+                else:
+                    self._manual_rescan(domain)
                 return
 
             try:
@@ -638,6 +664,7 @@ class SeedBusterPipeline:
                     "domain": domain,
                     "source": "manual",
                     "force": True,
+                    "source_url": source_url,
                 })
             except asyncio.QueueFull:
                 raise RuntimeError("discovery queue full")
@@ -739,8 +766,10 @@ class SeedBusterPipeline:
 
                 # Handle rescan tasks (tuple) vs regular tasks (dict)
                 if isinstance(task, tuple):
-                    # Rescan task: (domain, ScanReason)
-                    domain, scan_reason = task
+                    # Rescan task: (domain, ScanReason[, source_url])
+                    domain = task[0] if len(task) > 0 else ""
+                    scan_reason = task[1] if len(task) > 1 else ScanReason.MANUAL
+                    source_url = task[2] if len(task) > 2 else None
                     # Get domain record from database
                     domain_record = await self.database.get_domain(domain)
 
@@ -756,6 +785,8 @@ class SeedBusterPipeline:
                                     await self.database.update_domain_score(domain_id, domain_score)
                             domain_record["domain_score"] = domain_score
                             domain_record["reasons"] = domain_reasons
+                            if source_url:
+                                domain_record["source_url"] = source_url
                             await self.analysis_engine.analyze(domain_record, scan_reason=scan_reason)
                         else:
                             logger.warning(f"Rescan: domain not found in DB: {domain}")

@@ -216,6 +216,33 @@ const extractDomainFromInput = (input: string): string => {
   }
 };
 
+const truncateUrl = (value: string, max = 48): string => {
+  const text = value.trim();
+  if (text.length <= max) return text;
+  const head = text.slice(0, Math.max(0, max - 15));
+  const tail = text.slice(-12);
+  return `${head}...${tail}`;
+};
+
+const extractPathFromUrl = (input?: string | null, domain?: string | null): string | null => {
+  const raw = (input || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const base = (domain || "").replace(/^www\./, "");
+    if (base && host && host !== base) {
+      return null;
+    }
+    const path = parsed.pathname || "/";
+    const suffix = `${parsed.search || ""}${parsed.hash || ""}`;
+    const normalized = path.startsWith("/") ? path : `/${path}`;
+    return `${normalized}${suffix}` || "/";
+  } catch {
+    return null;
+  }
+};
+
 // LocalStorage for tracking "I Reported This" engagements
 const ENGAGEMENTS_STORAGE_KEY = "seedbuster_my_engagements";
 type StoredEngagement = { domain: string; platform: string; reportedAt: string };
@@ -1180,6 +1207,26 @@ export default function App() {
   const snapshotScanReason = snapshotDetail?.scan_reason || resolvedSnapshot?.scan_reason || null;
   const snapshotLabel = resolvedSnapshot ? formatSnapshotLabel(resolvedSnapshot) : null;
   const verdictReasons = snapshotReasonsText || (domainDetail?.domain.verdict_reasons as any) || null;
+
+  const maliciousPaths = useMemo(() => {
+    if (!snapshotList.length || !domainDetail?.domain?.domain) return [];
+    const host = domainDetail.domain.domain;
+    const map = new Map<string, { path: string; snapshotId: string; timestamp: number; url: string }>();
+    for (const snap of snapshotList) {
+      const verdict = (snap.verdict || "").toLowerCase();
+      if (verdict !== "high" && verdict !== "medium") continue;
+      const url = (snap.source_url || snap.final_url || "").trim();
+      if (!url) continue;
+      const path = extractPathFromUrl(url, host);
+      if (!path) continue;
+      const ts = snap.timestamp ? Date.parse(snap.timestamp) : 0;
+      const existing = map.get(path);
+      if (!existing || (ts && ts > existing.timestamp)) {
+        map.set(path, { path, snapshotId: snap.id, timestamp: ts || 0, url });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+  }, [snapshotList, domainDetail?.domain?.domain]);
   const isAllowlisted = (domainDetail?.domain.status || "").toLowerCase() === "allowlisted";
   const domainScoreDisplay = isAllowlisted
     ? "—"
@@ -2445,7 +2492,19 @@ export default function App() {
                           <div className="sb-muted" style={{ fontSize: 12 }}>Last: {timeAgo(s.last_submitted_at)}</div>
                         </td>
                         <td>
-                          {s.source_url ? <a href={s.source_url} target="_blank" rel="noreferrer">Link</a> : <span className="sb-muted">—</span>}
+                          {s.source_url ? (
+                            <a
+                              href={s.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="sb-link-truncate"
+                              title={s.source_url}
+                            >
+                              {truncateUrl(s.source_url, 40)}
+                            </a>
+                          ) : (
+                            <span className="sb-muted">—</span>
+                          )}
                         </td>
                         <td style={{ maxWidth: 240 }}>
                           {s.reporter_notes ? <div style={{ whiteSpace: "pre-wrap" }}>{s.reporter_notes}</div> : <span className="sb-muted">—</span>}
@@ -3109,7 +3168,7 @@ export default function App() {
                 ["Domain score", domainScoreDisplay],
                 ["Analysis score", analysisScoreDisplay],
                 ["Source", domainDetail.domain.source || "\u2014"],
-                ["Source URL", domainDetail.domain.source_url || "\u2014"],
+                ["Source URL", resolvedSnapshot?.source_url || domainDetail.domain.source_url || "\u2014"],
                 ["First seen", domainDetail.domain.first_seen || "\u2014"],
                 ["Analyzed at", analyzedAtDisplay],
                 ["Reported at", reportedAtDisplay],
@@ -3151,6 +3210,27 @@ export default function App() {
                     Viewing historical snapshot. Reporting and status actions use the latest scan.
                   </div>
                 )}
+              </div>
+            )}
+
+            {!isAllowlisted && maliciousPaths.length > 1 && (
+              <div className="sb-section" style={{ marginTop: 12 }}>
+                <div className="sb-label">Malicious paths ({maliciousPaths.length})</div>
+                <div className="sb-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                  {maliciousPaths.map((entry) => (
+                    <button
+                      key={entry.path}
+                      className={`sb-pill${entry.snapshotId === resolvedSnapshotId ? " sb-pill-active" : ""}`}
+                      onClick={() => handleSnapshotChange(entry.snapshotId)}
+                      title={entry.url}
+                    >
+                      {entry.path}
+                    </button>
+                  ))}
+                </div>
+                <div className="sb-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  Click a path to switch snapshots.
+                </div>
               </div>
             )}
 

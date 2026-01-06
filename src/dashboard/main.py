@@ -80,8 +80,11 @@ async def run_dashboard() -> None:
         output_dir=config.data_dir / "packages",
     )
 
-    def submit_callback(domain: str) -> None:
-        _spawn(db.enqueue_dashboard_action("submit_domain", {"domain": domain}))
+    def submit_callback(domain: str, source_url: str | None = None) -> None:
+        payload = {"domain": domain}
+        if source_url:
+            payload["source_url"] = source_url
+        _spawn(db.enqueue_dashboard_action("submit_domain", payload))
 
     def rescan_callback(domain: str) -> None:
         _spawn(

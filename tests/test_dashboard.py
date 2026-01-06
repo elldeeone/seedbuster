@@ -649,8 +649,8 @@ async def test_admin_api_submit_domain(dashboard_server, database):
 
     submitted_domains = []
 
-    def capture_submit(domain: str):
-        submitted_domains.append(domain)
+    def capture_submit(domain: str, source_url: str | None = None):
+        submitted_domains.append((domain, source_url))
 
     dashboard_server.submit_callback = capture_submit
 
@@ -669,7 +669,44 @@ async def test_admin_api_submit_domain(dashboard_server, database):
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "submitted"
-        assert "newdomain.example.com" in submitted_domains
+        assert ("newdomain.example.com", None) in submitted_domains
+
+
+@pytest.mark.asyncio
+async def test_admin_api_approve_submission_queues_root_and_path(dashboard_server, database):
+    """Approving a public submission queues root + submitted path."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    submitted = []
+
+    def capture_submit(domain: str, source_url: str | None = None):
+        submitted.append((domain, source_url))
+
+    dashboard_server.submit_callback = capture_submit
+
+    submission_id, _ = await database.add_public_submission(
+        domain="1331.one",
+        canonical_domain="1331.one",
+        source_url="https://1331.one/kas",
+    )
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
+        resp = await client.post(
+            f"/admin/api/submissions/{submission_id}/approve",
+            headers=headers,
+            json={},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "approved"
+
+    assert submitted == [
+        ("1331.one", None),
+        ("1331.one", "https://1331.one/kas"),
+    ]
 
 
 @pytest.mark.asyncio
