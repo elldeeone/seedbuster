@@ -206,6 +206,7 @@ Captured evidence (screenshot + HTML) available on request.
         )
 
         try:
+            import os
             from playwright.async_api import async_playwright
         except ImportError:
             return ReportResult(
@@ -217,7 +218,11 @@ Captured evidence (screenshot + HTML) available on request.
 
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
+                disable_sandbox = os.getenv("SEEDBUSTER_DISABLE_CHROMIUM_SANDBOX") == "1"
+                browser = await p.chromium.launch(
+                    headless=True,
+                    chromium_sandbox=not disable_sandbox,
+                )
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
                 )
