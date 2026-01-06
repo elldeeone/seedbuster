@@ -39,7 +39,7 @@ REGISTRAR_ABUSE_FORMS: dict[str, str] = {
     "abovedomains": "https://www.above.com/contact.html",
     "above.com": "https://www.above.com/contact.html",
     "cloudflare": "https://abuse.cloudflare.com/",
-    "dynadot": "https://www.dynadot.com/es/reportar-abuso",
+    "dynadot": "https://www.dynadot.com/report-abuse",
     "godaddy": "https://supportcenter.godaddy.com/abusereport",
     "hostinger": "https://www.hostinger.com/report-abuse",
     "namesilo": "https://www.namesilo.com/report_abuse.php",

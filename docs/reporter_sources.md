@@ -27,7 +27,7 @@ Last validated: 2026-01-05
 - Ultahost: https://ultahost.com/report-abuse (also abuse@ultahost.com)
 
 ## Registrar Platforms
-- Dynadot: https://www.dynadot.com/es/reportar-abuso
+- Dynadot: https://www.dynadot.com/report-abuse
 - Namecheap: abuse@namecheap.com
 - NameSilo: https://www.namesilo.com/report_abuse.php (also abuse@namesilo.com)
 - Squarespace Domains: https://support.squarespace.com/hc/en-us/articles/11580957865869-Reporting-abuse
