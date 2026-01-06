@@ -86,6 +86,7 @@ class Database:
                         watchlist_baseline_timestamp TEXT,
                         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         source TEXT DEFAULT 'certstream',
+                        source_url TEXT,
                         domain_score INTEGER DEFAULT 0,
                         analysis_score INTEGER,
                         verdict TEXT,
@@ -264,6 +265,8 @@ class Database:
             migrations.append("ALTER TABLE domains ADD COLUMN watchlist_baseline_timestamp TEXT")
         if "canonical_domain" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN canonical_domain TEXT")
+        if "source_url" not in existing:
+            migrations.append("ALTER TABLE domains ADD COLUMN source_url TEXT")
         if "takedown_status" not in existing:
             migrations.append("ALTER TABLE domains ADD COLUMN takedown_status TEXT DEFAULT 'active'")
         if "takedown_detected_at" not in existing:
@@ -581,6 +584,7 @@ class Database:
         domain: str,
         source: str = "certstream",
         domain_score: int = 0,
+        source_url: str | None = None,
     ) -> Optional[int]:
         """Add a new domain to track. Returns domain ID or None if exists."""
         normalized = (domain or "").strip().lower()
@@ -595,11 +599,19 @@ class Database:
                 current_score = int(existing.get("domain_score") or 0)
             except Exception:
                 current_score = 0
+            existing_source_url = str(existing.get("source_url") or "").strip()
             if domain_score > current_score:
                 async with self._lock:
                     await self._connection.execute(
                         "UPDATE domains SET domain_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                         (domain_score, existing["id"]),
+                    )
+                    await self._connection.commit()
+            if source_url and not existing_source_url:
+                async with self._lock:
+                    await self._connection.execute(
+                        "UPDATE domains SET source_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (source_url, existing["id"]),
                     )
                     await self._connection.commit()
             return int(existing["id"])
@@ -608,10 +620,10 @@ class Database:
             try:
                 cursor = await self._connection.execute(
                     """
-                    INSERT INTO domains (domain, canonical_domain, source, domain_score, status)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO domains (domain, canonical_domain, source, source_url, domain_score, status)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (normalized, canonical, source, domain_score, DomainStatus.PENDING.value),
+                    (normalized, canonical, source, source_url, domain_score, DomainStatus.PENDING.value),
                 )
                 await self._connection.commit()
                 return cursor.lastrowid

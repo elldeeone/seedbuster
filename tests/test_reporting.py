@@ -15,6 +15,7 @@ from src.reporter.registrar import RegistrarReporter
 from src.reporter.resend_reporter import ResendReporter
 from src.reporter.smtp_reporter import SMTPReporter
 from src.reporter.microsoft import MicrosoftReporter
+from src.reporter.shortlink_provider import ShortlinkProviderReporter
 from src.reporter.manager import ReportManager
 from src.storage.database import Database, DomainStatus
 from src.storage.evidence import EvidenceStore
@@ -67,6 +68,40 @@ async def test_build_evidence_uses_final_url_best_screenshot_and_derives_backend
     assert evidence.hosting_provider == "cloudflare"
 
     await db.close()
+
+
+def test_shortlink_provider_manual_fields_include_redirect_context():
+    reporter = ShortlinkProviderReporter()
+    evidence = ReportEvidence(
+        domain="1331.one",
+        url="https://1331.one/kas",
+        detected_at=datetime.now(),
+        confidence_score=85,
+        analysis_json={
+            "redirect_service": "bitly",
+            "redirect_service_header": "bitly",
+            "redirect_offsite": True,
+            "final_url": "https://casperfunding.org/claim",
+            "redirect_chain": [
+                {
+                    "type": "http",
+                    "from_url": "https://1331.one/kas",
+                    "to_url": "https://casperfunding.org/claim",
+                }
+            ],
+        },
+    )
+
+    applicable, _ = reporter.is_applicable(evidence)
+    assert applicable is True
+
+    manual = reporter.generate_manual_submission(evidence)
+    fields = {field.name: field.value for field in manual.fields}
+
+    assert fields["shortlink_url"] == "https://1331.one/kas"
+    assert "casperfunding.org" in fields["destination_url"]
+    assert manual.form_url == "https://bitly.com/pages/trust/report-abuse"
+    assert any("Bitly" in note for note in manual.notes)
 
 
 class _ManualOnlyReporter(BaseReporter):
@@ -227,7 +262,7 @@ async def test_hosting_provider_reporter_returns_manual_required_for_form_provid
     )
     result = await reporter.submit(evidence)
     assert result.status == ReportStatus.MANUAL_REQUIRED
-    assert "support.aws.amazon.com" in (result.message or "")
+    assert "repost.aws/knowledge-center/report-aws-abuse" in (result.message or "")
 
 
 @pytest.mark.asyncio

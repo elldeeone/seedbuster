@@ -164,14 +164,22 @@ class SeedBusterPipeline:
         self.ct_listener: AsyncCertstreamListener = None
         self.search_discovery: SearchDiscovery | None = None
 
-    def _manual_submit(self, domain: str):
-        """Handle manual domain submission from Telegram."""
+    def _manual_submit(self, target: str):
+        """Handle manual domain submission from Telegram/dashboard."""
+        raw = str(target or "").strip()
+        if not raw:
+            return
+        domain = canonicalize_domain(raw) or raw.split("/")[0]
+        source_url = raw if ("/" in raw or raw.startswith(("http://", "https://"))) else None
+        if source_url and not source_url.startswith(("http://", "https://")):
+            source_url = f"https://{source_url}"
         try:
             # Force analysis even if the domain scorer would normally drop it.
             self._discovery_queue.put_nowait({
                 "domain": domain,
                 "source": "manual",
                 "force": True,
+                "source_url": source_url,
             })
             logger.info(f"Manual submission queued: {domain} (forced)")
         except asyncio.QueueFull:
@@ -512,10 +520,12 @@ class SeedBusterPipeline:
 
                 source = "certstream"
                 force = False
+                source_url = None
                 if isinstance(item, dict):
                     domain = (item.get("domain") or "").strip()
                     source = (item.get("source") or source).strip() or source
                     force = bool(item.get("force", False))
+                    source_url = (item.get("source_url") or "").strip() or None
                 else:
                     domain = str(item).strip()
 
@@ -543,6 +553,7 @@ class SeedBusterPipeline:
                     domain=domain,
                     source=source,
                     domain_score=score_result.score,
+                    source_url=source_url,
                 )
 
                 if domain_id:
@@ -556,6 +567,7 @@ class SeedBusterPipeline:
                         "domain": domain,
                         "domain_score": score_result.score,
                         "reasons": score_result.reasons,
+                        "source_url": source_url,
                     })
 
             except Exception as e:

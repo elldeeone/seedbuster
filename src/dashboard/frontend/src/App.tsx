@@ -1186,6 +1186,17 @@ export default function App() {
     : (domainDetail?.domain as any)?.domain_score ?? (domainDetail?.domain as any)?.score ?? "—";
   const analysisScoreDisplay = isAllowlisted ? "—" : snapshotScore ?? "—";
   const analyzedAtDisplay = isAllowlisted ? "—" : snapshotTimestamp || "—";
+  const redirectInfo = domainDetail?.redirect || null;
+  const redirectChain = Array.isArray(redirectInfo?.redirect_chain) ? redirectInfo?.redirect_chain : [];
+  const redirectDetected = Boolean(redirectInfo?.redirect_detected || redirectChain?.length);
+  const redirectHopCount = redirectInfo?.redirect_hops ?? redirectChain?.length ?? 0;
+  const redirectInitial = redirectInfo?.initial_url || null;
+  const redirectEarly = redirectInfo?.early_url || null;
+  const redirectFinal = redirectInfo?.final_url || null;
+  const redirectTarget = redirectInfo?.target || null;
+  const redirectOnly = Boolean(redirectInfo?.redirect_only);
+  const redirectService = redirectInfo?.redirect_service || null;
+  const redirectServiceHeader = redirectInfo?.redirect_service_header || null;
   const reportedAtDisplay = isAllowlisted ? "—" : (domainDetail?.domain as any)?.reported_at || "—";
 
   useEffect(() => {
@@ -3098,6 +3109,7 @@ export default function App() {
                 ["Domain score", domainScoreDisplay],
                 ["Analysis score", analysisScoreDisplay],
                 ["Source", domainDetail.domain.source || "\u2014"],
+                ["Source URL", domainDetail.domain.source_url || "\u2014"],
                 ["First seen", domainDetail.domain.first_seen || "\u2014"],
                 ["Analyzed at", analyzedAtDisplay],
                 ["Reported at", reportedAtDisplay],
@@ -3138,6 +3150,95 @@ export default function App() {
                   <div className="sb-muted" style={{ marginTop: 6, fontSize: 12 }}>
                     Viewing historical snapshot. Reporting and status actions use the latest scan.
                   </div>
+                )}
+              </div>
+            )}
+
+            {!isAllowlisted && (
+              <div className="sb-panel" style={{ marginTop: 16 }}>
+                <div className="sb-panel-header">
+                  <span className="sb-panel-title">Redirects</span>
+                  <span className="sb-muted">{redirectDetected ? `${redirectHopCount} hops` : "No redirect"}</span>
+                </div>
+                {(redirectDetected || redirectInitial || redirectFinal) ? (
+                  <>
+                    {redirectOnly && (
+                      <div className="sb-notice" style={{ marginBottom: 10 }}>
+                        Redirect-only landing page detected.
+                      </div>
+                    )}
+                    <div className="sb-grid" style={{ gap: 12 }}>
+                      <div className="col-4">
+                        <div className="sb-label">Initial URL</div>
+                        <div className="sb-muted" style={{ wordBreak: "break-all" }}>{redirectInitial || `https://${domainDetail.domain.domain}`}</div>
+                        {redirectEarly && redirectEarly !== redirectInitial && (
+                          <>
+                            <div className="sb-label" style={{ marginTop: 6 }}>Early URL</div>
+                            <div className="sb-muted" style={{ wordBreak: "break-all" }}>{redirectEarly}</div>
+                          </>
+                        )}
+                        {redirectService && (
+                          <>
+                            <div className="sb-label" style={{ marginTop: 6 }}>Redirect Service</div>
+                            <div className="sb-muted">{redirectService}{redirectServiceHeader ? ` (${redirectServiceHeader})` : ""}</div>
+                          </>
+                        )}
+                      </div>
+                      <div className="col-4">
+                        <div className="sb-label">Final URL</div>
+                        {redirectFinal ? (
+                          <a href={redirectFinal} target="_blank" rel="noreferrer" style={{ wordBreak: "break-all" }}>{redirectFinal}</a>
+                        ) : (
+                          <div className="sb-muted">—</div>
+                        )}
+                        {redirectInfo?.final_domain && (
+                          <>
+                            <div className="sb-label" style={{ marginTop: 6 }}>Final Domain</div>
+                            <div className="sb-muted">{redirectInfo.final_domain}</div>
+                          </>
+                        )}
+                      </div>
+                      <div className="col-4">
+                        <div className="sb-label">Target Record</div>
+                        {redirectTarget?.id ? (
+                          <button className="sb-btn" onClick={() => { window.location.hash = `#/domains/${redirectTarget.id}`; }}>
+                            {redirectTarget.domain}
+                          </button>
+                        ) : (
+                          <div className="sb-muted">{redirectTarget?.domain || "—"}</div>
+                        )}
+                        {redirectTarget?.status && (
+                          <div className="sb-muted" style={{ marginTop: 6 }}>{(redirectTarget.status || "").toUpperCase()}</div>
+                        )}
+                      </div>
+                    </div>
+                    {redirectChain && redirectChain.length > 0 && (
+                      <div className="sb-table-wrap" style={{ marginTop: 12 }}>
+                        <table className="sb-table">
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Status</th>
+                              <th>From</th>
+                              <th>To</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {redirectChain.map((step, idx) => (
+                              <tr key={`${step.from_url || ""}-${idx}`}>
+                                <td>{(step.type || "http").toString().toUpperCase()}</td>
+                                <td>{step.status ?? "—"}</td>
+                                <td className="sb-muted" style={{ wordBreak: "break-all" }}>{step.from_url || "—"}</td>
+                                <td className="sb-muted" style={{ wordBreak: "break-all" }}>{step.to_url || step.location || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="sb-muted">No redirect data available for this snapshot.</div>
                 )}
               </div>
             )}

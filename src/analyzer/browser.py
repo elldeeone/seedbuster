@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
-from playwright.async_api import async_playwright, Browser, Page, Error as PlaywrightError
+from playwright.async_api import async_playwright, Browser, Page, Response, Error as PlaywrightError
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,47 @@ EXPLORATION_TARGETS = [
     # Settings (sometimes hides wallet access)
     {"text": "settings", "priority": 3},
 ]
+
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+META_REFRESH_RE = re.compile(r"<meta[^>]+http-equiv=['\"]?refresh['\"]?[^>]*>", re.IGNORECASE)
+
+
+def _normalize_url_for_compare(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+    scheme = (parsed.scheme or "").lower()
+    netloc = (parsed.netloc or "").lower()
+    path = parsed.path or ""
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{scheme}://{netloc}{path}{query}"
+
+
+def _extract_meta_refresh_url(html: str) -> Optional[str]:
+    if not html:
+        return None
+    match = META_REFRESH_RE.search(html)
+    if not match:
+        return None
+    tag = match.group(0)
+    content_match = re.search(r"content=['\"]?([^'\">]+)", tag, re.IGNORECASE)
+    if not content_match:
+        return None
+    content = content_match.group(1)
+    if "url=" not in content.lower():
+        return None
+    parts = content.split(";", 1)
+    if len(parts) < 2:
+        return None
+    url_part = parts[1].strip()
+    if "url=" in url_part.lower():
+        url_part = url_part.split("=", 1)[1].strip()
+    return url_part or None
 
 # Stealth JavaScript to inject - hides headless browser signatures
 STEALTH_SCRIPT = """
@@ -249,10 +290,16 @@ class BrowserResult:
     console_logs: list[str] = field(default_factory=list)
 
     # Page metadata
+    initial_url: Optional[str] = None
+    early_url: Optional[str] = None
     final_url: Optional[str] = None
     title: Optional[str] = None
     title_early: Optional[str] = None  # Title before JS-based redirects
     status_code: Optional[int] = None
+    redirect_chain: list[dict] = field(default_factory=list)
+    redirect_hops: int = 0
+    redirect_detected: bool = False
+    redirect_error: Optional[str] = None
 
     # Detected forms
     forms: list[dict] = field(default_factory=list)
@@ -286,6 +333,106 @@ class BrowserAnalyzer:
         self._playwright = None
         self._browser: Optional[Browser] = None
         self.exploration_targets = exploration_targets or list(EXPLORATION_TARGETS)
+
+    @staticmethod
+    async def _build_redirect_chain(response: Optional[Response]) -> list[dict]:
+        chain: list[dict] = []
+        if not response:
+            return chain
+        try:
+            req = response.request
+            redirects: list[dict] = []
+            while req:
+                resp = await req.response()
+                if resp and resp.status in REDIRECT_STATUS_CODES:
+                    headers = resp.headers or {}
+                    location = headers.get("location")
+                    header_subset = {}
+                    for key in ("server", "x-powered-by", "x-vercel-id"):
+                        value = headers.get(key)
+                        if value:
+                            header_subset[key] = value
+                    to_url = urljoin(req.url, location) if location else None
+                    redirects.append({
+                        "type": "http",
+                        "status": resp.status,
+                        "method": req.method,
+                        "from_url": req.url,
+                        "to_url": to_url,
+                        "location": location,
+                        "headers": header_subset or None,
+                    })
+                req = req.redirected_from
+            chain = list(reversed(redirects))
+        except Exception:
+            return []
+        return chain
+
+    @staticmethod
+    def _dedupe_redirect_chain(chain: list[dict]) -> list[dict]:
+        deduped: list[dict] = []
+        seen: set[str] = set()
+
+        def _key(entry: dict) -> str:
+            return (
+                f"{_normalize_url_for_compare(str(entry.get('from_url') or ''))}"
+                f">{_normalize_url_for_compare(str(entry.get('to_url') or ''))}"
+                f":{entry.get('type')}"
+            )
+
+        for entry in chain:
+            if not isinstance(entry, dict):
+                continue
+            key = _key(entry)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(entry)
+        return deduped
+
+    @staticmethod
+    def _augment_redirect_chain(result: BrowserResult) -> None:
+        chain = list(result.redirect_chain or [])
+
+        def _key(entry: dict) -> str:
+            return (
+                f"{_normalize_url_for_compare(str(entry.get('from_url') or ''))}"
+                f">{_normalize_url_for_compare(str(entry.get('to_url') or ''))}"
+                f":{entry.get('type')}"
+            )
+
+        seen = {_key(entry) for entry in chain}
+
+        if result.html_early:
+            meta_url = _extract_meta_refresh_url(result.html_early)
+            if meta_url:
+                base_url = result.early_url or result.initial_url or ""
+                resolved = urljoin(base_url, meta_url) if base_url else meta_url
+                entry = {
+                    "type": "meta",
+                    "from_url": base_url or None,
+                    "to_url": resolved,
+                }
+                if _key(entry) not in seen:
+                    chain.append(entry)
+                    seen.add(_key(entry))
+
+        if result.early_url and result.final_url:
+            early_norm = _normalize_url_for_compare(result.early_url)
+            final_norm = _normalize_url_for_compare(result.final_url)
+            if early_norm and final_norm and early_norm != final_norm:
+                entry = {
+                    "type": "js",
+                    "from_url": result.early_url,
+                    "to_url": result.final_url,
+                }
+                if _key(entry) not in seen:
+                    chain.append(entry)
+                    seen.add(_key(entry))
+
+        result.redirect_chain = chain
+        result.redirect_hops = len(chain)
+        result.redirect_detected = bool(chain)
 
     async def start(self):
         """Start the browser instance."""
@@ -446,6 +593,34 @@ class BrowserAnalyzer:
 
             page.on("request", handle_request)
 
+            redirect_events: list[dict] = []
+
+            async def handle_response(response):
+                try:
+                    if response.status not in REDIRECT_STATUS_CODES:
+                        return
+                    headers = response.headers or {}
+                    location = headers.get("location")
+                    header_subset = {}
+                    for key in ("server", "x-powered-by", "x-vercel-id"):
+                        value = headers.get(key)
+                        if value:
+                            header_subset[key] = value
+                    to_url = urljoin(response.url, location) if location else None
+                    redirect_events.append({
+                        "type": "http",
+                        "status": response.status,
+                        "method": response.request.method,
+                        "from_url": response.url,
+                        "to_url": to_url,
+                        "location": location,
+                        "headers": header_subset or None,
+                    })
+                except Exception:
+                    return
+
+            page.on("response", handle_response)
+
             # Navigate to the site - first wait for DOM, then capture early evidence
             url = raw_target if raw_target.startswith(("http://", "https://")) else f"https://{raw_target}"
             try:
@@ -455,7 +630,14 @@ class BrowserAnalyzer:
                     timeout=self.timeout,
                     wait_until="domcontentloaded",
                 )
+                result.initial_url = url
                 result.status_code = response.status if response else None
+                chain = await self._build_redirect_chain(response)
+                if redirect_events:
+                    chain.extend(redirect_events)
+                result.redirect_chain = self._dedupe_redirect_chain(chain)
+                result.redirect_hops = len(result.redirect_chain)
+                result.redirect_detected = result.redirect_hops > 0
 
                 # Capture EARLY evidence before JS-based evasion kicks in
                 # Wait for body to be visible and content to render
@@ -464,6 +646,7 @@ class BrowserAnalyzer:
                     await asyncio.sleep(1.5)  # Allow more time for initial render
                 except Exception:
                     await asyncio.sleep(2.0)  # Fallback wait if selector fails
+                result.early_url = page.url
                 result.screenshot_early = await page.screenshot(full_page=True)
                 result.html_early = await page.content()
                 result.title_early = await page.title()
@@ -492,7 +675,14 @@ class BrowserAnalyzer:
                             timeout=self.timeout,
                             wait_until="domcontentloaded",
                         )
+                        result.initial_url = url
                         result.status_code = response.status if response else None
+                        chain = await self._build_redirect_chain(response)
+                        if redirect_events:
+                            chain.extend(redirect_events)
+                        result.redirect_chain = self._dedupe_redirect_chain(chain)
+                        result.redirect_hops = len(result.redirect_chain)
+                        result.redirect_detected = result.redirect_hops > 0
 
                         # Capture early evidence
                         try:
@@ -500,6 +690,7 @@ class BrowserAnalyzer:
                             await asyncio.sleep(1.5)
                         except Exception:
                             await asyncio.sleep(2.0)
+                        result.early_url = page.url
                         result.screenshot_early = await page.screenshot(full_page=True)
                         result.html_early = await page.content()
                         result.title_early = await page.title()
@@ -527,6 +718,7 @@ class BrowserAnalyzer:
 
             # Collect final evidence
             result.final_url = page.url
+            self._augment_redirect_chain(result)
             result.title = await page.title()
             result.html = await page.content()
             result.screenshot = await page.screenshot(full_page=True)

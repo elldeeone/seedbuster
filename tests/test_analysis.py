@@ -90,7 +90,7 @@ class DummyTemporal:
         self.snapshots.append(snapshot)
 
     def analyze(self, domain):
-        return SimpleNamespace(cloaking_detected=False, cloaking_confidence=0)
+        return SimpleNamespace(cloaking_detected=False, cloaking_confidence=0, snapshots_count=len(self.snapshots))
 
     def get_snapshots(self, domain):
         return list(self.snapshots)
@@ -143,6 +143,47 @@ class DummyBot:
 
     async def send_message(self, *args, **kwargs):
         return None
+
+
+class DummyDetector:
+    def detect(self, *args, **kwargs):
+        return SimpleNamespace(
+            score=60,
+            reasons=["test detection"],
+            verdict="high",
+            suspicious_endpoints=[],
+            kit_matches=[],
+            visual_match_score=0,
+            seed_form_detected=False,
+            infrastructure_score=0,
+            infrastructure_reasons=[],
+            scam_type="unknown",
+            crypto_doubler_detected=False,
+            scammer_wallets=[],
+            code_score=0,
+            code_reasons=[],
+            temporal_score=0,
+            temporal_reasons=[],
+            cloaking_detected=False,
+        )
+
+
+class DummyCampaignManager:
+    def __init__(self):
+        self._campaign = SimpleNamespace(
+            campaign_id="camp1",
+            name="Test Campaign",
+            members=[],
+            shared_backends=set(),
+            shared_kits=set(),
+            confidence=0.0,
+        )
+
+    def add_to_campaign(self, **kwargs):
+        domain = kwargs.get("domain")
+        if domain:
+            self._campaign.members.append(SimpleNamespace(domain=domain))
+        return self._campaign, False
 
 
 @pytest.mark.asyncio
@@ -242,3 +283,72 @@ async def test_urlscan_history_bumps_unresolvable_domains(monkeypatch):
     assert evidence_store.saved_analysis is not None
     assert evidence_store.saved_analysis.get("verdict") == "high"
     assert evidence_store.saved_analysis.get("score", 0) >= config.analysis_score_threshold
+
+
+@pytest.mark.asyncio
+async def test_analysis_persists_redirect_metadata(monkeypatch):
+    browser_result = BrowserResult(domain="short.test", success=True)
+    browser_result.initial_url = "https://short.test/abc"
+    browser_result.early_url = "https://short.test/abc"
+    browser_result.final_url = "https://final.test/landing"
+    browser_result.redirect_chain = [
+        {
+            "type": "http",
+            "status": 302,
+            "method": "GET",
+            "from_url": "https://short.test/abc",
+            "to_url": "https://final.test/landing",
+            "location": "https://final.test/landing",
+        }
+    ]
+    browser_result.redirect_detected = True
+    browser_result.redirect_hops = 1
+    browser_result.html = "<html></html>"
+    browser_result.title = "ok"
+
+    external_intel = DummyExternalIntel()
+    database = DummyDatabase()
+    evidence_store = DummyEvidenceStore()
+    temporal = DummyTemporal()
+    infrastructure = DummyInfrastructure()
+    browser = DummyBrowser(browser_result)
+
+    config = SimpleNamespace(
+        urlscan_submit_enabled=False,
+        urlscan_api_key="",
+        urlscan_submit_visibility="unlisted",
+        analysis_score_threshold=50,
+        report_require_approval=False,
+        report_min_score=80,
+        allowlist=set(),
+    )
+
+    engine = AnalysisEngine(
+        config=config,
+        database=database,
+        evidence_store=evidence_store,
+        browser=browser,
+        infrastructure=infrastructure,
+        temporal=temporal,
+        external_intel=external_intel,
+        detector=DummyDetector(),
+        campaign_manager=DummyCampaignManager(),
+        threat_intel_updater=DummyThreatIntelUpdater(),
+        report_manager=DummyReportManager(),
+        bot=DummyBot(),
+    )
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
+
+    await engine.analyze({"id": 3, "domain": "short.test", "domain_score": 10, "reasons": []})
+
+    assert evidence_store.saved_analysis is not None
+    assert evidence_store.saved_analysis.get("initial_url") == "https://short.test/abc"
+    assert evidence_store.saved_analysis.get("final_url") == "https://final.test/landing"
+    assert evidence_store.saved_analysis.get("final_domain") == "final.test"
+    assert evidence_store.saved_analysis.get("redirect_detected") is True
+    assert evidence_store.saved_analysis.get("redirect_hops") == 1

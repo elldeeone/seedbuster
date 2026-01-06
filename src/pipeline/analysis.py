@@ -17,7 +17,7 @@ from ..analyzer.campaigns import analyze_for_campaign
 from ..analyzer.temporal import ScanReason
 from ..bot.formatters import AlertData, CampaignInfo, LearningInfo, TemporalInfo
 from ..storage.database import DomainStatus, Verdict
-from ..utils.domains import allowlist_contains
+from ..utils.domains import allowlist_contains, canonicalize_domain
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class AnalysisEngine:
         is_rescan = scan_reason != ScanReason.INITIAL
         domain_score = task["domain_score"]
         domain_reasons = task.get("reasons", [])
+        source_url = task.get("source_url") if isinstance(task, dict) else None
         status_override = None
         if is_rescan:
             existing_status = str(task.get("status") or "").strip().lower()
@@ -188,6 +189,8 @@ class AnalysisEngine:
                 # Save analysis
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
+                    "source_url": source_url,
+                    "initial_url": source_url or (domain if "://" in domain else f"https://{domain}"),
                     "score": analysis_score,
                     "verdict": verdict.value,
                     "reasons": reasons,
@@ -229,6 +232,8 @@ class AnalysisEngine:
 
                 await self.evidence_store.save_analysis(domain, {
                     "domain": domain,
+                    "source_url": source_url,
+                    "initial_url": source_url or (domain if "://" in domain else f"https://{domain}"),
                     "score": analysis_score,
                     "verdict": verdict.value,
                     "reasons": reasons,
@@ -250,8 +255,9 @@ class AnalysisEngine:
                     30,
                     int(getattr(self.config, "analysis_timeout", 30) or 30) * 2,
                 )
+                target_url = source_url or domain
                 browser_result, infra_result, external_result = await asyncio.gather(
-                    asyncio.wait_for(self.browser.analyze(domain), timeout=browser_timeout),
+                    asyncio.wait_for(self.browser.analyze(target_url), timeout=browser_timeout),
                     self.infrastructure.analyze(hostname or domain),
                     self.external_intel.query_all(hostname or domain),
                     return_exceptions=True,
@@ -336,6 +342,8 @@ class AnalysisEngine:
 
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
+                        "source_url": source_url,
+                        "initial_url": source_url or (domain if "://" in domain else f"https://{domain}"),
                         "score": analysis_score,
                         "verdict": verdict.value,
                         "reasons": reasons,
@@ -466,6 +474,66 @@ class AnalysisEngine:
                     analysis_score = min(100, detection.score + external_score)
                     reasons = detection.reasons + external_reasons
 
+                    final_url = getattr(browser_result, "final_url", None)
+                    final_domain = canonicalize_domain(final_url) if final_url else ""
+                    current_domain = canonicalize_domain(domain)
+                    redirect_offsite = bool(final_domain and current_domain and final_domain != current_domain)
+                    redirect_target_domain = final_domain if redirect_offsite else None
+                    redirect_target_row = None
+                    redirect_service = None
+                    redirect_service_header = None
+                    redirect_only = False
+                    if redirect_offsite:
+                        reasons.append(f"Redirects off-site to {final_domain}")
+                        early_html = (getattr(browser_result, "html_early", None) or "").lower()
+                        if not early_html:
+                            redirect_only = True
+                        else:
+                            if "<form" not in early_html and len(early_html) < 8000:
+                                redirect_only = True
+                        if redirect_only:
+                            reasons.append("Redirect-only landing page")
+                        redirect_chain = getattr(browser_result, "redirect_chain", None) or []
+                        for step in redirect_chain:
+                            if not isinstance(step, dict):
+                                continue
+                            headers = step.get("headers") or {}
+                            if not isinstance(headers, dict):
+                                continue
+                            powered_by = str(headers.get("x-powered-by") or "").lower()
+                            server = str(headers.get("server") or "").lower()
+                            if "dub" in powered_by:
+                                redirect_service = "dub"
+                                redirect_service_header = headers.get("x-powered-by")
+                                break
+                            if "bitly" in powered_by or "bitly" in server:
+                                redirect_service = "bitly"
+                                redirect_service_header = headers.get("x-powered-by") or headers.get("server")
+                                break
+                            if "rebrandly" in powered_by or "rebrandly" in server:
+                                redirect_service = "rebrandly"
+                                redirect_service_header = headers.get("x-powered-by") or headers.get("server")
+                                break
+                            if "vercel" in server:
+                                redirect_service = "vercel"
+                                redirect_service_header = headers.get("server")
+                                break
+                        if redirect_service:
+                            reasons.append(f"Redirect service detected: {redirect_service}")
+                        try:
+                            redirect_target_row = await self.database.get_domain_by_canonical(final_domain)
+                        except Exception:
+                            redirect_target_row = None
+                        if redirect_target_row:
+                            target_status = str(redirect_target_row.get("status") or "").strip().lower()
+                            if target_status not in {
+                                DomainStatus.ALLOWLISTED.value,
+                                DomainStatus.FALSE_POSITIVE.value,
+                            }:
+                                reasons.append(
+                                    f"Redirects to tracked domain: {redirect_target_row.get('domain')}"
+                                )
+
                     # Optional: submit a fresh urlscan.io scan when cloaking is suspected/confirmed.
                     urlscan_submission = None
                     blocked_requests = getattr(browser_result, "blocked_requests", []) or []
@@ -476,7 +544,9 @@ class AnalysisEngine:
                         and analysis_score >= self.config.analysis_score_threshold
                         and (cloaking_suspected or temporal_analysis.cloaking_detected)
                     ):
-                        target_url = domain if "://" in domain else f"https://{domain}"
+                        target_url = source_url or final_url or domain
+                        if "://" not in target_url:
+                            target_url = f"https://{target_url}"
                         urlscan_submission = await self.external_intel.submit_urlscan_scan(
                             target_url,
                             visibility=self.config.urlscan_submit_visibility,
@@ -586,9 +656,31 @@ class AnalysisEngine:
                         infra_ip_addresses.append(infra_result.hosting.ip_address)
                     infra_ip_addresses = sorted({ip for ip in infra_ip_addresses if ip})
 
+                    initial_url = getattr(browser_result, "initial_url", None)
+                    early_url = getattr(browser_result, "early_url", None)
+                    final_domain = None
+                    if final_url:
+                        try:
+                            parsed_final = urlparse(final_url if "://" in final_url else f"https://{final_url}")
+                            final_domain = parsed_final.hostname
+                        except Exception:
+                            final_domain = None
+
                     await self.evidence_store.save_analysis(domain, {
                         "domain": domain,
-                        "final_url": getattr(browser_result, "final_url", None),
+                        "source_url": source_url,
+                        "initial_url": initial_url,
+                        "early_url": early_url,
+                        "final_url": final_url,
+                        "final_domain": final_domain,
+                        "redirect_chain": getattr(browser_result, "redirect_chain", None),
+                        "redirect_hops": getattr(browser_result, "redirect_hops", None),
+                        "redirect_detected": getattr(browser_result, "redirect_detected", None),
+                        "redirect_offsite": redirect_offsite,
+                        "redirect_target_domain": redirect_target_domain,
+                        "redirect_only": redirect_only,
+                        "redirect_service": redirect_service,
+                        "redirect_service_header": redirect_service_header,
                         "hosting_provider": hosting_provider,
                         "edge_provider": edge_provider,
                         "resolved_ips": resolved_ip_list,

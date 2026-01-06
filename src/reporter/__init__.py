@@ -25,6 +25,7 @@ from .google_safebrowsing import GoogleSafeBrowsingReporter
 from .hosting_provider import HostingProviderReporter
 from .registrar import RegistrarReporter
 from .microsoft import MicrosoftReporter
+from .shortlink_provider import ShortlinkProviderReporter
 from .manual_platforms import (
     AWSReporter,
     AzureReporter,
@@ -70,6 +71,7 @@ __all__ = [
     "HostingProviderReporter",
     "RegistrarReporter",
     "MicrosoftReporter",
+    "ShortlinkProviderReporter",
     "AWSReporter",
     "AzureReporter",
     "DiscordReporter",

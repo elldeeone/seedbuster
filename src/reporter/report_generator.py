@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, List, Optional
 if TYPE_CHECKING:
     from ..analyzer.campaigns import ThreatCampaignManager
     from ..storage.database import Database
-    from ..storage.evidence import EvidenceStore
+from ..storage.evidence import EvidenceStore
+from ..utils.domains import canonicalize_domain
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +149,18 @@ class ReportGenerator:
         if domain_id:
             domain_data = await self.database.get_domain_by_id(domain_id) or {}
 
+        final_url = (analysis.get("final_url") or "").strip()
+        initial_url = (analysis.get("initial_url") or analysis.get("source_url") or "").strip()
+        final_domain = canonicalize_domain(str(analysis.get("final_domain") or "")) or canonicalize_domain(final_url)
+        current_domain = canonicalize_domain(domain)
+        if final_domain and current_domain and final_domain != current_domain:
+            report_url = initial_url or f"https://{domain}"
+        else:
+            report_url = final_url or initial_url or f"https://{domain}"
+
         return DomainReportData(
             domain=domain,
-            url=analysis.get("final_url") or f"https://{domain}",
+            url=report_url,
             detected_at=datetime.fromisoformat(
                 domain_data.get("first_seen") or analysis.get("saved_at") or datetime.now().isoformat()
             ),

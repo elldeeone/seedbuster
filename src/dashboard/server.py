@@ -5666,7 +5666,7 @@ class DashboardServer:
     async def _admin_submit(self, request: web.Request) -> web.Response:
         data = await self._require_csrf(request)
         target = (data.get("target") or "").strip()
-        domain = _extract_hostname(target)
+        domain = canonicalize_domain(target) or _extract_hostname(target)
         if not domain:
             raise web.HTTPSeeOther(location=_build_query_link("/admin", msg="Invalid domain/URL", error=1))
 
@@ -5685,7 +5685,7 @@ class DashboardServer:
             raise web.HTTPSeeOther(
                 location=_build_query_link("/admin", msg="Submit not configured", error=1)
             )
-        self.submit_callback(domain)
+        self.submit_callback(target)
         raise web.HTTPSeeOther(location=_build_query_link("/admin", msg=f"Submitted: {domain}"))
 
     async def _admin_domain(self, request: web.Request) -> web.Response:
@@ -6336,6 +6336,7 @@ class DashboardServer:
         )
         evidence = {}
         infrastructure = {}
+        redirect_info: dict | None = None
         instruction_files: list[str] = []
         snapshot: dict | None = None
         snapshots: list[dict] = []
@@ -6419,13 +6420,34 @@ class DashboardServer:
                             "scan_reason": data.get("scan_reason"),
                             "is_latest": is_latest,
                         }
+                        final_url = data.get("final_url")
+                        final_domain = data.get("final_domain") or canonicalize_domain(final_url or "")
+                        redirect_chain = data.get("redirect_chain") or []
+                        if isinstance(redirect_chain, dict):
+                            redirect_chain = [redirect_chain]
+                        if not isinstance(redirect_chain, list):
+                            redirect_chain = []
+                        redirect_info = {
+                            "initial_url": data.get("initial_url") or data.get("source_url") or None,
+                            "early_url": data.get("early_url") or None,
+                            "final_url": final_url or None,
+                            "final_domain": final_domain or None,
+                            "redirect_detected": bool(data.get("redirect_detected")) or bool(redirect_chain),
+                            "redirect_hops": data.get("redirect_hops") if data.get("redirect_hops") is not None else len(redirect_chain),
+                            "redirect_chain": redirect_chain,
+                            "redirect_only": data.get("redirect_only") if data.get("redirect_only") is not None else None,
+                            "redirect_service": data.get("redirect_service") or None,
+                            "redirect_service_header": data.get("redirect_service_header") or None,
+                        }
                     except Exception:
                         infrastructure = {}
                         snapshot = None
+                        redirect_info = None
                 else:
                     infrastructure = {}
             except Exception:
                 evidence = {}
+                redirect_info = None
 
         # Opportunistic live DNS enrichments if missing (avoid blocking; best-effort)
         domain_name = str(row.get("domain") or "").strip()
@@ -6477,6 +6499,25 @@ class DashboardServer:
             except Exception:
                 pass
 
+        if redirect_info and isinstance(redirect_info, dict):
+            final_domain = redirect_info.get("final_domain")
+            current_canonical = canonicalize_domain(domain_name)
+            final_canonical = canonicalize_domain(final_domain or "")
+            if final_canonical and current_canonical and final_canonical != current_canonical:
+                try:
+                    target_row = await self.database.get_domain(final_canonical)
+                except Exception:
+                    target_row = None
+                if target_row:
+                    redirect_info["target"] = {
+                        "id": target_row.get("id"),
+                        "domain": target_row.get("domain"),
+                        "status": target_row.get("status"),
+                        "verdict": target_row.get("verdict"),
+                    }
+                else:
+                    redirect_info["target"] = {"domain": final_canonical}
+
         rescan_request_info = None
         try:
             threshold = max(1, int(getattr(self.config, "public_rescan_threshold", 3) or 3))
@@ -6508,6 +6549,7 @@ class DashboardServer:
                 "reports": self._filter_reports_for_snapshot(reports, snapshots, selected_snapshot_id),
                 "evidence": evidence,
                 "infrastructure": infrastructure,
+                "redirect": redirect_info,
                 "campaign": filtered_campaign,
                 "related_domains": related_domains,
                 "instruction_files": instruction_files,
@@ -6522,7 +6564,7 @@ class DashboardServer:
         self._require_csrf_header(request)
         data = await self._read_json(request)
         target = (data.get("target") or data.get("domain") or "").strip()
-        domain = _extract_hostname(target)
+        domain = canonicalize_domain(target) or _extract_hostname(target)
         if not domain:
             return web.json_response({"error": "Invalid domain/URL"}, status=400)
 
@@ -6539,7 +6581,7 @@ class DashboardServer:
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit not configured")
 
-        self.submit_callback(domain)
+        self.submit_callback(target)
         return web.json_response({"status": "submitted", "domain": domain})
 
     async def _admin_api_rescan(self, request: web.Request) -> web.Response:
@@ -6757,7 +6799,7 @@ class DashboardServer:
         if not target:
             return web.json_response({"error": "domain is required"}, status=400)
 
-        domain = _extract_hostname(target)
+        domain = canonicalize_domain(target) or _extract_hostname(target)
         canonical = canonicalize_domain(domain)
         if not canonical:
             return web.json_response({"error": "Invalid domain/URL"}, status=400)
@@ -6798,6 +6840,10 @@ class DashboardServer:
             )
 
         source_url = str(data.get("source_url") or "").strip() or None
+        if not source_url and ("/" in target or target.startswith(("http://", "https://"))):
+            source_url = target
+        if source_url and not source_url.startswith(("http://", "https://")):
+            source_url = f"https://{source_url}"
         if source_url:
             if len(source_url) > 2048:
                 return web.json_response({"error": "Source URL too long"}, status=400)
@@ -7198,6 +7244,7 @@ class DashboardServer:
             domain=canonical,
             source="public_submission",
             domain_score=0,
+            source_url=submission.get("source_url") if isinstance(submission, dict) else None,
         )
 
         if not domain_id:

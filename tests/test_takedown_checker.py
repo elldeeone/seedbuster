@@ -91,7 +91,7 @@ def test_cloudflare_dns_error_marks_confirmed_down():
     assert result.provider_signal == "cloudflare:1001"
 
 
-def test_backend_500_marks_likely_down():
+def test_backend_500_does_not_mark_down_without_frontend_signal():
     checker = TakedownChecker()
     result = checker._analyze(
         "wallet-kaspa.net",
@@ -101,8 +101,8 @@ def test_backend_500_marks_likely_down():
         None,
     )
 
-    assert result.status == TakedownStatus.LIKELY_DOWN
-    assert result.provider_signal == "backend:503"
+    assert result.status == TakedownStatus.ACTIVE
+    assert result.provider_signal is None
 
 
 def test_parking_page_marks_likely_down():

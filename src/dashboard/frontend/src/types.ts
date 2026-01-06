@@ -32,6 +32,7 @@ export interface Domain {
   domain_score?: number | null;
   analysis_score?: number | null;
   source?: string | null;
+  source_url?: string | null;
   first_seen?: string | null;
   analyzed_at?: string | null;
   reported_at?: string | null;
@@ -117,6 +118,35 @@ export interface SnapshotDetail extends SnapshotSummary {
   reasons?: string[] | string | null;
 }
 
+export interface RedirectChainEntry {
+  type?: string | null;
+  status?: number | null;
+  method?: string | null;
+  from_url?: string | null;
+  to_url?: string | null;
+  location?: string | null;
+  headers?: Record<string, string> | null;
+}
+
+export interface RedirectInfo {
+  initial_url?: string | null;
+  early_url?: string | null;
+  final_url?: string | null;
+  final_domain?: string | null;
+  redirect_detected?: boolean | null;
+  redirect_hops?: number | null;
+  redirect_chain?: RedirectChainEntry[] | null;
+  redirect_only?: boolean | null;
+  redirect_service?: string | null;
+  redirect_service_header?: string | null;
+  target?: {
+    id?: number | null;
+    domain?: string | null;
+    status?: string | null;
+    verdict?: string | null;
+  } | null;
+}
+
 export interface RescanRequestInfo {
   count: number;
   threshold: number;
@@ -135,6 +165,7 @@ export interface DomainDetailResponse {
   rescan_request?: RescanRequestInfo | null;
   snapshots?: SnapshotSummary[];
   snapshot?: SnapshotDetail | null;
+  redirect?: RedirectInfo | null;
   infrastructure?: {
     hosting_provider?: string | null;
     edge_provider?: string | null;

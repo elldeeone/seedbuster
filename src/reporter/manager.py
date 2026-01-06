@@ -21,6 +21,7 @@ from .base import (
     ReporterError,
 )
 from .rate_limiter import get_rate_limiter
+from ..utils.domains import canonicalize_domain
 
 if TYPE_CHECKING:
     from ..analyzer.campaigns import ThreatCampaign, ThreatCampaignManager
@@ -496,6 +497,7 @@ class ReportManager:
         from .microsoft import MicrosoftReporter
         from .resend_reporter import ResendReporter
         from .digitalocean import DigitalOceanReporter
+        from .shortlink_provider import ShortlinkProviderReporter
         from .manual_platforms import (
             AWSReporter,
             AzureReporter,
@@ -529,6 +531,10 @@ class ReportManager:
             reporter_email=self.resend_from_email or self.reporter_email or ""
         )
         logger.info("Initialized Netcraft reporter")
+
+        # Shortlink provider manual helper (opt-in via REPORT_PLATFORMS)
+        self.reporters["shortlink_provider"] = ShortlinkProviderReporter()
+        logger.info("Initialized shortlink provider manual reporter")
 
         # Microsoft manual helper (opt-in via REPORT_PLATFORMS)
         self.reporters["microsoft"] = MicrosoftReporter()
@@ -725,6 +731,12 @@ class ReportManager:
         hosts: list[str] = []
         seen: set[str] = set()
 
+        analysis = evidence.analysis_json or {}
+        final_url = str(analysis.get("final_url") or "").strip()
+        final_domain = canonicalize_domain(str(analysis.get("final_domain") or "")) or canonicalize_domain(final_url)
+        current_domain = canonicalize_domain(evidence.domain) or canonicalize_domain(evidence.url)
+        redirect_offsite = bool(final_domain and current_domain and final_domain != current_domain)
+
         def _add_host(raw: Optional[str]) -> None:
             if not raw:
                 return
@@ -735,12 +747,14 @@ class ReportManager:
                 hosts.append(host)
 
         _add_host(evidence.url)
-        _add_host((evidence.analysis_json or {}).get("final_url"))
+        if not redirect_offsite:
+            _add_host(final_url)
 
-        for endpoint in evidence.suspicious_endpoints or []:
-            _add_host(endpoint)
-        for backend in evidence.backend_domains or []:
-            _add_host(backend)
+        if not redirect_offsite:
+            for endpoint in evidence.suspicious_endpoints or []:
+                _add_host(endpoint)
+            for backend in evidence.backend_domains or []:
+                _add_host(backend)
 
         return hosts
 
@@ -1215,7 +1229,13 @@ class ReportManager:
 
         # Prefer the final URL from analysis if available (may include redirects to kit path).
         final_url = (analysis_json.get("final_url") or "").strip()
-        report_url = final_url or self._ensure_url(target)
+        initial_url = (analysis_json.get("initial_url") or analysis_json.get("source_url") or "").strip()
+        final_domain = canonicalize_domain(final_url) if final_url else ""
+        current_domain = canonicalize_domain(target)
+        if final_domain and current_domain and final_domain != current_domain:
+            report_url = initial_url or self._ensure_url(target)
+        else:
+            report_url = final_url or initial_url or self._ensure_url(target)
 
         suspicious_endpoints = analysis_json.get("suspicious_endpoints", []) or []
 
