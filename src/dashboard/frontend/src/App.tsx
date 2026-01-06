@@ -1067,7 +1067,14 @@ export default function App() {
   const [submitNotes, setSubmitNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitResult, setSubmitResult] = useState<{ status: string; domain: string; duplicate?: boolean; message?: string } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{
+    status: string;
+    domain: string;
+    duplicate?: boolean;
+    message?: string;
+    existing_domain?: string;
+    existing_domain_id?: number;
+  } | null>(null);
   const [cleanupDays, setCleanupDays] = useState(30);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<string | null>(null);
@@ -1592,11 +1599,19 @@ export default function App() {
           sourceUrl: submitSource.trim() || undefined,
           notes: submitNotes.trim() || undefined,
         });
-        const message = res.message || (res.duplicate ? "Already submitted by someone else" : "Submitted for review");
-        showToast(message, res.duplicate ? "info" : "success");
-        setSubmitResult(res);
+        const message = res.message || (
+          res.status === "already_tracked"
+            ? "Already in Active Threats"
+            : res.duplicate
+              ? "Already submitted by someone else"
+              : "Submitted for review"
+        );
+        showToast(message, res.status === "already_tracked" || res.duplicate ? "info" : "success");
+        setSubmitResult({ ...res, message });
         // Remember this submission locally so user knows they reported it
-        saveSubmission(res.domain);
+        if (res.status === "submitted") {
+          saveSubmission(res.domain);
+        }
         setSubmitValue("");
         setSubmitSource("");
         setSubmitNotes("");
@@ -2288,19 +2303,42 @@ export default function App() {
           )}
           {submitError && <div className="sb-notice" style={{ color: "var(--accent-red)", marginTop: 8 }}>{submitError}</div>}
           {submitResult && (
-            <div className="sb-flash sb-flash-success" style={{ marginTop: 8 }}>
-              {(submitResult.message || (
-                submitResult.status === "rescan_queued"
-                  ? "Rescan queued"
-                  : submitResult.status === "already_queued"
-                    ? "Rescan already queued"
-                    : submitResult.duplicate
-                      ? "Already submitted"
-                      : "Submitted"
-              ))}
-              {" for "}
-              <b>{submitResult.domain}</b>
-            </div>
+            (() => {
+              const isAlreadyTracked = submitResult.status === "already_tracked";
+              const existingDomain = submitResult.existing_domain || submitResult.domain;
+              const existingLink = submitResult.existing_domain_id
+                ? `#/domains/${submitResult.existing_domain_id}`
+                : "";
+              return (
+                <div className={`sb-flash ${isAlreadyTracked ? "sb-flash-info" : "sb-flash-success"}`} style={{ marginTop: 8 }}>
+                  {isAlreadyTracked ? (
+                    <>
+                      Already in Active Threats for <b>{existingDomain}</b>.
+                      {existingLink && (
+                        <>
+                          {" "}
+                          <a href={existingLink}>Report it from the entry page →</a>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {(submitResult.message || (
+                        submitResult.status === "rescan_queued"
+                          ? "Rescan queued"
+                          : submitResult.status === "already_queued"
+                            ? "Rescan already queued"
+                            : submitResult.duplicate
+                              ? "Already submitted"
+                              : "Submitted"
+                      ))}
+                      {" for "}
+                      <b>{submitResult.domain}</b>
+                    </>
+                  )}
+                </div>
+              );
+            })()
           )}
         </form>
       </div>

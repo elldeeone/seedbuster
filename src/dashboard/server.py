@@ -28,7 +28,12 @@ from aiohttp import web
 
 from ..analyzer.takedown_checker import TakedownStatus
 from ..storage.database import Database, DomainStatus, Verdict
-from ..utils.domains import allowlist_contains, canonicalize_domain, normalize_allowlist_domain
+from ..utils.domains import (
+    allowlist_contains,
+    canonicalize_domain,
+    normalize_allowlist_domain,
+    registered_domain,
+)
 
 EVIDENCE_HTML_CSP = (
     "sandbox; "
@@ -79,6 +84,59 @@ def _extract_hostname(value: str) -> str:
     parsed = urlparse(candidate)
     hostname = (parsed.hostname or raw.split("/")[0]).strip().lower()
     return hostname.strip(".")
+
+
+def _strip_port(host: str) -> str:
+    if not host:
+        return ""
+    if host.count(":") == 1:
+        head, tail = host.rsplit(":", 1)
+        if tail.isdigit():
+            return head
+    return host
+
+
+def _candidate_parent_domains(host: str) -> list[str]:
+    raw = (host or "").strip().lower().strip(".")
+    if not raw:
+        return []
+    host = _strip_port(raw)
+    if not host:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            candidates.append(value)
+
+    root = registered_domain(host)
+    _add(host)
+    if not root:
+        return candidates
+    labels = host.split(".")
+    root_labels = root.split(".")
+    root_len = len(root_labels)
+    if len(labels) > root_len:
+        for idx in range(len(labels) - root_len):
+            parent = ".".join(labels[idx + 1 :])
+            _add(parent)
+    return candidates
+
+
+def _is_active_threat_record(record: dict) -> bool:
+    status = str(record.get("status") or "").strip().lower()
+    if status in {
+        DomainStatus.WATCHLIST.value,
+        DomainStatus.ALLOWLISTED.value,
+        DomainStatus.FALSE_POSITIVE.value,
+    }:
+        return False
+    takedown = str(record.get("takedown_status") or "").strip().lower()
+    if takedown in {"confirmed_down", "likely_down"}:
+        return False
+    return True
 
 
 def _strip_domain_label(label: str) -> str:
@@ -6712,6 +6770,31 @@ class DashboardServer:
             return web.json_response(
                 {"error": "Too many submissions. Please try again later."},
                 status=429,
+            )
+
+        existing = None
+        candidates = [canonical, *_candidate_parent_domains(canonical)]
+        seen: set[str] = set()
+        for candidate in candidates:
+            candidate_key = (candidate or "").strip().lower()
+            if not candidate_key or candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            record = await self.database.get_domain_by_canonical(candidate_key)
+            if record and _is_active_threat_record(record):
+                existing = record
+                break
+
+        if existing:
+            existing_domain = str(existing.get("domain") or canonical).strip()
+            return web.json_response(
+                {
+                    "status": "already_tracked",
+                    "domain": canonical,
+                    "existing_domain": existing_domain,
+                    "existing_domain_id": existing.get("id"),
+                    "message": "Already in Active Threats",
+                }
             )
 
         source_url = str(data.get("source_url") or "").strip() or None

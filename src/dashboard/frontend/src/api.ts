@@ -145,7 +145,15 @@ export async function submitTarget(target: string): Promise<{ status: string; do
 export async function submitPublicTarget(
   target: string,
   opts: { sourceUrl?: string; notes?: string } = {},
-): Promise<{ status: string; domain: string; duplicate?: boolean; submission_id?: number; message?: string }> {
+): Promise<{
+  status: string;
+  domain: string;
+  duplicate?: boolean;
+  submission_id?: number;
+  message?: string;
+  existing_domain?: string;
+  existing_domain_id?: number;
+}> {
   const res = await fetch("/api/public/submit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

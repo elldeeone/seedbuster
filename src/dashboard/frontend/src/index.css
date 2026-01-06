@@ -1625,6 +1625,12 @@ button {
   border: 1px solid var(--color-success-emphasis);
 }
 
+.sb-flash-info {
+  background: var(--color-info-subtle);
+  color: var(--color-info);
+  border: 1px solid var(--color-info-emphasis);
+}
+
 .sb-flash-error {
   background: var(--color-danger-subtle);
   color: var(--color-danger);
