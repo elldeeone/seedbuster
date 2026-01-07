@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import re
+
 import tldextract
+
+
+_URL_RE = re.compile(r"https?://\S+")
+_URL_TRAIL_ALLOWED = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]")
 
 
 def canonicalize_domain(value: str) -> str:
@@ -34,6 +40,46 @@ def canonicalize_domain(value: str) -> str:
         host = f"{host}:{port}"
 
     return host
+
+
+def extract_first_url(text: str) -> str | None:
+    """Extract the first URL from text (best-effort)."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    match = _URL_RE.search(raw)
+    if not match:
+        return None
+    candidate = match.group(0).rstrip(").,]}>\"'")
+    while candidate and not _URL_TRAIL_ALLOWED.match(candidate[-1]):
+        candidate = candidate[:-1]
+    return candidate or None
+
+
+def normalize_source_url(source_url: str | None, *, canonical: str | None = None) -> str | None:
+    """Normalize a source URL and optionally enforce same-domain constraints."""
+    raw = (source_url or "").strip()
+    if not raw:
+        return None
+
+    candidate = extract_first_url(raw) or raw.split()[0]
+    candidate = candidate.rstrip(").,]}>\"'")
+    while candidate and not _URL_TRAIL_ALLOWED.match(candidate[-1]):
+        candidate = candidate[:-1]
+    if not candidate:
+        return None
+
+    if not candidate.startswith(("http://", "https://")):
+        candidate = f"https://{candidate}"
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    if canonical and canonicalize_domain(parsed.netloc) != canonicalize_domain(canonical):
+        return None
+
+    return candidate
 
 
 def _strip_port(host: str) -> str:

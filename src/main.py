@@ -5,7 +5,6 @@ import json
 import logging
 import signal
 import sys
-from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -30,7 +29,7 @@ from .reporter import ReportManager
 from .reporter.evidence_packager import EvidencePackager
 from .monitoring.health import HealthServer
 from .pipeline.analysis import AnalysisEngine
-from .utils.domains import canonicalize_domain, normalize_allowlist_domain
+from .utils.domains import canonicalize_domain, normalize_allowlist_domain, normalize_source_url
 
 # Configure logging
 logging.basicConfig(
@@ -637,19 +636,7 @@ class SeedBusterPipeline:
             canonical = canonicalize_domain(domain) or domain
             domain = canonical
 
-            source_url = (payload.get("source_url") or "").strip()
-            if source_url:
-                if not source_url.startswith(("http://", "https://")):
-                    source_url = f"https://{source_url}"
-                try:
-                    parsed = urlparse(source_url)
-                    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                        source_url = ""
-                    elif canonicalize_domain(parsed.netloc) != canonical:
-                        source_url = ""
-                except Exception:
-                    source_url = ""
-            source_url = source_url or None
+            source_url = normalize_source_url(payload.get("source_url"), canonical=canonical)
 
             # If it already exists, treat it as a rescan request.
             if await self.database.domain_exists(domain):

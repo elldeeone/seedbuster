@@ -32,6 +32,7 @@ from ..utils.domains import (
     allowlist_contains,
     canonicalize_domain,
     normalize_allowlist_domain,
+    normalize_source_url,
     registered_domain,
 )
 
@@ -4604,21 +4605,7 @@ class DashboardServer:
 
     @staticmethod
     def _normalize_source_url(source_url: str | None, *, canonical: str | None = None) -> str | None:
-        raw = str(source_url or "").strip()
-        if not raw:
-            return None
-        if not raw.startswith(("http://", "https://")):
-            raw = f"https://{raw}"
-        try:
-            parsed = urlparse(raw)
-        except Exception:
-            return None
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return None
-        if canonical:
-            if canonicalize_domain(parsed.netloc) != canonicalize_domain(canonical):
-                return None
-        return raw
+        return normalize_source_url(source_url, canonical=canonical)
 
     @staticmethod
     def _is_root_source_url(source_url: str) -> bool:
@@ -6906,17 +6893,11 @@ class DashboardServer:
                 }
             )
 
-        source_url = str(data.get("source_url") or "").strip() or None
+        source_url = normalize_source_url(data.get("source_url"), canonical=canonical)
         if not source_url and ("/" in target or target.startswith(("http://", "https://"))):
-            source_url = target
-        if source_url and not source_url.startswith(("http://", "https://")):
-            source_url = f"https://{source_url}"
-        if source_url:
-            if len(source_url) > 2048:
-                return web.json_response({"error": "Source URL too long"}, status=400)
-            parsed = urlparse(source_url if "://" in source_url else f"https://{source_url}")
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                return web.json_response({"error": "Source URL must be http(s)"}, status=400)
+            source_url = normalize_source_url(target, canonical=canonical)
+        if source_url and len(source_url) > 2048:
+            return web.json_response({"error": "Source URL too long"}, status=400)
         reporter_notes = (data.get("notes") or "").strip()
         if reporter_notes and len(reporter_notes) > 1000:
             reporter_notes = reporter_notes[:1000]
@@ -7306,12 +7287,16 @@ class DashboardServer:
                 }
             )
 
+        source_url = None
+        if isinstance(submission, dict):
+            source_url = self._normalize_source_url(submission.get("source_url"), canonical=canonical)
+
         # Create domain and queue for analysis
         domain_id = await self.database.add_domain(
             domain=canonical,
             source="public_submission",
             domain_score=0,
-            source_url=submission.get("source_url") if isinstance(submission, dict) else None,
+            source_url=source_url,
         )
 
         if not domain_id:
@@ -7323,10 +7308,6 @@ class DashboardServer:
 
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit callback not configured")
-        source_url = None
-        if isinstance(submission, dict):
-            source_url = self._normalize_source_url(submission.get("source_url"), canonical=canonical)
-
         # Queue root scan first, then path scan (if applicable) so latest snapshot is the path.
         self.submit_callback(canonical, None)
         if source_url and not self._is_root_source_url(source_url):

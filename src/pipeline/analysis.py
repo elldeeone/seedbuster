@@ -17,7 +17,7 @@ from ..analyzer.campaigns import analyze_for_campaign
 from ..analyzer.temporal import ScanReason
 from ..bot.formatters import AlertData, CampaignInfo, LearningInfo, TemporalInfo
 from ..storage.database import DomainStatus, Verdict
-from ..utils.domains import allowlist_contains, canonicalize_domain
+from ..utils.domains import allowlist_contains, canonicalize_domain, normalize_source_url
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,8 @@ class AnalysisEngine:
         is_rescan = scan_reason != ScanReason.INITIAL
         domain_score = task["domain_score"]
         domain_reasons = task.get("reasons", [])
-        source_url = task.get("source_url") if isinstance(task, dict) else None
+        source_url_raw = task.get("source_url") if isinstance(task, dict) else None
+        source_url = normalize_source_url(source_url_raw, canonical=canonicalize_domain(domain))
         status_override = None
         if is_rescan:
             existing_status = str(task.get("status") or "").strip().lower()

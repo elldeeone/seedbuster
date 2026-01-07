@@ -739,6 +739,46 @@ async def test_admin_api_approve_submission_queues_root_and_path(dashboard_serve
 
 
 @pytest.mark.asyncio
+async def test_public_submit_ignores_cross_domain_source_url(dashboard_server, database):
+    """Public submit drops source URLs that don't match the submitted domain."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    submitted = []
+
+    def capture_submit(domain: str, source_url: str | None = None):
+        submitted.append((domain, source_url))
+
+    dashboard_server.submit_callback = capture_submit
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        resp = await client.post(
+            "/api/public/submit",
+            json={
+                "domain": "fudmustdie.fun",
+                "source_url": "https://t.me/fudmustdie <-",
+            },
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        submission_id = data["submission_id"]
+
+        row = await database.get_public_submission(submission_id)
+        assert not (row or {}).get("source_url")
+
+        csrf_token = await _get_admin_csrf(client)
+        headers = _admin_headers(csrf_token)
+        headers["Content-Type"] = "application/json"
+        resp = await client.post(
+            f"/admin/api/submissions/{submission_id}/approve",
+            headers=headers,
+            json={},
+        )
+        assert resp.status == 200
+
+    assert submitted == [("fudmustdie.fun", None)]
+
+
+@pytest.mark.asyncio
 async def test_admin_api_submit_empty_domain(dashboard_server):
     """Test admin API rejects empty domain submission."""
     from aiohttp.test_utils import TestClient, TestServer
