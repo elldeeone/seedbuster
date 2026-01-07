@@ -702,8 +702,8 @@ async def test_admin_api_submit_domain(dashboard_server, database):
 
 
 @pytest.mark.asyncio
-async def test_admin_api_approve_submission_queues_root_only(dashboard_server, database):
-    """Approving a public submission queues root only and records notes."""
+async def test_admin_api_approve_submission_queues_root_and_path(dashboard_server, database):
+    """Approving a public submission queues root + submitted path and records notes."""
     from aiohttp.test_utils import TestClient, TestServer
 
     submitted = []
@@ -716,7 +716,7 @@ async def test_admin_api_approve_submission_queues_root_only(dashboard_server, d
     submission_id, _ = await database.add_public_submission(
         domain="1331.one",
         canonical_domain="1331.one",
-        source_url="https://1331.one/kas",
+        submitted_url="https://1331.one/kas",
     )
 
     async with TestClient(TestServer(dashboard_server._app)) as client:
@@ -732,11 +732,14 @@ async def test_admin_api_approve_submission_queues_root_only(dashboard_server, d
         data = await resp.json()
         assert data["status"] == "approved"
 
-    assert submitted == [("1331.one", None)]
+    assert submitted == [
+        ("1331.one", None),
+        ("1331.one", "https://1331.one/kas"),
+    ]
     domain = await database.get_domain_by_canonical("1331.one")
     assert not (domain or {}).get("source_url")
     operator_notes = (domain or {}).get("operator_notes") or ""
-    assert "Seen at: https://1331.one/kas" in operator_notes
+    assert "Submitted URL: https://1331.one/kas" in operator_notes
 
 
 @pytest.mark.asyncio
@@ -755,7 +758,7 @@ async def test_public_submit_treats_source_url_as_note(dashboard_server, databas
         resp = await client.post(
             "/api/public/submit",
             json={
-                "domain": "fudmustdie.fun",
+                "domain": "https://fudmustdie.fun/scam",
                 "source_url": "https://t.me/fudmustdie <-",
                 "notes": "seed phrase prompt",
             },
@@ -766,6 +769,7 @@ async def test_public_submit_treats_source_url_as_note(dashboard_server, databas
 
         row = await database.get_public_submission(submission_id)
         assert (row or {}).get("source_url") == "https://t.me/fudmustdie"
+        assert (row or {}).get("submitted_url") == "https://fudmustdie.fun/scam"
         assert (row or {}).get("reporter_notes") == "seed phrase prompt"
 
         csrf_token = await _get_admin_csrf(client)
@@ -778,11 +782,15 @@ async def test_public_submit_treats_source_url_as_note(dashboard_server, databas
         )
         assert resp.status == 200
 
-    assert submitted == [("fudmustdie.fun", None)]
+    assert submitted == [
+        ("fudmustdie.fun", None),
+        ("fudmustdie.fun", "https://fudmustdie.fun/scam"),
+    ]
     domain = await database.get_domain_by_canonical("fudmustdie.fun")
     assert not (domain or {}).get("source_url")
     operator_notes = (domain or {}).get("operator_notes") or ""
     assert "Public submission:" in operator_notes
+    assert "Submitted URL: https://fudmustdie.fun/scam" in operator_notes
     assert "Seen at: https://t.me/fudmustdie" in operator_notes
     assert "Why suspicious: seed phrase prompt" in operator_notes
 

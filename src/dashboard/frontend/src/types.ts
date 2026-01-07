@@ -232,6 +232,7 @@ export interface PublicSubmission {
   id: number;
   domain: string;
   canonical_domain: string;
+  submitted_url?: string | null;
   source_url?: string | null;
   reporter_notes?: string | null;
   submission_count?: number;

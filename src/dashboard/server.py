@@ -126,8 +126,15 @@ def _candidate_parent_domains(host: str) -> list[str]:
     return candidates
 
 
-def _format_public_submission_notes(source_url: str | None, reporter_notes: str | None) -> str | None:
+def _format_public_submission_notes(
+    submitted_url: str | None,
+    source_url: str | None,
+    reporter_notes: str | None,
+) -> str | None:
     parts: list[str] = []
+    submitted_value = (submitted_url or "").strip()
+    if submitted_value:
+        parts.append(f"Submitted URL: {submitted_value}")
     source_value = (source_url or "").strip()
     if source_value:
         parts.append(f"Seen at: {source_value}")
@@ -6904,11 +6911,14 @@ class DashboardServer:
                 }
             )
 
+        submitted_url = None
+        if "/" in target or target.startswith(("http://", "https://")):
+            submitted_url = normalize_source_url(target)
         source_url = normalize_source_url(data.get("source_url"))
-        if not source_url and ("/" in target or target.startswith(("http://", "https://"))):
-            source_url = normalize_source_url(target)
         if source_url and len(source_url) > 2048:
             return web.json_response({"error": "Source URL too long"}, status=400)
+        if submitted_url and len(submitted_url) > 2048:
+            return web.json_response({"error": "Submitted URL too long"}, status=400)
         reporter_notes = (data.get("notes") or "").strip()
         if reporter_notes and len(reporter_notes) > 1000:
             reporter_notes = reporter_notes[:1000]
@@ -6917,6 +6927,7 @@ class DashboardServer:
             domain=canonical,
             canonical_domain=canonical,
             source_url=source_url,
+            submitted_url=submitted_url,
             reporter_notes=reporter_notes or None,
         )
 
@@ -7299,10 +7310,16 @@ class DashboardServer:
             )
 
         source_url = None
+        submitted_url = None
         public_notes = None
         if isinstance(submission, dict):
             source_url = normalize_source_url(submission.get("source_url"))
+            submitted_url = normalize_source_url(
+                submission.get("submitted_url"),
+                canonical=canonical,
+            )
             public_notes = _format_public_submission_notes(
+                submitted_url,
                 source_url,
                 submission.get("reporter_notes"),
             )
@@ -7327,6 +7344,8 @@ class DashboardServer:
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit callback not configured")
         self.submit_callback(canonical, None)
+        if submitted_url and not self._is_root_source_url(submitted_url):
+            self.submit_callback(canonical, submitted_url)
         if public_notes:
             domain_row = await self.database.get_domain_by_id(domain_id)
             existing_notes = (domain_row.get("operator_notes") or "").strip() if domain_row else ""

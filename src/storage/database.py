@@ -150,6 +150,7 @@ class Database:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         domain TEXT NOT NULL,
                         canonical_domain TEXT NOT NULL,
+                        submitted_url TEXT,
                         source_url TEXT,
                         reporter_notes TEXT,
                         submission_count INTEGER DEFAULT 1,
@@ -220,6 +221,7 @@ class Database:
         await self._migrate_reports_table()
         await self._migrate_report_engagement_table()
         await self._migrate_dashboard_actions_table()
+        await self._migrate_public_submissions_table()
         await self._migrate_deferred_to_watchlist()
         await self._backfill_canonical_domains(lock_held=True)
         await self._merge_canonical_duplicates()
@@ -534,7 +536,22 @@ class Database:
         if "click_count" not in existing:
             try:
                 await self._connection.execute("ALTER TABLE report_engagement ADD COLUMN click_count INTEGER DEFAULT 1")
-                await self._connection.commit()
+            await self._connection.commit()
+
+    async def _migrate_public_submissions_table(self) -> None:
+        """Add columns to public_submissions table (best-effort)."""
+        cursor = await self._connection.execute("PRAGMA table_info(public_submissions)")
+        rows = await cursor.fetchall()
+        existing = {row["name"] for row in rows}
+        if "submitted_url" in existing:
+            return
+        try:
+            await self._connection.execute(
+                "ALTER TABLE public_submissions ADD COLUMN submitted_url TEXT"
+            )
+            await self._connection.commit()
+        except Exception:
+            return
             except Exception:
                 pass
 
@@ -1719,6 +1736,7 @@ class Database:
         domain: str,
         canonical_domain: str,
         source_url: Optional[str] = None,
+        submitted_url: Optional[str] = None,
         reporter_notes: Optional[str] = None,
     ) -> tuple[int, bool]:
         """
@@ -1746,6 +1764,7 @@ class Database:
                     SET submission_count = ?,
                         last_submitted_at = CURRENT_TIMESTAMP,
                         source_url = COALESCE(?, source_url),
+                        submitted_url = COALESCE(?, submitted_url),
                         reporter_notes = CASE
                             WHEN ? IS NOT NULL AND TRIM(?) != '' THEN
                                 TRIM(
@@ -1757,17 +1776,25 @@ class Database:
                         END
                     WHERE id = ?
                     """,
-                    (new_count, source_url, reporter_notes, reporter_notes, reporter_notes, row["id"]),
+                    (
+                        new_count,
+                        source_url,
+                        submitted_url,
+                        reporter_notes,
+                        reporter_notes,
+                        reporter_notes,
+                        row["id"],
+                    ),
                 )
                 await self._connection.commit()
                 return int(row["id"]), True
 
             cursor = await self._connection.execute(
                 """
-                INSERT INTO public_submissions (domain, canonical_domain, source_url, reporter_notes)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO public_submissions (domain, canonical_domain, source_url, submitted_url, reporter_notes)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (domain, canonical_domain, source_url, reporter_notes),
+                (domain, canonical_domain, source_url, submitted_url, reporter_notes),
             )
             await self._connection.commit()
             return int(cursor.lastrowid), False
