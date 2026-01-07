@@ -348,6 +348,35 @@ async def test_public_submit_parent_domain_match(dashboard_server, database):
 
 
 @pytest.mark.asyncio
+async def test_public_submit_existing_taken_down_domain(dashboard_server, database):
+    """Public submit detects existing domain even if taken down."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    domain_id = await database.add_domain(
+        domain="kaspanet.app",
+        source="manual",
+        domain_score=10,
+    )
+    await database.update_domain_takedown_status(
+        domain_id=domain_id,
+        status="confirmed_down",
+    )
+
+    async with TestClient(TestServer(dashboard_server._app)) as client:
+        resp = await client.post(
+            "/api/public/submit",
+            json={"domain": "https://kaspanet.app"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "already_tracked"
+        assert data["existing_domain_id"] == domain_id
+        assert data["existing_domain"] == "kaspanet.app"
+
+    assert await database.count_public_submissions() == 0
+
+
+@pytest.mark.asyncio
 async def test_public_domain_not_found(dashboard_server):
     """Test public domain detail returns 404 for missing domain."""
     from aiohttp.test_utils import TestClient, TestServer

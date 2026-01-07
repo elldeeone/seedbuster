@@ -139,6 +139,27 @@ def _is_active_threat_record(record: dict) -> bool:
     return True
 
 
+def _existing_submission_message(record: dict) -> str:
+    if _is_active_threat_record(record):
+        return "Already in Active Threats"
+    status = str(record.get("status") or "").strip().lower()
+    takedown = str(record.get("takedown_status") or "").strip().lower()
+    detail = ""
+    if takedown in {"confirmed_down", "likely_down"}:
+        detail = f"takedown: {takedown}"
+    elif status in {
+        DomainStatus.ALLOWLISTED.value,
+        DomainStatus.FALSE_POSITIVE.value,
+        DomainStatus.WATCHLIST.value,
+    }:
+        detail = f"status: {status}"
+    elif status:
+        detail = f"status: {status}"
+    if detail:
+        return f"Already in system ({detail})"
+    return "Already in system"
+
+
 def _strip_domain_label(label: str) -> str:
     return "".join(ch for ch in label.lower() if ch.isalnum())
 
@@ -6869,7 +6890,7 @@ class DashboardServer:
                 continue
             seen.add(candidate_key)
             record = await self.database.get_domain_by_canonical(candidate_key)
-            if record and _is_active_threat_record(record):
+            if record:
                 existing = record
                 break
 
@@ -6881,7 +6902,7 @@ class DashboardServer:
                     "domain": canonical,
                     "existing_domain": existing_domain,
                     "existing_domain_id": existing.get("id"),
-                    "message": "Already in Active Threats",
+                    "message": _existing_submission_message(existing),
                 }
             )
 
