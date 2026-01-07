@@ -536,6 +536,8 @@ class Database:
         if "click_count" not in existing:
             try:
                 await self._connection.execute("ALTER TABLE report_engagement ADD COLUMN click_count INTEGER DEFAULT 1")
+            except Exception:
+                return
             await self._connection.commit()
 
     async def _migrate_public_submissions_table(self) -> None:
@@ -552,8 +554,6 @@ class Database:
             await self._connection.commit()
         except Exception:
             return
-            except Exception:
-                pass
 
     async def _migrate_dashboard_actions_table(self) -> None:
         """Add columns to dashboard_actions table (best-effort)."""
