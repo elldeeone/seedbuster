@@ -702,8 +702,8 @@ async def test_admin_api_submit_domain(dashboard_server, database):
 
 
 @pytest.mark.asyncio
-async def test_admin_api_approve_submission_queues_root_and_path(dashboard_server, database):
-    """Approving a public submission queues root + submitted path."""
+async def test_admin_api_approve_submission_queues_root_only(dashboard_server, database):
+    """Approving a public submission queues root only and records notes."""
     from aiohttp.test_utils import TestClient, TestServer
 
     submitted = []
@@ -732,15 +732,16 @@ async def test_admin_api_approve_submission_queues_root_and_path(dashboard_serve
         data = await resp.json()
         assert data["status"] == "approved"
 
-    assert submitted == [
-        ("1331.one", None),
-        ("1331.one", "https://1331.one/kas"),
-    ]
+    assert submitted == [("1331.one", None)]
+    domain = await database.get_domain_by_canonical("1331.one")
+    assert not (domain or {}).get("source_url")
+    operator_notes = (domain or {}).get("operator_notes") or ""
+    assert "Seen at: https://1331.one/kas" in operator_notes
 
 
 @pytest.mark.asyncio
-async def test_public_submit_ignores_cross_domain_source_url(dashboard_server, database):
-    """Public submit drops source URLs that don't match the submitted domain."""
+async def test_public_submit_treats_source_url_as_note(dashboard_server, database):
+    """Public submit stores source context as a note and avoids scanning it."""
     from aiohttp.test_utils import TestClient, TestServer
 
     submitted = []
@@ -756,6 +757,7 @@ async def test_public_submit_ignores_cross_domain_source_url(dashboard_server, d
             json={
                 "domain": "fudmustdie.fun",
                 "source_url": "https://t.me/fudmustdie <-",
+                "notes": "seed phrase prompt",
             },
         )
         assert resp.status == 200
@@ -763,7 +765,8 @@ async def test_public_submit_ignores_cross_domain_source_url(dashboard_server, d
         submission_id = data["submission_id"]
 
         row = await database.get_public_submission(submission_id)
-        assert not (row or {}).get("source_url")
+        assert (row or {}).get("source_url") == "https://t.me/fudmustdie"
+        assert (row or {}).get("reporter_notes") == "seed phrase prompt"
 
         csrf_token = await _get_admin_csrf(client)
         headers = _admin_headers(csrf_token)
@@ -776,6 +779,12 @@ async def test_public_submit_ignores_cross_domain_source_url(dashboard_server, d
         assert resp.status == 200
 
     assert submitted == [("fudmustdie.fun", None)]
+    domain = await database.get_domain_by_canonical("fudmustdie.fun")
+    assert not (domain or {}).get("source_url")
+    operator_notes = (domain or {}).get("operator_notes") or ""
+    assert "Public submission:" in operator_notes
+    assert "Seen at: https://t.me/fudmustdie" in operator_notes
+    assert "Why suspicious: seed phrase prompt" in operator_notes
 
 
 @pytest.mark.asyncio

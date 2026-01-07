@@ -2331,7 +2331,7 @@ export default function App() {
             <>
               <div className="sb-row" style={{ marginTop: 10, gap: 12, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 260 }}>
-                  <div className="sb-label">Where did you see this? (optional)</div>
+                  <div className="sb-label">Where did you see this? (context only)</div>
                   <input
                     className="sb-input"
                     placeholder="Link to ad/post or the exact phishing URL"
@@ -2340,7 +2340,7 @@ export default function App() {
                     style={{ width: "100%" }}
                   />
                   <div className="sb-muted" style={{ fontSize: 12, marginTop: 4 }}>
-                    Example: https://x.com/... or https://phish.example.com/login
+                    Public note only. Example: https://x.com/... or https://phish.example.com/login
                   </div>
                 </div>
               </div>

@@ -126,6 +126,17 @@ def _candidate_parent_domains(host: str) -> list[str]:
     return candidates
 
 
+def _format_public_submission_notes(source_url: str | None, reporter_notes: str | None) -> str | None:
+    parts: list[str] = []
+    source_value = (source_url or "").strip()
+    if source_value:
+        parts.append(f"Seen at: {source_value}")
+    notes_value = (reporter_notes or "").strip()
+    if notes_value:
+        parts.append(f"Why suspicious: {notes_value}")
+    return "\n".join(parts) if parts else None
+
+
 def _is_active_threat_record(record: dict) -> bool:
     status = str(record.get("status") or "").strip().lower()
     if status in {
@@ -6893,9 +6904,9 @@ class DashboardServer:
                 }
             )
 
-        source_url = normalize_source_url(data.get("source_url"), canonical=canonical)
+        source_url = normalize_source_url(data.get("source_url"))
         if not source_url and ("/" in target or target.startswith(("http://", "https://"))):
-            source_url = normalize_source_url(target, canonical=canonical)
+            source_url = normalize_source_url(target)
         if source_url and len(source_url) > 2048:
             return web.json_response({"error": "Source URL too long"}, status=400)
         reporter_notes = (data.get("notes") or "").strip()
@@ -7288,15 +7299,22 @@ class DashboardServer:
             )
 
         source_url = None
+        public_notes = None
         if isinstance(submission, dict):
-            source_url = self._normalize_source_url(submission.get("source_url"), canonical=canonical)
+            source_url = normalize_source_url(submission.get("source_url"))
+            public_notes = _format_public_submission_notes(
+                source_url,
+                submission.get("reporter_notes"),
+            )
+            if public_notes:
+                public_notes = f"Public submission:\n{public_notes}"
 
         # Create domain and queue for analysis
         domain_id = await self.database.add_domain(
             domain=canonical,
             source="public_submission",
             domain_score=0,
-            source_url=source_url,
+            source_url=None,
         )
 
         if not domain_id:
@@ -7308,10 +7326,15 @@ class DashboardServer:
 
         if not self.submit_callback:
             raise web.HTTPServiceUnavailable(text="Submit callback not configured")
-        # Queue root scan first, then path scan (if applicable) so latest snapshot is the path.
         self.submit_callback(canonical, None)
-        if source_url and not self._is_root_source_url(source_url):
-            self.submit_callback(canonical, source_url)
+        if public_notes:
+            domain_row = await self.database.get_domain_by_id(domain_id)
+            existing_notes = (domain_row.get("operator_notes") or "").strip() if domain_row else ""
+            combined_notes = f"{existing_notes}\n{public_notes}" if existing_notes else public_notes
+            await self.database.update_domain_admin_fields(
+                domain_id,
+                operator_notes=combined_notes,
+            )
         await self.database.update_public_submission_status(
             submission_id=submission_id,
             status="approved",
