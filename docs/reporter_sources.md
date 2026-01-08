@@ -1,10 +1,10 @@
 # Reporter Sources (Validated)
 
-Last validated: 2026-01-05
+Last validated: 2026-01-08
 
 ## Cloud / Hosting Platforms
 - Above.com (AboveDomains): https://www.above.com/contact.html
-- AWS: https://repost.aws/knowledge-center/report-aws-abuse
+- AWS: https://support.aws.amazon.com/#/contacts/report-abuse
 - Azure: https://msrc.microsoft.com/report/abuse
 - Cloudflare: https://abuse.cloudflare.com/
 - Contabo: https://contabo.com/en/abuse/
@@ -14,6 +14,7 @@ Last validated: 2026-01-05
 - Google Cloud: https://support.google.com/code/contact/cloud_platform_report
 - Hetzner: https://abuse.hetzner.com/
 - Hostinger: https://www.hostinger.com/report-abuse
+- Heroku: heroku-abuse@salesforce.com
 - iFastNet: abuse@ifastnet.com
 - Linode: https://www.linode.com/legal-abuse/
 - Netlify: https://www.netlify.com/support/?topic=Report+Fraud+or+Abuse
@@ -30,10 +31,16 @@ Last validated: 2026-01-05
 - Dynadot: https://www.dynadot.com/report-abuse
 - Namecheap: abuse@namecheap.com
 - NameSilo: https://www.namesilo.com/report_abuse.php (also abuse@namesilo.com)
+- Porkbun: https://porkbun.com/abuse
 - Squarespace Domains: https://support.squarespace.com/hc/en-us/articles/11580957865869-Reporting-abuse
 - Synergy Wholesale: abuse@synergywholesale.com
 - Tucows: https://tucowsdomains.com/report-abuse/ (also compliance@tucows.com)
 - Instra: legal@instra.com
+
+## Shortlink Providers
+- Bitly: https://bitly.com/pages/trust/report-abuse
+- Rebrandly: abuse@rebrandly.com
+- Dub: https://dub.co/legal/abuse
 
 ## DNS Providers
 - Streetplug: support@streetplug.me
@@ -45,7 +52,7 @@ Last validated: 2026-01-05
 ## Threat Intel / Browser / Security Platforms
 - Google Safe Browsing: https://www.google.com/safebrowsing/report_phish/
 - Microsoft SmartScreen (WDSI): https://www.microsoft.com/en-us/wdsi/support/report-unsafe-site
-- Netcraft: https://report.netcraft.com/report
+- Netcraft: https://report.netcraft.com/report (fallback: report@netcraft.com, scam@netcraft.com)
 
 ## Notes
 - Only entries listed here are considered verified. Anything removed from code was not verified.

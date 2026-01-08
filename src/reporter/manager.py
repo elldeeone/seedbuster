@@ -2014,7 +2014,7 @@ Value:
 CLOUDFLARE ABUSE REPORT PREVIEW
 ===============================
 
-Form URL: https://abuse.cloudflare.com/phishing
+Form URL: https://abuse.cloudflare.com/
 
 Abuse type: Phishing & Malware
 

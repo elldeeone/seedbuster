@@ -262,7 +262,7 @@ async def test_hosting_provider_reporter_returns_manual_required_for_form_provid
     )
     result = await reporter.submit(evidence)
     assert result.status == ReportStatus.MANUAL_REQUIRED
-    assert "repost.aws/knowledge-center/report-aws-abuse" in (result.message or "")
+    assert "support.aws.amazon.com/#/contacts/report-abuse" in (result.message or "")
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,8 @@ ABUSE_CONTACTS = {
     "hostinger": "abuse@hostinger.com",
     "ovh": "abuse@ovh.net",
     "hetzner": "abuse@hetzner.com",
+    "vultr": "abuse@vultr.com",
+    "heroku": "heroku-abuse@salesforce.com",
 }
 
 # Providers that require web form submission
@@ -32,11 +34,9 @@ ABUSE_FORMS = {
     "aws": "https://support.aws.amazon.com/#/contacts/report-abuse",
     "azure": "https://msrc.microsoft.com/report/abuse",
     "google": "https://support.google.com/code/contact/cloud_platform_report",
-    "vultr": "https://www.vultr.com/company/abuse/",
     "linode": "https://www.linode.com/legal-abuse/",
     "vercel": "https://vercel.com/abuse",
-    "netlify": "https://www.netlify.com/abuse/",
-    "heroku": "https://www.heroku.com/policy/aup-reporting",
+    "netlify": "https://www.netlify.com/support/?topic=Report+Fraud+or+Abuse",
 }
 
 
@@ -142,12 +142,14 @@ class ResendReporter(BaseReporter):
                 return (None, ABUSE_FORMS["digitalocean"])
             elif "cloudflare" in domain_lower or "workers.dev" in domain_lower:
                 return (None, ABUSE_FORMS["cloudflare"])
+            elif "vultr" in domain_lower:
+                return (ABUSE_CONTACTS["vultr"], None)
             elif "vercel" in domain_lower:
                 return (None, ABUSE_FORMS["vercel"])
             elif "netlify" in domain_lower:
                 return (None, ABUSE_FORMS["netlify"])
             elif "herokuapp" in domain_lower:
-                return (None, ABUSE_FORMS["heroku"])
+                return (ABUSE_CONTACTS["heroku"], None)
             elif "amazonaws" in domain_lower or "aws" in domain_lower:
                 return (None, ABUSE_FORMS["aws"])
             elif "azure" in domain_lower:

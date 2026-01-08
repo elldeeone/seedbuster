@@ -144,34 +144,43 @@ class ReportTemplates:
         if scam_type == "seed_phishing":
             subject = f"URGENT: Phishing Backend on App Platform - {evidence.domain}"
             header_label = "CRYPTOCURRENCY PHISHING INFRASTRUCTURE"
-            action_detail = "They are actively receiving stolen cryptocurrency seed phrases."
+            action_detail = (
+                "Observed network requests from a seed-phrase phishing flow "
+                "to DigitalOcean App Platform backends."
+            )
             attack_steps = [
                 f"  1. Victim visits {evidence.domain} (fake cryptocurrency wallet)",
                 "  2. Site displays fake \"restore wallet\" form requesting 12-word seed phrase",
                 "  3. Victim enters their seed phrase thinking it's legitimate",
-                "  4. Data is POST'd to DigitalOcean App Platform backends (listed above)",
-                "  5. Attacker uses seed phrase to steal all cryptocurrency from victim's wallet",
+                "  4. Observed network requests to DigitalOcean App Platform backends (listed above)",
+                "  5. Attacker can use the seed phrase to steal cryptocurrency from the victim's wallet",
             ]
         elif scam_type == "fake_airdrop":
             subject = f"URGENT: Fraudulent Airdrop Backend on App Platform - {evidence.domain}"
             header_label = "CRYPTOCURRENCY FRAUD INFRASTRUCTURE"
-            action_detail = "They are supporting a fraudulent airdrop/claim flow."
+            action_detail = (
+                "Observed network requests from a fraudulent airdrop/claim flow "
+                "to DigitalOcean App Platform backends."
+            )
             attack_steps = [
                 f"  1. Victim visits {evidence.domain} (fake airdrop/claim page)",
                 "  2. Site presents a fake airdrop/claim flow",
                 "  3. User is prompted to proceed with claim steps",
-                "  4. Any submitted data/actions are sent to DigitalOcean App Platform backends",
+                "  4. Observed network requests to DigitalOcean App Platform backends during the flow",
                 "  5. Victims may lose funds or expose sensitive details",
             ]
         else:
             subject = f"URGENT: Fraudulent Crypto Backend on App Platform - {evidence.domain}"
             header_label = "CRYPTOCURRENCY FRAUD INFRASTRUCTURE"
-            action_detail = "They are supporting a cryptocurrency fraud/phishing flow."
+            action_detail = (
+                "Observed network requests from a cryptocurrency fraud/phishing flow "
+                "to DigitalOcean App Platform backends."
+            )
             attack_steps = [
                 f"  1. Victim visits {evidence.domain} (fraudulent crypto-themed site)",
                 "  2. Site presents malicious or misleading content",
                 "  3. User is prompted to proceed with unsafe actions",
-                "  4. Any submitted data/actions are sent to DigitalOcean App Platform backends",
+                "  4. Observed network requests to DigitalOcean App Platform backends during the flow",
                 "  5. Victims may lose funds or expose sensitive details",
             ]
 
@@ -637,7 +646,7 @@ ACTION REQUESTED
 ----------------
 Please IMMEDIATELY suspend ALL of the following App Platform applications.
 This is a coordinated campaign with {len(campaign.members)} phishing domains
-all using these backends to receive stolen cryptocurrency seed phrases.
+observed making network requests to these backends during the phishing flow.
 
 """
 
@@ -676,8 +685,8 @@ PHISHING DOMAINS IN THIS CAMPAIGN
   1. Victim visits one of {len(campaign.members)} fake wallet sites (listed above)
   2. Site displays fake "restore wallet" form requesting 12-word seed phrase
   3. Victim enters their seed phrase thinking it's legitimate
-  4. Data is POST'd to DigitalOcean App Platform backends (listed above)
-  5. Attacker uses seed phrase to steal all cryptocurrency from victim's wallet
+  4. Observed network requests to DigitalOcean App Platform backends (listed above)
+  5. Attacker can use the seed phrase to steal cryptocurrency from the victim's wallet
 
 WHY THIS IS HIGH PRIORITY
 -------------------------

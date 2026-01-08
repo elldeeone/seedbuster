@@ -67,6 +67,8 @@ class NetcraftReporter(BaseReporter):
             notes=[
                 "You can optionally include your email address to get Netcraft updates.",
                 "Netcraft accepts reports without an account.",
+                "If the web form fails, email report@netcraft.com with the report details.",
+                "Suspicious links/files can be forwarded to scam@netcraft.com.",
             ],
         )
 

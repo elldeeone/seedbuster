@@ -27,7 +27,7 @@ ABUSE_FORMS: dict[str, str] = {
     "above.com": "https://www.above.com/contact.html",
     "digitalocean": "https://www.digitalocean.com/company/contact/abuse",
     "cloudflare": "https://abuse.cloudflare.com/",
-    "aws": "https://repost.aws/knowledge-center/report-aws-abuse",
+    "aws": "https://support.aws.amazon.com/#/contacts/report-abuse",
     "azure": "https://msrc.microsoft.com/report/abuse",
     "google": "https://support.google.com/code/contact/cloud_platform_report",
     "godaddy": "https://supportcenter.godaddy.com/abusereport",
@@ -50,6 +50,7 @@ ABUSE_EMAILS: dict[str, str] = {
     "dreamhost": "abuse@dreamhost.com",
     "ultahost": "abuse@ultahost.com",
     "vultr": "abuse@vultr.com",
+    "heroku": "heroku-abuse@salesforce.com",
     "streetplug": "support@streetplug.me",
 }
 

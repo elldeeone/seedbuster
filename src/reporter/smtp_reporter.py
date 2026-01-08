@@ -31,6 +31,7 @@ ABUSE_CONTACTS = {
     "vultr": "abuse@vultr.com",
     "linode": "abuse@linode.com",
     "hostinger": "abuse@hostinger.com",
+    "heroku": "heroku-abuse@salesforce.com",
 }
 
 
@@ -95,7 +96,7 @@ class SMTPReporter(BaseReporter):
             elif "netlify" in domain_lower:
                 return "abuse@netlify.com"
             elif "herokuapp" in domain_lower:
-                return "abuse@salesforce.com"
+                return "heroku-abuse@salesforce.com"
 
         return None
 

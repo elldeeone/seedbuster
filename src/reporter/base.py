@@ -108,6 +108,7 @@ class ReportEvidence:
             lines.extend(f"  - {line}" for line in impersonation)
 
         self._append_review_notes(lines)
+        self._append_infrastructure(lines)
 
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
@@ -123,7 +124,7 @@ class ReportEvidence:
 
         if self.backend_domains:
             lines.append("")
-            lines.append("STOLEN DATA SENT TO:")
+            lines.append("OBSERVED NETWORK DESTINATIONS:")
             for backend in self.backend_domains[:3]:
                 lines.append(f"  - {backend}")
 
@@ -162,6 +163,7 @@ class ReportEvidence:
             lines.extend(f"  - {line}" for line in impersonation)
 
         self._append_review_notes(lines)
+        self._append_infrastructure(lines)
 
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
@@ -177,7 +179,7 @@ class ReportEvidence:
 
         if self.backend_domains:
             lines.append("")
-            lines.append("DATA SENT TO:")
+            lines.append("OBSERVED NETWORK DESTINATIONS:")
             for backend in self.backend_domains[:3]:
                 lines.append(f"  - {backend}")
 
@@ -215,6 +217,7 @@ class ReportEvidence:
             lines.extend(f"  - {line}" for line in impersonation)
 
         self._append_review_notes(lines)
+        self._append_infrastructure(lines)
 
         lines.append("")
         lines.append("WHAT A VISITOR SEES:")
@@ -230,7 +233,7 @@ class ReportEvidence:
 
         if self.backend_domains:
             lines.append("")
-            lines.append("DATA SENT TO:")
+            lines.append("OBSERVED NETWORK DESTINATIONS:")
             for backend in self.backend_domains[:3]:
                 lines.append(f"  - {backend}")
 
@@ -473,6 +476,40 @@ class ReportEvidence:
         lines.append("REVIEWER NOTES:")
         lines.extend(f"  - {note}" for note in notes)
 
+    def _append_infrastructure(self, lines: list[str]) -> None:
+        infra = (self.analysis_json or {}).get("infrastructure") or {}
+        registrar = (infra.get("registrar") or "").strip()
+        nameservers = infra.get("nameservers") or []
+        if isinstance(nameservers, str):
+            nameservers = [nameservers]
+        nameservers = [ns for ns in nameservers if isinstance(ns, str) and ns.strip()]
+
+        ips = infra.get("ip_addresses") or infra.get("resolved_ips") or []
+        if isinstance(ips, str):
+            ips = [ips]
+        ips = [ip for ip in ips if isinstance(ip, str) and ip.strip()]
+
+        hosting = (self.hosting_provider or infra.get("hosting_provider") or "").strip()
+        edge = ((self.analysis_json or {}).get("edge_provider") or infra.get("edge_provider") or "").strip()
+
+        items = []
+        if registrar:
+            items.append(f"Registrar: {registrar}")
+        if nameservers:
+            items.append(f"Nameservers: {', '.join(nameservers[:6])}")
+        if ips:
+            items.append(f"IP addresses: {', '.join(ips[:6])}")
+        if hosting:
+            items.append(f"Hosting provider: {hosting}")
+        if edge:
+            items.append(f"Edge/CDN provider: {edge}")
+
+        if not items:
+            return
+        lines.append("")
+        lines.append("INFRASTRUCTURE:")
+        lines.extend(f"  - {item}" for item in items)
+
     def get_filtered_reasons(self, max_items: int = 5) -> list[str]:
         """Get detection reasons with low-signal items filtered out."""
         skip_terms = (
@@ -695,6 +732,7 @@ class ReportEvidence:
             lines.append("")
 
         self._append_review_notes(lines)
+        self._append_infrastructure(lines)
 
         if self.scammer_wallets:
             lines.append("SCAMMER WALLET ADDRESSES:")

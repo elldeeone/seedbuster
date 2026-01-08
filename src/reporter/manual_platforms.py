@@ -49,7 +49,7 @@ def _finalize_description(
     backends = evidence.backend_domains or []
     if backends:
         lines.append("")
-        lines.append("DATA SENT TO (backend servers):")
+        lines.append("OBSERVED NETWORK DESTINATIONS:")
         for backend in backends[:3]:
             lines.append(f"  - {backend}")
 
@@ -189,7 +189,7 @@ def _basic_description_crypto_doubler(evidence: ReportEvidence, *, extra: str | 
     backends = evidence.backend_domains or []
     if backends:
         lines.append("")
-        lines.append("DATA SENT TO (backend servers):")
+        lines.append("OBSERVED NETWORK DESTINATIONS:")
         for backend in backends[:3]:
             lines.append(f"  - {backend}")
 
@@ -330,7 +330,7 @@ class AWSReporter(_SimpleFormReporter):
     def __init__(self):
         super().__init__(
             platform_name="aws",
-            form_url="https://repost.aws/knowledge-center/report-aws-abuse",
+            form_url="https://support.aws.amazon.com/#/contacts/report-abuse",
             reason="AWS abuse reporting guidance",
             notes=[
                 "Include any AWS resource identifiers if visible (S3 bucket URL, CloudFront domain, EC2 IP).",
@@ -386,6 +386,7 @@ class NetlifyReporter(_SimpleFormReporter):
             reason="Netlify support form (Report Fraud or Abuse)",
             notes=[
                 "Select the 'Report Fraud or Abuse' topic in the form.",
+                "Use an email address associated with a Netlify account.",
                 "Include the full phishing URL and a short description.",
                 "Attach screenshots if possible.",
             ],
