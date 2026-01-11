@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..cache import create_rdap_cache
 from ..utils.domains import registered_domain
 
 logger = logging.getLogger(__name__)
@@ -156,8 +157,6 @@ async def _get_rdap_limiter(url: str) -> AdaptiveRateLimiter:
             _rdap_limiters[host] = limiter
         return limiter
 
-
-from ..cache import create_rdap_cache
 
 # Module-level cache instance
 _rdap_cache = create_rdap_cache(ttl_seconds=3600)

@@ -11,6 +11,9 @@ import type {
   Stats,
   TakedownChecksResponse,
 } from "./types";
+import sharedOptions from "./shared_options.json";
+
+export const DASHBOARD_OPTIONS = sharedOptions;
 
 // Detect admin vs public mode based solely on server-injected flag.
 // In dev mode, check URL hash for #/admin to enable admin mode for testing.

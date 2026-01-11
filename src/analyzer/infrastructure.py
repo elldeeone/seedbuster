@@ -9,7 +9,6 @@ import logging
 import re
 import socket
 import ssl
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -144,7 +143,6 @@ class HostingInfo:
         "fly_io": ["fly.io", "flyio", "flyglobal"],
         "railway": ["railway"],
         "heroku": ["heroku"],
-        "fastly": ["fastly", "fastlyinc", "fastly-cdn", "fastlylb"],
         "upcloud": ["upcloud"],
         "linode_akamai": ["linode", "linode-isp", "linode, llc"],
     }

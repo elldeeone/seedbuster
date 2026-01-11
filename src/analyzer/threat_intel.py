@@ -2,6 +2,7 @@
 
 import logging
 import re
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,30 @@ class ThreatIntel:
         matches = []
         for indicator in self.malicious_patterns:
             if re.search(indicator.value, url, re.I):
+                matches.append(indicator)
+        return matches
+
+    def is_malicious_url(self, url: str) -> bool:
+        """Return True if the URL or host matches known malicious indicators."""
+        if self.check_malicious_patterns(url):
+            return True
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            host = ""
+        if not host:
+            return False
+        return self.is_known_malicious(host)[0]
+
+    def is_suspicious_domain(self, domain: str) -> bool:
+        """Return True if the domain matches suspicious hosting indicators."""
+        return bool(self.check_suspicious_hosting(domain))
+
+    def check_exfiltration_indicators(self, content: str) -> list[ThreatIndicator]:
+        """Check HTML/JS content for exfiltration indicators."""
+        matches = []
+        for indicator in self.malicious_patterns:
+            if re.search(indicator.value, content, re.I):
                 matches.append(indicator)
         return matches
 

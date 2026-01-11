@@ -6,7 +6,6 @@ testing JavaScript functionality, button clicks, form submissions, etc.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import AsyncGenerator
@@ -228,7 +227,7 @@ async def test_public_domain_link_navigation(public_page, running_server):
     await public_page.locator("text=phishing-test.example.com").first.click()
 
     # Should navigate to domain detail
-    await public_page.wait_for_url(f"**/domains/**")
+    await public_page.wait_for_url("**/domains/**")
 
     # Check domain name is visible (use first match)
     await expect(public_page.locator("text=phishing-test.example.com").first).to_be_visible()
@@ -738,7 +737,7 @@ async def test_submit_and_view_new_domain(admin_page, running_server):
 
     # Add to database manually (simulating pipeline processing)
     db = running_server["database"]
-    new_id = await db.add_domain(
+    await db.add_domain(
         domain="workflow-new.test.com",
         source="manual",
         domain_score=75,

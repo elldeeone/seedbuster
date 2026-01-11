@@ -45,6 +45,7 @@ Thumbs.db
 
 # Docs
 AGENTS.md
+plan.md
 
 # Testing
 .pytest_cache/

@@ -9,6 +9,7 @@ from typing import Set
 import yaml
 from dotenv import load_dotenv
 from .utils.domains import canonicalize_domain, normalize_allowlist_domain
+from .utils.exploration_targets import DEFAULT_EXPLORATION_TARGETS
 
 logger = logging.getLogger(__name__)
 
@@ -82,45 +83,6 @@ DEFAULT_SEED_KEYWORDS: list[str] = [
     r"enter\s*mnemonic",
     r"word\s*#?\d+",
     r"recovery\s*words?",
-]
-
-DEFAULT_EXPLORATION_TARGETS: list[dict] = [
-    {"text": "legacy wallet", "priority": 1},
-    {"text": "continue on legacy", "priority": 1},
-    {"text": "recover from seed", "priority": 1},
-    {"text": "kaspa ng", "priority": 1},
-    {"text": "go to", "priority": 2},
-    {"text": "continue", "priority": 2},
-    {"text": "wallet", "priority": 1},
-    {"text": "open wallet", "priority": 1},
-    {"text": "access wallet", "priority": 1},
-    {"text": "my wallet", "priority": 1},
-    {"text": "recover", "priority": 1},
-    {"text": "restore", "priority": 1},
-    {"text": "import", "priority": 1},
-    {"text": "recovery", "priority": 1},
-    {"text": "import existing", "priority": 1},
-    {"text": "create wallet", "priority": 2},
-    {"text": "new wallet", "priority": 2},
-    {"text": "create new wallet", "priority": 2},
-    {"text": "create", "priority": 3},
-    {"text": "12-word", "priority": 1},
-    {"text": "24-word", "priority": 1},
-    {"text": "12 word", "priority": 1},
-    {"text": "24 word", "priority": 1},
-    {"text": "12 words", "priority": 1},
-    {"text": "24 words", "priority": 1},
-    {"text": "mnemonic", "priority": 1},
-    {"text": "import mnemonic", "priority": 1},
-    {"text": "enter mnemonic", "priority": 1},
-    {"text": "seed phrase", "priority": 1},
-    {"text": "secret phrase", "priority": 1},
-    {"text": "continue", "priority": 2},
-    {"text": "next", "priority": 2},
-    {"text": "proceed", "priority": 2},
-    {"text": "connect", "priority": 2},
-    {"text": "connect wallet", "priority": 1},
-    {"text": "settings", "priority": 3},
 ]
 
 DEFAULT_SUBSTITUTIONS: dict[str, str] = {

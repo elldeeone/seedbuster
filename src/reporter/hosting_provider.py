@@ -342,6 +342,9 @@ class HostingProviderReporter(BaseReporter):
             f"Hosting provider detected: {provider}",
             "",
         ]
+        evidence_summary = evidence.to_summary().strip()
+        if ips:
+            evidence_summary = f"IPs: {', '.join(ips)}\n\n" + evidence_summary
 
         if form_url:
             parts.extend([

@@ -51,6 +51,7 @@ import type {
   SnapshotSummary,
   TakedownCheck,
 } from "./types";
+import sharedOptions from "./shared_options.json";
 
 type Route =
   | { name: "dashboard" }
@@ -68,14 +69,14 @@ type TakedownCheckFilters = {
   limit: number;
 };
 
-const STATUS_OPTIONS = ["dangerous", "", "pending", "analyzing", "analyzed", "reported", "failed", "watchlist", "allowlisted", "false_positive"];
-const VERDICT_OPTIONS = ["", "high", "medium", "low", "benign", "unknown", "false_positive"];
+const STATUS_OPTIONS = sharedOptions.statusOptions as string[];
+const VERDICT_OPTIONS = sharedOptions.verdictOptions as string[];
 const LIMIT_OPTIONS = [25, 50, 100, 200, 500];
-const TAKEDOWN_CHECK_STATUS_OPTIONS = ["", "active", "likely_down", "confirmed_down"];
+const TAKEDOWN_CHECK_STATUS_OPTIONS = sharedOptions.takedownStatusOptions as string[];
 const DONATION_WALLET = "kaspa:qqe57lvu4p4zhdlnlj6ne8hu0hgcfwwfzrhcgaenpt056k0hge85k7qtaw3m9";
 
 // Statuses to exclude when using "dangerous" filter mode
-const EXCLUDED_STATUSES = ["watchlist", "false_positive", "allowlisted"];
+const EXCLUDED_STATUSES = sharedOptions.dangerousExcludeStatuses as string[];
 
 const isPublicReportEligible = (domain?: Domain | null) => {
   if (!domain) return false;

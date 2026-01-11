@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from ..analyzer.campaigns import ThreatCampaignManager
     from ..storage.database import Database
 from ..storage.evidence import EvidenceStore
-from ..utils.domains import canonicalize_domain
+from ..utils.reporting import select_report_url
+from ..utils.files import safe_filename_component
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class ReportGenerator:
         data = await self._gather_domain_data(domain, domain_id, snapshot_id)
         html = self._render_domain_html(data)
 
-        output_path = self.output_dir / f"report_{self._safe_filename(domain)}.html"
+        output_path = self.output_dir / f"report_{safe_filename_component(domain, max_length=50, default='')}.html"
         output_path.write_text(html, encoding="utf-8")
         logger.info(f"Generated HTML report: {output_path}")
         return output_path
@@ -151,12 +152,12 @@ class ReportGenerator:
 
         final_url = (analysis.get("final_url") or "").strip()
         initial_url = (analysis.get("initial_url") or analysis.get("source_url") or "").strip()
-        final_domain = canonicalize_domain(str(analysis.get("final_domain") or "")) or canonicalize_domain(final_url)
-        current_domain = canonicalize_domain(domain)
-        if final_domain and current_domain and final_domain != current_domain:
-            report_url = initial_url or f"https://{domain}"
-        else:
-            report_url = final_url or initial_url or f"https://{domain}"
+        report_url = select_report_url(
+            domain,
+            final_url=final_url,
+            initial_url=initial_url,
+            final_domain=str(analysis.get("final_domain") or ""),
+        )
 
         return DomainReportData(
             domain=domain,
@@ -300,7 +301,7 @@ class ReportGenerator:
         data = await self._gather_campaign_data(campaign_id)
         html = self._render_campaign_html(data)
 
-        safe_name = self._safe_filename(data.campaign_name)
+        safe_name = safe_filename_component(data.campaign_name, max_length=50, default="")
         output_path = self.output_dir / f"campaign_{safe_name}_{campaign_id[:8]}.html"
         output_path.write_text(html, encoding="utf-8")
         logger.info(f"Generated campaign HTML report: {output_path}")
@@ -543,10 +544,6 @@ class ReportGenerator:
         except Exception as e:
             logger.warning(f"Failed to embed image {path}: {e}")
             return ""
-
-    def _safe_filename(self, name: str) -> str:
-        """Convert a string to a safe filename."""
-        return "".join(c if c.isalnum() or c in ".-_" else "_" for c in name)[:50]
 
     def _score_class(self, score: int) -> str:
         """Get CSS class for confidence score."""
