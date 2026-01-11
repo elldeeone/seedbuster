@@ -188,6 +188,7 @@ class TakedownMixin:
         *,
         detected_at: str | None = None,
         confirmed_at: str | None = None,
+        clear_timestamps: bool = False,
     ) -> None:
         """Update takedown status for a domain."""
         status_value = (status or "").strip().lower()
@@ -196,12 +197,25 @@ class TakedownMixin:
                 """
                 UPDATE domains
                 SET takedown_status = ?,
-                    takedown_detected_at = COALESCE(?, takedown_detected_at),
-                    takedown_confirmed_at = COALESCE(?, takedown_confirmed_at),
+                    takedown_detected_at = CASE
+                        WHEN ? THEN NULL
+                        ELSE COALESCE(?, takedown_detected_at)
+                    END,
+                    takedown_confirmed_at = CASE
+                        WHEN ? THEN NULL
+                        ELSE COALESCE(?, takedown_confirmed_at)
+                    END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (status_value, detected_at, confirmed_at, domain_id),
+                (
+                    status_value,
+                    clear_timestamps,
+                    detected_at,
+                    clear_timestamps,
+                    confirmed_at,
+                    domain_id,
+                ),
             )
             await self._connection.commit()
 
@@ -210,10 +224,13 @@ class TakedownMixin:
         async with self._lock:
             cursor = await self._connection.execute(
                 """
-                SELECT *
-                FROM domains
+                SELECT d.*,
+                       MAX(tc.checked_at) AS last_checked_at
+                FROM domains d
+                LEFT JOIN takedown_checks tc ON tc.domain_id = d.id
                 WHERE status NOT IN ('watchlist', 'false_positive', 'allowlisted')
-                ORDER BY updated_at DESC
+                GROUP BY d.id
+                ORDER BY d.updated_at DESC
                 LIMIT ?
                 """,
                 (limit,),
