@@ -94,6 +94,20 @@ class TakedownChecker:
         self.backend_status_weight = max(0.0, min(1.0, backend_status_weight))
         self.backend_error_weight = max(0.0, min(1.0, backend_error_weight))
 
+    async def check(
+        self,
+        domain: str,
+        *,
+        previous_status: TakedownStatus | str | None = None,
+        analysis: Optional[dict] = None,
+    ) -> TakedownCheckResult:
+        """Compat wrapper for existing callers; delegates to `check_domain`."""
+        return await self.check_domain(
+            domain,
+            previous_status=previous_status,
+            analysis=analysis,
+        )
+
     async def check_domain(
         self,
         domain: str,

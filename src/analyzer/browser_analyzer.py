@@ -65,10 +65,24 @@ class BrowserAnalyzer(
 
     async def stop(self):
         """Stop the browser instance."""
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
+        try:
+            if self._browser:
+                await self._browser.close()
+        except PlaywrightError as exc:
+            logger.warning("Browser close failed: %s", exc)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Browser close error: %s", exc)
+        finally:
+            self._browser = None
+
+        try:
+            if self._playwright:
+                await self._playwright.stop()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Playwright stop error: %s", exc)
+        finally:
+            self._playwright = None
+
         logger.info("Browser stopped")
 
     async def analyze(self, domain: str, explore: bool = True) -> BrowserResult:
