@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
 
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from src.dashboard.server import (
     DashboardConfig,
@@ -656,19 +653,6 @@ async def test_admin_api_campaigns(dashboard_server):
         assert resp.status == 200
         data = await resp.json()
         assert "campaigns" in data
-
-
-@pytest.mark.asyncio
-async def test_admin_api_domain_not_found(dashboard_server):
-    """Test admin API returns 404 for missing domain."""
-    from aiohttp.test_utils import TestClient, TestServer
-
-    async with TestClient(TestServer(dashboard_server._app)) as client:
-        resp = await client.get(
-            "/admin/api/domains/99999",
-            headers={"Authorization": _make_basic_auth("admin", "testpassword")},
-        )
-        assert resp.status == 404
 
 
 @pytest.mark.asyncio

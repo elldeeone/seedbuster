@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>$title</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>$style</style>
+    <script>
+      // Toast helpers (shared)
+      function _sbToastContainer() {{
+        let el = document.getElementById('sb-toast-container');
+        if (!el) {{
+          el = document.createElement('div');
+          el.id = 'sb-toast-container';
+          el.className = 'sb-toast-container';
+          document.body.appendChild(el);
+        }}
+        return el;
+      }}
+
+      function sbToast(message, type) {{
+        const container = _sbToastContainer();
+        const toast = document.createElement('div');
+        toast.className = 'sb-toast' + (type ? ' sb-toast-' + type : '');
+        toast.textContent = message;
+        container.appendChild(toast);
+        const dismiss = () => {{
+          toast.classList.add('sb-toast-hide');
+          setTimeout(() => toast.remove(), 220);
+        }};
+        toast.addEventListener('click', dismiss);
+        setTimeout(dismiss, 4000);
+      }}
+
+      // Copy field to clipboard
+      function copyField(fieldId, btnId) {{
+        const el = document.getElementById(fieldId);
+        const btn = document.getElementById(btnId);
+        if (!el || !btn) return;
+        const text = el.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {{
+          btn.classList.add('copied');
+          setTimeout(() => {{ btn.classList.remove('copied'); }}, 2000);
+        }}).catch(err => {{
+          console.error('Copy failed:', err);
+        }});
+      }}
+
+      // Copy all fields in a container
+      function copyAllFields(containerId) {{
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const cards = container.querySelectorAll('.sb-copy-card');
+        let text = '';
+        cards.forEach(card => {{
+          const label = card.querySelector('.sb-copy-card-label');
+          const value = card.querySelector('.sb-copy-card-value');
+          if (label && value) {{
+            text += label.textContent.trim() + ':\\n' + value.textContent.trim() + '\\n\\n';
+          }}
+        }});
+        // Also try the older format
+        const fields = container.querySelectorAll('.sb-copy-field');
+        fields.forEach(field => {{
+          const label = field.querySelector('.sb-copy-field-label');
+          const value = field.querySelector('.sb-copy-field-value');
+          if (label && value) {{
+            text += label.textContent.trim() + ':\\n' + value.textContent.trim() + '\\n\\n';
+          }}
+        }});
+        navigator.clipboard.writeText(text.trim()).then(() => {{
+          const btn = container.querySelector('.sb-manual-copy-all, .sb-copy-all-btn');
+          if (btn) {{
+            btn.classList.add('copied');
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => {{
+              btn.textContent = orig;
+              btn.classList.remove('copied');
+            }}, 2000);
+          }}
+        }});
+      }}
+
+      // Toggle report row in table
+      function toggleManualHelper(rowId) {{
+        const row = document.getElementById(rowId);
+        const icon = document.getElementById(rowId + '_icon');
+        if (!row) return;
+        if (row.style.display === 'none') {{
+          row.style.display = 'table-row';
+          if (icon) icon.style.transform = 'rotate(90deg)';
+        }} else {{
+          row.style.display = 'none';
+          if (icon) icon.style.transform = 'rotate(0deg)';
+        }}
+      }}
+
+      // ==========================================
+      // TWO-STAGE MANUAL SUBMISSION MODAL
+      // ==========================================
+      let currentPanelId = null;
+      let currentPlatformId = null;
+      let pendingMarkDone = null;
+
+      // Open modal (Stage 1: Platform List)
+      function openManualModal(panelId) {{
+        currentPanelId = panelId;
+        const overlay = document.getElementById(panelId + '_overlay');
+        const modal = document.getElementById(panelId + '_modal');
+        if (overlay && modal) {{
+          overlay.classList.add('open');
+          modal.classList.add('open');
+          modal.classList.remove('expanded');
+          document.body.style.overflow = 'hidden';
+          // Hide all detail views
+          modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        }}
+      }}
+
+      // Close modal completely
+      function closeManualModal(panelId) {{
+        panelId = panelId || currentPanelId;
+        const overlay = document.getElementById(panelId + '_overlay');
+        const modal = document.getElementById(panelId + '_modal');
+        if (overlay) overlay.classList.remove('open');
+        if (modal) {{
+          modal.classList.remove('open');
+          modal.classList.remove('expanded');
+        }}
+        document.body.style.overflow = '';
+        currentPlatformId = null;
+      }}
+
+      // Expand to show platform detail (Stage 2)
+      function showPlatformDetail(panelId, platformId) {{
+        currentPlatformId = platformId;
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+
+        // Expand modal
+        modal.classList.add('expanded');
+
+        // Hide all details, show selected
+        modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        const detail = document.getElementById(platformId + '_detail');
+        if (detail) detail.classList.add('active');
+
+        // Update header title
+        const titleEl = document.getElementById(panelId + '_title');
+        const platform = detail?.dataset.platform || '';
+        if (titleEl) titleEl.textContent = platform.toUpperCase();
+      }}
+
+      // Back to platform list (Stage 1)
+      function backToList(panelId) {{
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+
+        modal.classList.remove('expanded');
+        modal.querySelectorAll('.sb-platform-detail').forEach(d => d.classList.remove('active'));
+        currentPlatformId = null;
+
+        // Reset header title
+        const titleEl = document.getElementById(panelId + '_title');
+        if (titleEl) titleEl.textContent = 'Manual Submissions';
+      }}
+
+      // Copy field with visual feedback
+      function copyFieldValue(fieldId, btnId) {{
+        const field = document.getElementById(fieldId);
+        const btn = document.getElementById(btnId);
+        if (!field) return;
+
+        const text = field.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {{
+          // Mark field as copied
+          const fieldContainer = field.closest('.sb-field');
+          if (fieldContainer) fieldContainer.classList.add('copied');
+
+          // Update button
+          if (btn) {{
+            btn.innerHTML = '&#10003; Copied';
+            setTimeout(() => {{
+              btn.innerHTML = 'Copy';
+            }}, 2000);
+          }}
+
+          // Update progress
+          updateFieldProgress();
+        }}).catch(err => {{
+          console.error('Copy failed:', err);
+          sbToast('Failed to copy. Please select and copy manually.', 'error');
+        }});
+      }}
+
+      // Update field copy progress counter
+      function updateFieldProgress() {{
+        document.querySelectorAll('.sb-platform-detail.active').forEach(detail => {{
+          const totalFields = detail.querySelectorAll('.sb-field').length;
+          const copiedFields = detail.querySelectorAll('.sb-field.copied').length;
+          const progressEl = detail.querySelector('.sb-detail-fields-progress');
+          if (progressEl) {{
+            progressEl.textContent = `${{copiedFields}}/${{totalFields}} copied`;
+          }}
+        }});
+      }}
+
+      // Show confirmation dialog
+      function showConfirmDialog(platformId, platform, domainId) {{
+        const panelId = platformId.replace(/_platform_\\d+$/, '');
+        const csrf = document.querySelector('input[name="csrf"]')?.value || '';
+        pendingMarkDone = {{ platformId, platform, domainId, csrf, panelId }};
+
+        const dialog = document.getElementById(panelId + '_confirm');
+        const platformEl = document.getElementById(panelId + '_confirm_platform');
+        if (dialog && platformEl) {{
+          platformEl.textContent = platform.toUpperCase();
+          dialog.classList.add('open');
+        }}
+      }}
+
+      // Hide confirmation dialog
+      function hideConfirmDialog(panelId) {{
+        panelId = panelId || (pendingMarkDone && pendingMarkDone.panelId);
+        if (panelId) {{
+          const dialog = document.getElementById(panelId + '_confirm');
+          if (dialog) dialog.classList.remove('open');
+        }}
+        pendingMarkDone = null;
+      }}
+
+      // Confirm and mark as done
+      async function confirmMarkDone(panelId) {{
+        if (!pendingMarkDone) return;
+        const {{ platformId, platform, domainId, csrf }} = pendingMarkDone;
+
+        const confirmBtn = document.querySelector('#' + panelId + '_confirm .sb-btn-success');
+        if (confirmBtn) {{
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Submitting...';
+        }}
+
+        try {{
+          const formData = new FormData();
+          formData.append('csrf', csrf);
+          formData.append('note', 'Manually submitted via dashboard');
+          formData.append('platform', platform);
+
+          const response = await fetch(`/admin/domains/${{domainId}}/manual_done`, {{
+            method: 'POST',
+            body: formData,
+          }});
+
+          if (response.ok || response.redirected) {{
+            // Mark list item as done
+            const listItem = document.getElementById(platformId);
+            if (listItem) {{
+              listItem.classList.add('done');
+              const statusEl = listItem.querySelector('.sb-platform-list-status');
+              if (statusEl) statusEl.textContent = 'Submitted';
+              const iconEl = listItem.querySelector('.sb-platform-list-icon');
+              if (iconEl) iconEl.textContent = '&#10003;';
+            }}
+
+            // Go back to list
+            backToList(panelId);
+            updateModalProgress(panelId);
+
+            // Check if all done
+            const modal = document.getElementById(panelId + '_modal');
+            const pendingItems = modal ? modal.querySelectorAll('.sb-platform-list-item:not(.done)') : [];
+            if (pendingItems.length === 0) {{
+              setTimeout(() => {{
+                closeManualModal(panelId);
+                const notifyBar = document.getElementById(panelId + '_notify');
+                if (notifyBar) notifyBar.style.display = 'none';
+                const url = new URL(window.location);
+                url.searchParams.delete('manual_pending');
+                window.history.replaceState({{}}, '', url);
+              }}, 600);
+            }}
+          }} else {{
+            sbToast('Failed to mark as submitted. Please try again.', 'error');
+          }}
+        }} catch (err) {{
+          console.error('Error:', err);
+          sbToast('Failed to mark as submitted. Please try again.', 'error');
+        }} finally {{
+          hideConfirmDialog(panelId);
+          if (confirmBtn) {{
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Yes, I've Submitted";
+          }}
+        }}
+      }}
+
+      // Update modal progress counter
+      function updateModalProgress(panelId) {{
+        const modal = document.getElementById(panelId + '_modal');
+        if (!modal) return;
+        const totalItems = modal.querySelectorAll('.sb-platform-list-item').length;
+        const doneItems = modal.querySelectorAll('.sb-platform-list-item.done').length;
+        const pending = totalItems - doneItems;
+
+        const progressEl = document.getElementById(panelId + '_progress');
+        if (progressEl) {{
+          progressEl.textContent = `${{pending}} of ${{totalItems}} pending`;
+        }}
+
+        const notifyBar = document.getElementById(panelId + '_notify');
+        if (notifyBar) {{
+          const textEl = notifyBar.querySelector('.sb-notify-bar-text');
+          if (textEl && pending > 0) {{
+            textEl.innerHTML = `<strong>Action Required:</strong> ${{pending}} platform${{pending > 1 ? 's' : ''}} need manual submission`;
+          }}
+        }}
+      }}
+
+      // Keyboard handlers
+      document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') {{
+          // Close confirm dialog first if open
+          if (pendingMarkDone && pendingMarkDone.panelId) {{
+            const dialog = document.getElementById(pendingMarkDone.panelId + '_confirm');
+            if (dialog && dialog.classList.contains('open')) {{
+              hideConfirmDialog(pendingMarkDone.panelId);
+              return;
+            }}
+          }}
+          // If expanded, go back to list
+          if (currentPanelId) {{
+            const modal = document.getElementById(currentPanelId + '_modal');
+            if (modal && modal.classList.contains('expanded')) {{
+              backToList(currentPanelId);
+              return;
+            }}
+          }}
+          if (currentPanelId) {{
+            closeManualModal(currentPanelId);
+          }}
+        }}
+      }});
+
+      // Auto-open modal if manual_pending is in URL
+      document.addEventListener('DOMContentLoaded', function() {{
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('manual_pending')) {{
+          // Find the notification bar and extract panel ID
+          const notifyBar = document.querySelector('.sb-notify-bar');
+          if (notifyBar && notifyBar.id) {{
+            const panelId = notifyBar.id.replace('_notify', '');
+            openManualModal(panelId);
+          }}
+        }}
+
+        const walletBtn = document.querySelector('.sb-footer-wallet');
+        if (walletBtn) {{
+          const fallbackCopy = function(wallet) {{
+            const textarea = document.createElement('textarea');
+            textarea.value = wallet;
+            textarea.setAttribute('readonly', 'true');
+            textarea.style.position = 'fixed';
+            textarea.style.top = '-1000px';
+            textarea.style.left = '-1000px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            let ok = false;
+            try {{
+              ok = document.execCommand('copy');
+            }} finally {{
+              document.body.removeChild(textarea);
+            }}
+            return ok;
+          }};
+          walletBtn.addEventListener('click', function() {{
+            const wallet = walletBtn.getAttribute('data-wallet');
+            if (!wallet) {{
+              return;
+            }}
+            if (navigator.clipboard && window.isSecureContext) {{
+              navigator.clipboard.writeText(wallet)
+                .catch(function() {{
+                  fallbackCopy(wallet);
+                }});
+              return;
+            }}
+            fallbackCopy(wallet);
+          }});
+        }}
+      }});
+    </script>
+  </head>
+  <body>
+    <div id="sb-toast-container" class="sb-toast-container" aria-live="polite"></div>
+    <div class="sb-container">
+      <header class="sb-header">
+        <div class="sb-brand">
+          <a class="sb-logo" href="$toggle_href">
+            <div class="sb-logo-icon">SB</div>
+            <span class="sb-logo-text">SeedBuster</span>
+          </a>
+          <span class="sb-mode $mode_class">$mode_indicator</span>
+        </div>
+        <nav class="sb-nav">$nav</nav>
+      </header>
+      $body
+      <footer class="sb-footer">
+        <div class="sb-footer-credit">
+          <span>Made with &#10084; by <a href="https://dunshea.au" target="_blank" rel="noreferrer">Luke Dunshea</a></span>
+          $footer_mode
+        </div>
+        <a class="sb-footer-fork" href="https://github.com/elldeeone/seedbuster" target="_blank" rel="noreferrer">Fork this</a>
+        <div class="sb-footer-donate">
+          <span class="sb-footer-label">Consider donating:</span>
+          <button
+            class="sb-footer-wallet"
+            type="button"
+            data-wallet="$donation_wallet"
+            title="Click to copy wallet"
+            aria-label="Copy donation wallet"
+          >
+            $donation_wallet
+          </button>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

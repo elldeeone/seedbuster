@@ -15,7 +15,6 @@ import asyncio
 import argparse
 import logging
 import os
-from pathlib import Path
 
 from src.config import load_config
 from src.analyzer.infrastructure import InfrastructureAnalyzer

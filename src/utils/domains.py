@@ -1,4 +1,4 @@
-"""Domain normalization utilities."""
+"""Domain/URL normalization utilities."""
 
 from __future__ import annotations
 
@@ -11,6 +11,27 @@ import tldextract
 
 _URL_RE = re.compile(r"https?://\S+")
 _URL_TRAIL_ALLOWED = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]")
+
+
+def ensure_url(value: str) -> str:
+    """Ensure a URL has a scheme for reliable parsing."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith(("http://", "https://")):
+        return raw
+    return f"https://{raw}"
+
+
+def extract_hostname(value: str) -> str:
+    """Extract a hostname from a URL/domain input (best-effort)."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    candidate = raw if "://" in raw else f"https://{raw}"
+    parsed = urlparse(candidate)
+    hostname = (parsed.hostname or raw.split("/")[0]).strip().lower()
+    return hostname.strip(".")
 
 
 def canonicalize_domain(value: str) -> str:
@@ -82,7 +103,7 @@ def normalize_source_url(source_url: str | None, *, canonical: str | None = None
     return candidate
 
 
-def _strip_port(host: str) -> str:
+def strip_port(host: str) -> str:
     if not host:
         return ""
     if host.count(":") == 1:
@@ -95,7 +116,7 @@ def registered_domain(value: str) -> str:
     host = canonicalize_domain(value)
     if not host:
         return ""
-    host = _strip_port(host)
+    host = strip_port(host)
     extracted = tldextract.extract(host)
     if extracted.domain and extracted.suffix:
         return f"{extracted.domain}.{extracted.suffix}".lower()
@@ -114,7 +135,7 @@ def allowlist_contains(domain: str, allowlist: set[str]) -> bool:
     host = canonicalize_domain(domain)
     if not host:
         return False
-    host = _strip_port(host)
+    host = strip_port(host)
     if host in allowlist:
         return True
     registered = registered_domain(host)

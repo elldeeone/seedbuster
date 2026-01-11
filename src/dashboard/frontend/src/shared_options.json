@@ -1,0 +1,34 @@
+{
+  "statusOptions": [
+    "dangerous",
+    "",
+    "pending",
+    "analyzing",
+    "analyzed",
+    "reported",
+    "failed",
+    "watchlist",
+    "allowlisted",
+    "false_positive"
+  ],
+  "verdictOptions": [
+    "",
+    "high",
+    "medium",
+    "low",
+    "benign",
+    "unknown",
+    "false_positive"
+  ],
+  "takedownStatusOptions": [
+    "",
+    "active",
+    "likely_down",
+    "confirmed_down"
+  ],
+  "dangerousExcludeStatuses": [
+    "watchlist",
+    "false_positive",
+    "allowlisted"
+  ]
+}

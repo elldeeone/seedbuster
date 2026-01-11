@@ -810,7 +810,7 @@ class AnalysisEngine:
                             current_verdict = verdict.value.lower()
 
                             # Verdict escalation check using centralized comparison
-                            from ..constants import verdict_escalated as check_verdict_escalated
+                            from ..storage.rankings import verdict_escalated as check_verdict_escalated
                             verdict_escalated = check_verdict_escalated(current_verdict, baseline_verdict)
 
                             # Seed form detection check
@@ -864,7 +864,7 @@ class AnalysisEngine:
                         current_verdict = verdict.value.lower()
 
                         # Verdict escalation check using centralized comparison
-                        from ..constants import verdict_escalated as check_verdict_escalated
+                        from ..storage.rankings import verdict_escalated as check_verdict_escalated
                         verdict_escalated = check_verdict_escalated(current_verdict, previous_verdict)
 
                         # Seed form is a smoking gun - always alert

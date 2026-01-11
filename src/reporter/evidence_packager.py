@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..storage.evidence import EvidenceStore
 
 from .report_generator import ReportGenerator
+from ..utils.files import safe_filename_component
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,7 @@ class EvidencePackager:
         This is for INTERNAL use - not for sending to abuse teams.
         """
         timestamp = datetime.now().strftime("%Y%m%d")
-        safe_domain = self._safe_filename(domain)
+        safe_domain = safe_filename_component(domain, max_length=50, default="")
         archive_name = f"archive_{safe_domain}_{timestamp}"
         archive_dir = self.output_dir / "archives" / archive_name
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -302,7 +303,7 @@ class EvidencePackager:
             raise ValueError(f"Campaign not found: {campaign_id}")
 
         timestamp = datetime.now().strftime("%Y%m%d")
-        safe_name = self._safe_filename(campaign.name)
+        safe_name = safe_filename_component(campaign.name, max_length=50, default="")
         archive_name = f"archive_campaign_{safe_name}_{timestamp}"
         archive_dir = self.output_dir / "archives" / archive_name
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -312,7 +313,9 @@ class EvidencePackager:
         evidence_root.mkdir(exist_ok=True)
 
         for member in campaign.members:
-            domain_evidence_dir = evidence_root / self._safe_filename(member.domain)
+            domain_evidence_dir = evidence_root / safe_filename_component(
+                member.domain, max_length=50, default=""
+            )
             domain_evidence_dir.mkdir(exist_ok=True)
 
             # Copy evidence files
@@ -451,7 +454,3 @@ class EvidencePackager:
     # -------------------------------------------------------------------------
     # Utility Methods
     # -------------------------------------------------------------------------
-
-    def _safe_filename(self, name: str) -> str:
-        """Convert a string to a safe filename."""
-        return "".join(c if c.isalnum() or c in ".-_" else "_" for c in name)[:50]

@@ -7,6 +7,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+from ..utils.files import safe_filename_component
+
 
 class EvidenceStore:
     """Manages evidence file storage for analyzed domains."""
@@ -63,7 +65,7 @@ class EvidenceStore:
         analysis_data["saved_at"] = now.isoformat()
         scan_id = analysis_data.get("scan_id")
         if scan_id:
-            analysis_data["scan_id"] = self._safe_filename_component(str(scan_id))
+            analysis_data["scan_id"] = safe_filename_component(str(scan_id), lower=True)
         else:
             analysis_data["scan_id"] = self._format_scan_id(now)
 
@@ -78,14 +80,6 @@ class EvidenceStore:
         content = "\n".join(logs)
         await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         return path
-
-    @staticmethod
-    def _safe_filename_component(value: str) -> str:
-        """Convert a string into a filesystem-friendly filename component."""
-        raw = (value or "").strip().lower()
-        if not raw:
-            return "unknown"
-        return "".join(c if c.isalnum() or c in "._-" else "_" for c in raw)
 
     @staticmethod
     def _sanitize_snapshot_id(snapshot_id: str | None) -> str | None:
@@ -111,7 +105,7 @@ class EvidenceStore:
     def get_report_instructions_path(self, domain: str, platform: str) -> Path:
         """Get path for a manual report instruction file for a platform."""
         domain_dir = self.get_domain_dir(domain)
-        safe_platform = self._safe_filename_component(platform)
+        safe_platform = safe_filename_component(platform, lower=True)
         return domain_dir / f"report_instructions_{safe_platform}.txt"
 
     def get_report_instruction_paths(self, domain: str) -> list[Path]:
@@ -233,7 +227,7 @@ class EvidenceStore:
             data = {}
         scan_id = (data.get("scan_id") or "").strip()
         if scan_id:
-            return self._safe_filename_component(scan_id)
+            return safe_filename_component(scan_id, lower=True)
         saved_at = (data.get("saved_at") or "").strip()
         if saved_at:
             try:

@@ -196,15 +196,6 @@ Captured evidence (screenshot + HTML) available on request.
         description = self._build_description(evidence)
         manual_data = self.generate_manual_submission(evidence)
 
-        manual_payload = (
-            "Submission not confirmed; manual submission recommended.\n\n"
-            f"Manual submission URL: {self.FORM_URL}\n\n"
-            f"Reporter name: {self.reporter_name}\n"
-            f"Reporter email: {self.reporter_email}\n"
-            f"Phishing URL: {evidence.url}\n\n"
-            f"Copy/paste description:\n{description}"
-        )
-
         try:
             import os
             from playwright.async_api import async_playwright
