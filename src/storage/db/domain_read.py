@@ -75,15 +75,25 @@ class DomainReadMixin:
     async def get_pending_domains(self, limit: int | None = 10) -> list[dict]:
         """Get pending domains to analyze."""
         async with self._lock:
-            cursor = await self._connection.execute(
-                """
-                SELECT * FROM domains
-                WHERE status = ?
-                ORDER BY updated_at ASC
-                LIMIT ?
-                """,
-                (DomainStatus.PENDING.value, limit),
-            )
+            if limit is None:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY updated_at ASC
+                    """,
+                    (DomainStatus.PENDING.value,),
+                )
+            else:
+                cursor = await self._connection.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = ?
+                    ORDER BY updated_at ASC
+                    LIMIT ?
+                    """,
+                    (DomainStatus.PENDING.value, limit),
+                )
             return await self._fetchall_dicts(cursor)
 
     async def get_analyzing_domains(self, limit: int | None = None) -> list[dict]:
